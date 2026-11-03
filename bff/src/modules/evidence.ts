@@ -9,7 +9,8 @@ export function canonical(v: unknown): string {
   return `{${Object.keys(v as object).sort().map((k) => `${JSON.stringify(k)}:${canonical((v as any)[k])}`).join(",")}}`;
 }
 /** Append only, hash chained. hash = sha256(prevHash | seq | subject | event | payloadHash | createdAt). */
-export function appendEvidence(chain: EvidenceRecord[], subjectType: string, subjectId: string, event: string, payload: unknown): EvidenceRecord {
+export function appendEvidence(chain: EvidenceRecord[], subjectType: string, subjectId: string, event: string, input: unknown): EvidenceRecord {
+  const payload = JSON.parse(JSON.stringify(input ?? null)); // snapshot, later mutation of the source must not break the chain
   const prev = chain[chain.length - 1];
   const seq = (prev?.seq ?? 0) + 1;
   const payloadHash = sha(canonical(payload));

@@ -23,6 +23,7 @@ describe("end to end flow (mock LLM)", () => {
     const pi = db.intents.find((i) => i.id === r.intentId)!;
     expect(pi.status).toBe("blocked"); expect(db.settlements).toHaveLength(0);
     expect(S.ledgerView().trialBalance.accounts["1010 USDC treasury (simulated)"]).toBeUndefined();
+    expect(verifyChain(db.evidence).valid).toBe(true);
   });
   it("idempotent payment execution", async () => {
     const r = await S.runFlow("Need 100 nitrile gloves");

@@ -1,9 +1,10 @@
 /** Runs the full flow once. With LLM_MODE=live it uses the local claude CLI for draft, invoice reading and explanation. */
 process.env.DB_PERSIST = "0"; process.env.RAIL_DELAY_MS = "200";
-const { reset, db } = await import("../src/modules/store.js");
+const store = await import("../src/modules/store.js");
 const S = await import("../src/service.js");
 const { verifyChain } = await import("../src/modules/evidence.js");
-reset(); S.bootstrap();
+store.reset(); S.bootstrap();
+const db = store.db;
 console.log(`LLM_MODE=${process.env.LLM_MODE}`);
 const t0 = Date.now();
 const r = await S.runFlow("We need 2000 sealed 6204 ball bearings for the line 3 maintenance window next week");
