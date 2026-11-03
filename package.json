@@ -1,0 +1,18 @@
+{
+  "name": "agentic-b2b-pay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agentic B2B payments demo: mandates, policy, 3-way match, rail router, simulated USDC. No real funds.",
+  "workspaces": ["shared", "bff", "web"],
+  "scripts": {
+    "dev:bff": "npm run dev --workspace bff",
+    "dev:web": "npm run dev --workspace web",
+    "dev": "concurrently -n bff,web -c blue,green \"npm:dev:bff\" \"npm:dev:web\"",
+    "test": "npm run test --workspace bff",
+    "e2e:live": "npm run e2e:live --workspace bff",
+    "e2e:mock": "npm run e2e:mock --workspace bff",
+    "build": "npm run build --workspace web"
+  },
+  "devDependencies": { "concurrently": "^9.1.0" },
+  "engines": { "node": ">=20" }
+}
