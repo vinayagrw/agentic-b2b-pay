@@ -71,6 +71,6 @@ export async function buildApp() {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   S.bootstrap();
   const app = await buildApp();
-  await app.listen({ port: Number(process.env.PORT ?? 8790), host: "127.0.0.1" });
-  console.log(`bff on http://127.0.0.1:${process.env.PORT ?? 8790} LLM_MODE=${llmMode()}`);
+  await app.listen({ port: Number(process.env.BFF_PORT ?? 8790), host: "127.0.0.1" });
+  console.log(`bff on http://127.0.0.1:${process.env.BFF_PORT ?? 8790} LLM_MODE=${llmMode()}`);
 }
