@@ -13,6 +13,7 @@ import * as S from "./service.js";
 import { config } from "./config.js";
 import { stripeClient } from "./rails/stripe.js";
 import { publish } from "./hooks.js";
+import * as LV from "./live.js";
 
 const ev = (t: string, id: string, e: string, p: unknown) => appendEvidence(db.evidence, t, id, e, p);
 const now = () => new Date().toISOString();
@@ -139,7 +140,7 @@ export function approvalsInbox(user: P.User, tenantId: string) {
     return { id: p.id, status: p.status, total: p.total, category: p.category, createdAt: p.createdAt, justification: p.justification, supplier: sup?.name ?? p.supplierId, agent: agent?.name ?? p.agentId, lines: p.lines,
       reasons: p.policy.reasons, approval: p.approval ? { ...p.approval, levels: p.approval.levels.map((l) => ({ ...l, approvals: l.approvals.map((a) => ({ ...a, name: name(a.userId) })) })), rejectedBy: p.approval.rejectedBy ? { ...p.approval.rejectedBy, name: name(p.approval.rejectedBy.userId) } : undefined } : null,
       maker: { kind: "agent", name: agent?.name ?? p.agentId }, rail: sup?.preferredRail ?? null, policy: { outcome: p.policy.outcome, checks: p.policy.checks },
-      riskFlags: riskFlags(p, sup), canAct: can.ok, why: can.why };
+      riskFlags: riskFlags(p, sup), confidence: LV.confidenceForPo(p.id), canAct: can.ok, why: can.why };
   }).filter((p) => p.approval || p.status === "pending_approval");
 }
 

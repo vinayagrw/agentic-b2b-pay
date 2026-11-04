@@ -32,6 +32,7 @@ import * as SAML from "./saml.js";
 import * as SU from "./stepup.js";
 import * as Risk from "./risk.js";
 import * as TB from "./tables.js";
+import * as LV from "./live.js";
 import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -65,7 +66,7 @@ export async function buildApp() {
   await app.register(rateLimit, {
     global: true, timeWindow: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000, keyGenerator: rlKey,
     max: (req: any, key: string) => key.startsWith("key:") ? Number(process.env.RATE_LIMIT_KEY_MAX) || 120 : key.startsWith("sid:") ? Number(process.env.RATE_LIMIT_SESSION_MAX) || 600 : Number(process.env.RATE_LIMIT_IP_MAX) || 300,
-    allowList: (req: any) => req.url === "/health" || req.url.startsWith("/events") || req.url.startsWith("/webhooks/") || req.url.startsWith("/docs"),
+    allowList: (req: any) => req.url === "/health" || req.url.startsWith("/events") || req.url.startsWith("/live/stream") || req.url.startsWith("/webhooks/") || req.url.startsWith("/docs"),
     errorResponseBuilder: (_req: any, c: any) => Object.assign(new Error(`Too many requests. Try again in ${c.after}.`), { statusCode: 429 }),
   });
   await app.register(swagger, { openapi: { info: { title: "B2B Pay BFF", version: "0.1.0", description: "Agentic B2B payments API. Test mode only, no real funds." }, components: { securitySchemes: { session: { type: "apiKey", in: "cookie", name: "sid" }, bearer: { type: "http", scheme: "bearer" } } } } });
@@ -128,7 +129,7 @@ export async function buildApp() {
     "POST /workspace/suppliers/:id/payee-change": "suppliers.payee_change", "POST /workspace/suppliers/:id/wallet-message": "workspace.read",
     "GET /ops/treasury": "treasury.read", "POST /ops/treasury/sweep": "treasury.sweep", "POST /ops/recon/run": "treasury.sweep", "GET /ops/recon": "treasury.read", "POST /ops/recon/exceptions/:id/resolve": "treasury.sweep",
     "GET /ops/recon/export.csv": "treasury.read", "GET /ops/compliance": "compliance.read", "POST /ops/cases/:id/sar/draft": "compliance.case.file", "PUT /ops/cases/:id/sar": "compliance.case.file",
-    "POST /ops/cases/:id/sar/file": "compliance.case.file", "POST /ops/cases/:id/close": "compliance.case.file", "GET /ops/revenue": "treasury.read", "GET /ops/sankey": "treasury.read", "GET /ops/kpis": "treasury.read",
+    "POST /ops/cases/:id/sar/file": "compliance.case.file", "POST /ops/cases/:id/close": "compliance.case.file", "GET /ops/revenue": "treasury.read", "GET /ops/sankey": "treasury.read", "GET /ops/kpis": "treasury.read", "GET /live/pulse": "treasury.read",
     "GET /cases/:id/evidence-pack": "audit.read", "GET /payments/:id/why/export.json": "audit.read", "GET /payments/:id/why/export.md": "audit.read",
     "GET /identity/configs": "identity.manage", "POST /identity/configs": "identity.manage", "GET /iam/users": "roles.manage", "GET /iam/roles": "roles.manage", "POST /iam/roles": "roles.manage", "PUT /iam/roles/:id": "roles.manage", "DELETE /iam/roles/:id": "roles.manage", "POST /iam/users/:id/role": "roles.manage",
     "POST /sessions/:id/revoke": "workspace.read", "POST /risk/:paymentId/decide": "risk.review", "POST /views": "workspace.read", "DELETE /views/:id": "workspace.read", "GET /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens/:id/revoke": "developers.keys",
@@ -395,6 +396,24 @@ export async function buildApp() {
   app.get("/transactions/feed", async (req: any) => FV.liveFeed(scopeOf(req), Math.min(200, Number(req.query?.limit ?? 50) || 50)));
   app.get("/insights/home", async (req: any) => FV.homeInsights(scopeOf(req), Math.min(90, Number(req.query?.days ?? 14) || 14)));
   app.get("/ops/sankey", async (req: any) => { who(req); return FV.sankey(Math.min(365, Number(req.query?.days ?? 30) || 30)); });
+  // Live pulse, activity feed, confidence and payloads. All derived from stored records.
+  const pulseTenant = (req: any, u: P.User) => { try { return clientOf(req, u); } catch { const t = P.tenantsFor(u).find((x) => x.kind === "client" && I.inEntityScope(u, x.id)); if (!t) throw new P.AuthError(409, "No business client in scope"); return t.id; } };
+  app.get("/live/pulse", async (req) => { const t = pulseTenant(req, who(req)); return { ...(await LV.pulse(t, scopeOf(req))), tenantId: t }; });
+  app.get("/live/activity", async (req: any) => LV.activity(scopeOf(req), { limit: Number(req.query?.limit ?? 30) || 30 }));
+  app.get("/payments/:id/confidence", async (req: any) => { const i = scoped(scopeOf(req)).intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); Risk.ensureScores([i]); return LV.confidenceForPayment(i); });
+  app.get("/payments/:id/payloads", async (req: any) => { const i = scoped(scopeOf(req)).intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); return LV.payloadsFor(i); });
+  app.get("/live/stream", (req, reply) => {
+    const u = who(req); const scope = scopeOf(req); const ops = I.explain(u, "treasury.read").allowed; const t = ops ? pulseTenant(req, u) : "";
+    reply.hijack();
+    reply.raw.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    const send = (event: string, data: unknown) => reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    let seq = db.evidence.at(-1)?.seq ?? 0; let timer: ReturnType<typeof setTimeout> | null = null;
+    const push = async () => { timer = null; const fresh = LV.activity(scope, { afterSeq: seq, limit: 50 }); seq = db.evidence.at(-1)?.seq ?? seq; if (fresh.length) send("activity", fresh.reverse()); if (ops) send("pulse", { ...(await LV.pulse(t, scope)), tenantId: t }); };
+    send("hello", {}); if (ops) void push();
+    const off = onChange(() => { if (!timer) timer = setTimeout(() => void push().catch(() => {}), 200); });
+    const ping = setInterval(() => reply.raw.write(`: ping\n\n`), 25000);
+    req.raw.on("close", () => { off(); clearInterval(ping); if (timer) clearTimeout(timer); });
+  });
   app.get("/ops/kpis", async (req) => { who(req); return A.kpis(); });
   app.get("/cases/:id/evidence-pack", async (req: any, reply) => { const u = who(req); const c = S.getCase(req.params.id); if (!c || !P.canAccessTenant(u, c.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "case not found"); P.audit(u.id, "case", c.id, "dispute.evidence_exported", {}); return reply.header("content-disposition", `attachment; filename="evidence-${c.id}.json"`).send(A.evidencePack(c.id)); });
   app.get("/dev/keys", async (req) => D.listApiKeys(ctx(req).t));

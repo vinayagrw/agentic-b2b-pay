@@ -6,13 +6,15 @@ import { can, stepUpNeeded, type StepUpStatus } from "../lib/perm";
 import { cn, usd } from "../lib/utils";
 import { Badge, Button, Card, ErrorNote, Input, Mono, Muted, Textarea } from "./ui";
 import { StatusDot } from "./kit";
+import { ConfidenceList } from "./ConfidenceBar";
+import type { Confidence } from "../lib/live";
 
 export type ApprovalItem = {
   id: string; status: string; total: number; category: string; supplier: string; agent: string; justification: string; createdAt?: string;
   lines: { sku: string; qty: number; description: string; unitPrice: number }[];
   maker?: { kind: "agent" | "person"; name: string }; rail?: string | null;
   policy?: { outcome: "allow" | "needs_approval" | "deny"; checks: { rule: string; pass: boolean; detail: string }[] };
-  riskFlags?: string[];
+  riskFlags?: string[]; confidence?: Confidence[];
   approval: null | { ruleName: string; current: number; levels: { role: string; count: number; approvals: { userId: string; name: string; comment?: string }[] }[]; rejectedBy?: { name: string; comment?: string } };
   canAct: boolean; why?: string;
 };
@@ -84,6 +86,8 @@ export function ApprovalCard({ p, onDecided, selected, onSelect }: { p: Approval
         {flags.length ? <ul className="flex flex-col gap-0.5 text-xs text-warn">{flags.map((f) => <li key={f}>{f}</li>)}</ul> : <Muted>No risk flags</Muted>}
       </div>
     </div>
+
+    {p.confidence && <ConfidenceList className="mt-2" items={p.confidence} />}
 
     {p.approval && <div className="mt-3 rounded-lg bg-subtle p-3"><div className="text-xs font-medium">Rule: {p.approval.ruleName}</div>
       <ol className="mt-2 flex flex-col gap-1">{p.approval.levels.map((l, n) => { const done = l.approvals.length >= l.count; const cur = n === p.approval!.current && p.status === "pending_approval";

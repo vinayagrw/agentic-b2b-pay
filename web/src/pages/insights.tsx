@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Activity, ArrowLeftRight, BadgeDollarSign, Bot, Copy, KeyRound, Scale, ShieldAlert, Webhook } from "lucide-react";
-import { api, useAct, useGet, useMe } from "../lib/api";
+import { api, useAct, useAppState, useGet, useMe } from "../lib/api";
+import { ActivityFeed, HomeMixCharts, LivePulse } from "../components/live";
 import { usd } from "../lib/utils";
 import { Badge, Button, Card, EmptyState, ErrorNote, Input, Label, Mono, Muted, PageHeader, Select, Stat, Table } from "../components/ui";
 import { Section } from "../components/Shell";
@@ -16,9 +17,10 @@ const axis = { fontSize: 11, fill: "var(--muted)" };
 const tip = { contentStyle: { background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }, labelStyle: { color: "var(--fg)" } };
 
 export function OperatorHome() {
-  const { data: k, error } = useGet<any>("/ops/kpis"); const { run, busy, error: e2 } = useAct(); const col = useChartColors();
+  const { data: k, error } = useGet<any>("/ops/kpis"); const { run, busy, error: e2 } = useAct(); const col = useChartColors(); const { data: st } = useAppState();
   if (!k) return <Loading error={error as Error} />;
   return <Section>
+    <LivePulse />
     <PageHeader title="Home" sub={`Volume, risk and revenue across all tenants, last ${k.days} days`} actions={<Button variant={k.killSwitch ? "outline" : "danger"} disabled={busy} onClick={() => run(() => api("/kill-switch", { on: !k.killSwitch }))}>{k.killSwitch ? "Release platform kill switch" : "Platform kill switch"}</Button>} />
     <ErrorNote msg={e2} />
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -34,7 +36,8 @@ export function OperatorHome() {
       <Stat icon={Bot} label="Active agents" value={k.activeAgents} hint={k.killSwitch ? "Kill switch is on" : undefined} />
     </div>
     <HomeStrip />
-    <MoneyFlowMap />
+    {st && <HomeMixCharts st={st} />}
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]"><MoneyFlowMap /><ActivityFeed prefix="/operator" /></div>
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <Card title="Settled volume by day"><ThemedBarChart data={k.daily} x="day" xFormat={(d) => String(d).slice(5)} interval={6} yFormat={(v) => usd(v)} series={[{ key: "volume", label: "Settled" }]} ariaLabel={`Settled volume by day over ${k.daily.length} days`} /></Card>
       <Card title="Volume by rail" pad={false}>{k.byRail.length ? <Table>{k.byRail.map((r: any) => <tr key={r.rail}><td>{railName(r.rail)}</td><td className="text-right tabular-nums">{usd(r.volume)}</td></tr>)}</Table> : <EmptyState title="No settled payments yet" />}</Card>
