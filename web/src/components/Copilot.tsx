@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Bookmark, Brain, Bot, Camera, Database, Download, Gift, History, Mic, MicOff, Pencil, Plus, RotateCcw, Search, Send, Square, ShieldAlert, Sun, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
-import { api, useAct } from "../lib/api";
+import { Bookmark, Brain, Sparkles, Bot, Camera, Database, Download, Gift, History, Mic, MicOff, Pencil, Plus, RotateCcw, Search, Send, Square, ShieldAlert, Sun, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { api, useAct, useMe } from "../lib/api";
 import { useStream } from "../lib/stream";
-import { foldStream, recordFromPath, snapProblem, speechCtor, SNAP_TYPES, TOOL_NAMES, type Answer, type Chart, type Memory, type Offer, type Proposal, type Thread } from "../lib/copilot";
+import { foldStream, recordFromPath, snapProblem, speechCtor, SNAP_TYPES, TOOL_NAMES, type Answer, type Chart, type Memory, type Offer, type Proposal, type Skill, type Thread } from "../lib/copilot";
 import { SlidePanel } from "./kit";
 import { BarList, DataTable, DonutChart } from "./live";
 import { Badge, Button, Input } from "./ui";
@@ -29,8 +29,9 @@ export function CopilotPanel({ open, onClose, seed }: { open: boolean; onClose: 
   const loc = useLocation(); const route = loc.pathname; const recordId = recordFromPath(route);
   const [q, setQ] = useState(""); const [url, setUrl] = useState<string | null>(null);
   const [asked, setAsked] = useState(""); const [history, setHistory] = useState<Answer[]>([]); const [err, setErr] = useState("");
-  const [threadId, setThreadId] = useState<string | null>(null); const [view, setView] = useState<"chat" | "threads" | "memory">("chat");
+  const [threadId, setThreadId] = useState<string | null>(null); const [view, setView] = useState<"chat" | "threads" | "memory" | "skills">("chat");
   const [suggest, setSuggest] = useState<string[]>([]); const [snaps, setSnaps] = useState<any[]>([]); const [voice, setVoice] = useState(false);
+  const [skills, setSkills] = useState<Skill[]>([]); const [pick, setPick] = useState(0);
   const stream = useStream<any>(url, EVENTS, { max: 2000 });
   const f = foldStream(stream.messages);
   const end = useRef<HTMLDivElement>(null);
@@ -38,6 +39,9 @@ export function CopilotPanel({ open, onClose, seed }: { open: boolean; onClose: 
     if (!open) return;
     api<{ questions: string[] }>(`/copilot/suggest?route=${encodeURIComponent(route)}&recordId=${encodeURIComponent(recordId ?? "")}`).then((r) => setSuggest(r.questions)).catch(() => setSuggest([]));
   }, [open, route, recordId]);
+  useEffect(() => { if (open) api<Skill[]>("/copilot/skills").then(setSkills).catch(() => setSkills([])); }, [open, view]);
+  const slash = /^\/[\w-]*$/.test(q) ? skills.filter((s) => s.slug.startsWith(q.slice(1).toLowerCase())) : [];
+  const choose = (s: Skill) => { setQ(`/${s.slug} `); setPick(0); };
   const ask = async (text: string, replace = false) => {
     const t = text.trim(); if (!t || url) return;
     if (replace) { const l = history[history.length - 1]; if (l) await dropTurn(l.id); setHistory((h) => h.slice(0, -1)); }
@@ -57,19 +61,22 @@ export function CopilotPanel({ open, onClose, seed }: { open: boolean; onClose: 
   const edit = async () => { if (!last) return; setQ(last.question); await dropTurn(last.id); setHistory((h) => h.slice(0, -1)); };
   const fresh = () => { setHistory([]); setThreadId(null); setView("chat"); setErr(""); };
   return <SlidePanel open={open} onClose={onClose} width={560} title={<span className="flex items-center gap-2"><Bot size={15} aria-hidden />Copilot</span>} description={recordId ? `Looking at ${recordId}` : "Ask about spend, payments, suppliers, approvals, ledger and FX"}
-    footer={<form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); ask(q); }}>
+    footer={<form className="relative flex gap-2" onSubmit={(e) => { e.preventDefault(); if (slash.length) choose(slash[pick] ?? slash[0]); else ask(q); }}>
+      {!!slash.length && <ul role="listbox" aria-label="Skills" className="absolute bottom-full left-0 right-0 mb-2 max-h-64 overflow-auto rounded-lg border border-border bg-surface p-1 shadow-lg">{slash.map((s, n) => <li key={s.slug} role="option" aria-selected={n === pick}>
+        <button type="button" onMouseDown={(e) => { e.preventDefault(); choose(s); }} className={`flex w-full flex-col rounded px-2 py-1.5 text-left hover:bg-subtle ${n === pick ? "bg-subtle" : ""}`}><span className="text-[13px] font-medium">/{s.slug} <span className="font-normal text-muted">{s.name}</span></span><span className="text-[11px] text-muted">{s.description}</span></button></li>)}</ul>}
       <SnapButton disabled={!!url} onDraft={(d) => setSnaps((x) => [...x, d])} onError={setErr} />
       <MicButton disabled={!!url} onText={(t) => { setQ(t); setVoice(true); }} />
-      <Input aria-label="Ask the copilot" value={q} onChange={(e) => { setQ(e.target.value); if (!e.target.value) setVoice(false); }} placeholder={recordId ? `Ask about ${recordId} or anything else` : "Ask about spend, approvals, ledger or FX"} disabled={!!url} className="flex-1" />
+      <Input aria-label="Ask the copilot" value={q} onChange={(e) => { setQ(e.target.value); setPick(0); if (!e.target.value) setVoice(false); }} onKeyDown={(e) => { if (!slash.length) return; if (e.key === "ArrowDown") { e.preventDefault(); setPick((p) => (p + 1) % slash.length); } else if (e.key === "ArrowUp") { e.preventDefault(); setPick((p) => (p - 1 + slash.length) % slash.length); } else if (e.key === "Escape") setQ(""); }} placeholder={recordId ? `Ask about ${recordId} or type / for a skill` : "Ask a question or type / for a skill"} disabled={!!url} className="flex-1" />
       {url ? <Button type="button" variant="outline" onClick={stop} aria-label="Stop answer" title="Stop"><Square size={14} /></Button> : <Button type="submit" variant="primary" disabled={!q.trim()} aria-label="Send question"><Send size={14} /></Button>}</form>}>
     <div className="flex flex-wrap items-center gap-1.5">
       <Button size="sm" variant={view === "chat" ? "primary" : "outline"} onClick={() => setView("chat")}>Chat</Button>
       <Button size="sm" variant={view === "threads" ? "primary" : "outline"} onClick={() => setView("threads")}><History size={13} aria-hidden className="mr-1" />Threads</Button>
       <Button size="sm" variant={view === "memory" ? "primary" : "outline"} onClick={() => setView("memory")}><Brain size={13} aria-hidden className="mr-1" />What I remember</Button>
+      <Button size="sm" variant={view === "skills" ? "primary" : "outline"} onClick={() => setView("skills")}><Sparkles size={13} aria-hidden className="mr-1" />Skills</Button>
       <Button size="sm" onClick={fresh}><Plus size={13} aria-hidden className="mr-1" />New</Button>
       <Button size="sm" onClick={() => ask(DIGEST)} disabled={!!url}><Sun size={13} aria-hidden className="mr-1" />What changed today</Button>
     </div>
-    {view === "threads" ? <Threads current={threadId} onOpen={openThread} onDeleted={(id) => { if (id === threadId) fresh(); }} /> : view === "memory" ? <Memories /> : <>
+    {view === "threads" ? <Threads current={threadId} onOpen={openThread} onDeleted={(id) => { if (id === threadId) fresh(); }} /> : view === "memory" ? <Memories /> : view === "skills" ? <Skills onUse={(s) => { setView("chat"); choose(s); }} /> : <>
       <p className="text-xs text-muted">Answers use read-only tools on your tenant only. The copilot can suggest an action, but nothing happens until you click it, and the normal permission and approval checks still apply.</p>
       {!history.length && !asked && <div className="flex flex-col gap-1.5" aria-label="Suggested questions">
         <span className="text-[11px] font-medium uppercase tracking-wide text-muted">Suggested for this page</span>
@@ -110,7 +117,7 @@ function Threads({ current, onOpen, onDeleted }: { current: string | null; onOpe
   </div>;
 }
 
-/** What the copilot remembers for you in this tenant. Only you see it. Edit keeps the old version closed, forget stops it being used. */
+/** What the copilot remembers for you in this tenant. Only you see it. Edit replaces the text, forget deletes it. */
 function Memories() {
   const [rows, setRows] = useState<Memory[] | null>(null); const [edit, setEdit] = useState<{ id: string; text: string } | null>(null); const [err, setErr] = useState("");
   const load = () => api<Memory[]>("/copilot/memories").then(setRows).catch((e) => setErr(e.message));
@@ -128,6 +135,25 @@ function Memories() {
           <button aria-label={`Forget ${m.text}`} className="rounded p-1 text-muted hover:bg-subtle hover:text-bad" onClick={() => run(() => api(`/copilot/memories/${m.id}`, undefined, { method: "DELETE" }))}><Trash2 size={13} /></button></>}
       </li>)}</ul>
       <div className="flex justify-end"><Button size="sm" variant="outline" onClick={() => { if (confirm("Forget everything the copilot remembers for you here?")) run(() => api("/copilot/memories", undefined, { method: "DELETE" })); }}>Forget all</Button></div></>}
+  </div>;
+}
+
+/** Skills you can run here. A tenant admin or the operator can turn each one on or off for the tenant. */
+function Skills({ onUse }: { onUse: (s: Skill) => void }) {
+  const me = useMe().data; const admin = !!me && (me.operator || me.user.role === "client_admin");
+  const [rows, setRows] = useState<{ slug: string; name: string; description: string; enabled: boolean }[] | null>(null); const [mine, setMine] = useState<Skill[]>([]); const [err, setErr] = useState("");
+  const load = () => { api<Skill[]>("/copilot/skills").then(setMine).catch((e) => setErr(e.message)); if (admin) api<any[]>("/copilot/skills/settings").then(setRows).catch((e) => setErr(e.message)); };
+  useEffect(load, [admin]); // eslint-disable-line react-hooks/exhaustive-deps
+  const flip = async (slug: string, enabled: boolean) => { try { setErr(""); await api(`/copilot/skills/${slug}`, { enabled }); load(); } catch (e: any) { setErr(e.message); } };
+  const list = admin && rows ? rows : mine.map((s) => ({ ...s, enabled: true }));
+  return <div className="flex flex-col gap-2">
+    <p className="text-xs text-muted">A skill is a saved set of steps that uses only a few read tools. Type / in the question box to pick one.{admin ? " As an admin you can turn a skill on or off for everyone in this tenant." : ""}</p>
+    {err && <p role="alert" className="text-xs text-bad">{err}</p>}
+    {!list.length ? <p className="text-xs text-muted">No skills are turned on here.</p> : <ul className="divide-y divide-border rounded-lg border border-border">{list.map((s) => { const usable = mine.some((m) => m.slug === s.slug); return <li key={s.slug} className="flex items-center gap-2 px-2.5 py-2">
+      <div className="min-w-0 flex-1"><div className="text-[13px] font-medium">{s.name} <span className="font-mono text-[11px] text-muted">/{s.slug}</span></div><div className="text-[11px] text-muted">{s.description}</div></div>
+      {usable && <Button size="sm" variant="outline" onClick={() => onUse(mine.find((m) => m.slug === s.slug)!)}>Use</Button>}
+      {admin && rows && <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" aria-label={`Turn ${s.name} ${s.enabled ? "off" : "on"}`} checked={s.enabled} onChange={(e) => flip(s.slug, e.target.checked)} />{s.enabled ? "On" : "Off"}</label>}
+    </li>; })}</ul>}
   </div>;
 }
 
@@ -167,6 +193,7 @@ function Vote({ a }: { a: Answer }) {
 function Turn({ a, onClose }: { a: Answer; onClose: () => void }) {
   return <div className="flex flex-col gap-2">
     <Bubble me>{a.question}</Bubble>
+    {a.skill && <div className="flex"><Badge v={`Skill: ${a.skill.name}`} tone="neutral" /></div>}
     <Bubble>{a.refused && <span className="mb-1 block text-[11px] font-medium text-warn">No source found, so no answer</span>}{a.answer}</Bubble>
     {!!a.memories?.length && <div className="flex flex-wrap items-center gap-1" aria-label="From memory"><span className="text-[11px] text-muted">From memory</span>{a.memories.map((m) => <Badge key={m.id} v={m.text.length > 40 ? m.text.slice(0, 40) + "..." : m.text} tone="neutral" />)}</div>}
     {a.chart && <ChartView c={a.chart} id={a.id} />}

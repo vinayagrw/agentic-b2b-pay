@@ -45,11 +45,16 @@ describe("copilot memory (mock mode)", () => {
     const m = CP.listMemories(jane.user, "tnt-acme")[0];
     const e = CP.editMemory(jane.user, "tnt-acme", m.id, `bigco means ${sup.id} please`);
     expect(CP.listMemories(jane.user, "tnt-acme").map((x) => x.id)).toEqual([e.id]);
-    expect((sql.prepare("SELECT valid_to FROM memories WHERE id = ?").get(m.id) as any).valid_to).toBeTruthy();
+    const closed = sql.prepare("SELECT valid_to, text FROM memories WHERE id = ?").get(m.id) as any; expect(closed.valid_to).toBeTruthy(); expect(closed.text).toBe("");
+    const fts = (w: string) => (sql.prepare("SELECT COUNT(*) n FROM memories_fts WHERE memories_fts MATCH ?").get(`"${w}"`) as any).n;
+    expect(fts("please")).toBe(1);
     CP.forgetMemory(jane.user, "tnt-acme", e.id);
+    expect(sql.prepare("SELECT 1 FROM memories WHERE id = ?").get(e.id)).toBeUndefined(); expect(fts("please")).toBe(0);
+    const ev = db.evidence.find((x) => x.event === "copilot.memory.forget" && x.subjectId === e.id)!; expect(JSON.stringify(ev)).not.toMatch(/bigco|please/); expect((ev.payload as any).kind).toBe("alias");
     const b = await CP.ask(jane, "tell me about bigco");
     expect(b.memories).toBeUndefined(); expect(b.tools.some((t) => t.tool === "supplierProfile")).toBe(false);
     await CP.ask(jane, "remember I prefer charts as a line"); expect(CP.forgetAll(jane.user, "tnt-acme").forgotten).toBe(1);
+    expect((sql.prepare("SELECT COUNT(*) n FROM memories WHERE user_id = ?").get(jane.user.id) as any).n).toBe(0); expect(fts("charts")).toBe(0);
     expect(db.evidence.filter((x) => /copilot\.memory\.(edit|forget|forget_all)/.test(x.event)).length).toBe(3);
   });
   it("deleting the last turn stops it feeding the thread", async () => {

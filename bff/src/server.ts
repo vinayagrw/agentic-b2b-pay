@@ -13,6 +13,7 @@ import { PoDraft, RegisterAgent } from "@b2b/shared";
 import { db, reset, save } from "./modules/store.js";
 import * as X from "./explain.js";
 import * as CP from "./copilot.js";
+import * as SK from "./skills.js";
 import * as FX from "./modules/fx.js";
 import * as S from "./service.js";
 import { RailError } from "./rails/index.js";
@@ -136,7 +137,7 @@ export async function buildApp() {
     "GET /cases/:id/evidence-pack": "audit.read", "GET /payments/:id/why/export.json": "audit.read", "GET /payments/:id/why/export.md": "audit.read",
     "GET /identity/configs": "identity.manage", "POST /identity/configs": "identity.manage", "GET /iam/users": "roles.manage", "GET /iam/roles": "roles.manage", "POST /iam/roles": "roles.manage", "PUT /iam/roles/:id": "roles.manage", "DELETE /iam/roles/:id": "roles.manage", "POST /iam/users/:id/role": "roles.manage",
     "POST /sessions/:id/revoke": "workspace.read", "POST /risk/:paymentId/decide": "risk.review", "POST /views": "workspace.read", "DELETE /views/:id": "workspace.read", "GET /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens/:id/revoke": "developers.keys",
-    "POST /copilot/outcome": "workspace.read", "POST /workspace/suppliers/:id/portal-link": "suppliers.invite", "GET /ops/agent-view": "treasury.read", "GET /ops/copilot-metrics": "treasury.read", "GET /ops/offers": "treasury.read", "POST /ops/offers/:tenantId": "settings.live_toggle",
+    "POST /copilot/outcome": "workspace.read", "POST /copilot/skills/:slug": "workspace.read", "POST /workspace/suppliers/:id/portal-link": "suppliers.invite", "GET /ops/agent-view": "treasury.read", "GET /ops/copilot-metrics": "treasury.read", "GET /ops/offers": "treasury.read", "POST /ops/offers/:tenantId": "settings.live_toggle",
   };
   /** The permission a route needs. Developer routes need developers.keys, other reads need workspace.read, other writes need flow.operate. */
   const permFor = (method: string, url: string): I.Permission => ROUTE_PERMS[`${method} ${url}`] ?? (url.startsWith("/dev/") ? "developers.keys" : method === "GET" ? "workspace.read" : "flow.operate");
@@ -391,6 +392,12 @@ export async function buildApp() {
   app.patch("/copilot/memories/:id", async (req: any) => CP.editMemory(who(req), scopeOf(req), req.params.id, String(b(req).text ?? "")));
   app.delete("/copilot/memories/:id", async (req: any) => CP.forgetMemory(who(req), scopeOf(req), req.params.id));
   app.delete("/copilot/memories", async (req) => CP.forgetAll(who(req), scopeOf(req)));
+  // Skills: enabled ones for the caller, and on or off per tenant for a tenant admin or the operator.
+  CP.skills();
+  const skTenant = (req: any) => { const u = who(req); const t = String(req.query?.tenantId ?? b(req).tenantId ?? "") || scopeOf(req) || u.tenantId; if (!t) throw new S.HttpError(400, "Pick a client tenant"); return t; };
+  app.get("/copilot/skills", async (req) => CP.skillsFor(cpCtx(req)).map((s) => ({ slug: s.slug, name: s.name, description: s.description, tools: s.tools.map((t) => t.name), chart: s.chart ?? null })));
+  app.get("/copilot/skills/settings", async (req) => SK.settings(CP.skills(), who(req), skTenant(req)));
+  app.post("/copilot/skills/:slug", async (req: any) => SK.setSkill(CP.skills(), who(req), skTenant(req), String(req.params.slug), !!b(req).enabled));
   app.delete("/copilot/answers/:id", async (req: any) => CP.deleteTurn(who(req), req.params.id));
   app.post("/copilot/feedback", async (req) => CP.feedback(who(req), String(b(req).answerId ?? ""), String(b(req).vote ?? "")));
   app.get("/copilot/answers/:id/export.csv", async (req: any, reply) => reply.type("text/csv").header("content-disposition", `attachment; filename="copilot-${String(req.params.id).replace(/[^\w-]/g, "")}.csv"`).send(CP.answerCsv(who(req), req.params.id)));
