@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Bot, Camera, Database, Download, Gift, History, Mic, MicOff, Pencil, Plus, RotateCcw, Search, Send, Square, ShieldAlert, Sun, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { api, useAct } from "../lib/api";
@@ -7,6 +7,18 @@ import { foldStream, recordFromPath, snapProblem, speechCtor, SNAP_TYPES, TOOL_N
 import { SlidePanel } from "./kit";
 import { BarList, DataTable, DonutChart } from "./live";
 import { Badge, Button, Input } from "./ui";
+const SpecChart = lazy(() => import("./SpecChart"));
+type View = "bar" | "line" | "area" | "donut" | "stacked" | "table";
+/** PNG of the chart SVG: serialize, draw on a canvas, download. No extra library. */
+async function savePng(box: HTMLElement | null, name: string) {
+  const svg = box?.querySelector("svg.recharts-surface, svg"); if (!svg) return;
+  const r = svg.getBoundingClientRect(); const clone = svg.cloneNode(true) as SVGSVGElement; clone.setAttribute("xmlns", "http://www.w3.org/2000/svg"); clone.setAttribute("width", String(r.width)); clone.setAttribute("height", String(r.height));
+  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" }));
+  const img = new Image(); await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = url; });
+  const cv = document.createElement("canvas"); cv.width = r.width * 2; cv.height = r.height * 2; const g = cv.getContext("2d")!; g.scale(2, 2);
+  g.fillStyle = getComputedStyle(document.body).backgroundColor || "#fff"; g.fillRect(0, 0, r.width, r.height); g.drawImage(img, 0, 0); URL.revokeObjectURL(url);
+  const a = document.createElement("a"); a.download = `${name.replace(/[^\w-]+/g, "-").toLowerCase()}.png`; a.href = cv.toDataURL("image/png"); a.click();
+}
 
 const EVENTS = ["status", "tool", "token", "done", "failed"];
 const DIGEST = "What changed today?";
@@ -96,12 +108,18 @@ function Threads({ current, onOpen, onDeleted }: { current: string | null; onOpe
   </div>;
 }
 
-/** Inline chart for numeric answers, with a CSV of the answer data. */
+/** Inline chart for numeric answers, with a type switch, a PNG and a CSV of the answer data. */
 function ChartView({ c, id }: { c: Chart; id: string }) {
-  return <div className="rounded-lg border border-border p-2.5" aria-label={`${c.title} chart`}>
-    <div className="mb-1.5 flex items-center justify-between text-xs font-medium"><span>{c.title}</span>
-      <a href={`/api/copilot/answers/${id}/export.csv`} download className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"><Download size={12} aria-hidden />CSV</a></div>
-    {c.kind === "donut" ? <DonutChart title={c.title} data={c.series} format={num} /> : c.kind === "bar" ? <BarList title={c.title} data={c.series} format={num} /> : <DataTable columns={c.columns} rows={c.rows} />}
+  const sp = c.spec; const [view, setView] = useState<View>(sp?.type ?? "bar"); const box = useRef<HTMLDivElement>(null);
+  const kinds: View[] = sp?.series ? ["bar", "stacked", "line", "area", "table"] : ["bar", "line", "area", "donut", "table"];
+  return <div className="rounded-lg border border-border p-2.5" aria-label={`${sp?.title ?? c.title} chart`}>
+    <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1 text-xs font-medium"><span>{sp?.title ?? c.title}</span>
+      <span className="inline-flex items-center gap-2">
+        {sp && <span role="group" aria-label="Chart type" className="inline-flex rounded border border-border">{kinds.map((k) => <button key={k} aria-pressed={view === k} onClick={() => setView(k)} className={`px-1.5 py-0.5 text-[11px] capitalize ${view === k ? "bg-subtle text-fg" : "text-muted"}`}>{k}</button>)}</span>}
+        {sp && view !== "table" && <button onClick={() => savePng(box.current, sp.title)} className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"><Camera size={12} aria-hidden />PNG</button>}
+        <a href={`/api/copilot/answers/${id}/export.csv`} download className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"><Download size={12} aria-hidden />CSV</a></span></div>
+    <div ref={box}>{sp ? view === "table" ? <DataTable columns={c.columns} rows={c.rows} /> : <Suspense fallback={<div className="h-[220px] text-[11px] text-muted">Loading chart</div>}><SpecChart spec={sp} type={view} /></Suspense>
+      : c.kind === "donut" ? <DonutChart title={c.title} data={c.series} format={num} /> : c.kind === "bar" ? <BarList title={c.title} data={c.series} format={num} /> : <DataTable columns={c.columns} rows={c.rows} />}</div>
   </div>;
 }
 

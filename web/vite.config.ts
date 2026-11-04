@@ -4,7 +4,8 @@ import tailwindcss from "@tailwindcss/vite";
 const bff = `http://127.0.0.1:${process.env.BFF_PORT ?? 8790}`;
 /** Vendor chunks so no single file carries every library. Pages are split per route in App.tsx. */
 const VENDOR: [string, RegExp][] = [
-  ["charts", /node_modules\/(recharts|d3-[^/]+|victory-vendor|internmap|decimal\.js-light|lodash|react-smooth|recharts-scale|eventemitter3|tiny-invariant|fast-equals)\//],
+  ["charts-d3", /node_modules\/(d3-[^/]+|victory-vendor|internmap|decimal\.js-light|lodash)\//],
+  ["charts", /node_modules\/(recharts|react-smooth|recharts-scale|eventemitter3|tiny-invariant|fast-equals)\//],
   ["xyflow", /node_modules\/(@xyflow|d3-(drag|selection|zoom|dispatch|interpolate|color|ease|timer|transition)|classcat|zustand)\//],
   ["cmdk", /node_modules\/(cmdk|@radix-ui|@floating-ui|react-remove-scroll|react-remove-scroll-bar|react-style-singleton|use-callback-ref|use-sidecar|aria-hidden|tslib)\//],
   ["tanstack", /node_modules\/@tanstack\//],

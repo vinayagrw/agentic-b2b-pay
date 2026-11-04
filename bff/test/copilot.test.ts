@@ -90,3 +90,37 @@ describe("copilot (mock mode, no model)", () => {
     expect(r.poId).toBeTruthy();
   });
 });
+
+describe("copilot query tool and chart spec (mock mode)", () => {
+  it("groups payments by month inside the tenant and sums match the records", async () => {
+    await S.runFlow("Need 50 sealed 6204 bearings"); await S.runFlow("Need 3 shelf label packs", { tenantId: "tnt-globex" });
+    const c = ctx("usr-cfo-jane", "tnt-acme");
+    const r = CP.runTool(c, "query", { measure: "amount_sum", dimension: "none", period: "month", days: "730" });
+    expect(r.error).toBeUndefined();
+    const mine = db.intents.filter((i) => i.tenantId === "tnt-acme" && i.kind !== "refund" && i.createdAt && Date.parse(i.createdAt) >= Date.now() - 730 * 864e5);
+    const by = new Map<string, number>(); for (const i of mine) { const k = new Date(i.createdAt!).toISOString().slice(0, 7); by.set(k, (by.get(k) ?? 0) + i.amount); }
+    expect(r.rows.length).toBe(by.size);
+    for (const row of r.rows as any[]) expect(row.amount_sum).toBeCloseTo(by.get(row.period)!, 2);
+    const ids = (r.rows as any[]).flatMap((x) => x.ids);
+    for (const id of ids) expect(db.intents.find((i) => i.id === id)!.tenantId).toBe("tnt-acme");
+    expect(CP.runTool(c, "query", { dimension: "1; DROP TABLE x" }).error).toMatch(/not valid/);
+    expect(CP.runTool(c, "query", { sql: "select 1" }).error).toMatch(/not valid/);
+  });
+  it("falls back to chartFor when a spec names columns the rows do not have", async () => {
+    await S.runFlow("Need 50 sealed 6204 bearings");
+    const res = [CP.runTool(ctx("usr-cfo-jane", "tnt-acme"), "spendBySupplier")];
+    expect(CP.buildSpec(res, { type: "line", x: "supplier", y: ["secret"] })).toBeNull();
+    expect(CP.buildSpec(res, { type: "pie3d", x: "supplier", y: ["total"] })).toBeNull();
+    const ch = CP.withSpec(res, { type: "bar", x: "nope", y: ["total"] })!;
+    expect(ch.spec).toBeUndefined(); expect(ch.kind).toBe("bar");
+    expect(CP.withSpec(res, { type: "bar", x: "supplier", y: ["total"] })!.spec!.rows[0]).toHaveProperty("total");
+  });
+  it("routes spend by supplier by month as a line to the query tool with a line spec", async () => {
+    await S.runFlow("Need 50 sealed 6204 bearings");
+    const a = await CP.ask(ctx("usr-cfo-jane", "tnt-acme"), "Show spend by supplier by month as a line");
+    expect(a.tools[0].tool).toBe("query"); expect(a.tools[0].args).toMatchObject({ dimension: "supplier", period: "month" });
+    expect(a.chart!.spec).toMatchObject({ type: "line", x: "period", y: ["amount_sum"], series: "supplier" });
+    const t = await CP.ask(ctx("usr-cfo-jane", "tnt-acme"), "Payment trend over time");
+    expect(t.chart!.spec!.type).toBe("area");
+  });
+});
