@@ -12,6 +12,7 @@ import { z } from "zod";
 import { PoDraft, RegisterAgent } from "@b2b/shared";
 import { db, reset, save } from "./modules/store.js";
 import * as X from "./explain.js";
+import * as CP from "./copilot.js";
 import * as FX from "./modules/fx.js";
 import * as S from "./service.js";
 import { RailError } from "./rails/index.js";
@@ -100,7 +101,7 @@ export async function buildApp() {
     "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /refunds": "payments.refund",
     "POST /erp/vendor-master/changes": "erp.vendor_master", "POST /erp/vendor-master/changes/:id/approve": "payments.approve", "POST /erp/vendor-master/changes/:id/callback": "payments.approve",
     "GET /rails/balances": "rails.balances", "GET /users": "users.read", "PATCH /tenants/:id/branding": "settings.branding", "POST /tenants/:id/logo": "settings.branding",
-    "POST /changes": "changes.request", "POST /changes/:id/decide": "changes.decide",
+    "POST /changes": "changes.request", "POST /copilot/ask": "workspace.read", "POST /copilot/answer": "workspace.read", "POST /changes/:id/decide": "changes.decide",
     "POST /workspace/agents": "agents.manage", "PUT /workspace/agents/:id/mandate": "agents.manage", "POST /workspace/agents/:id/keys": "agents.manage", "POST /workspace/agents/:id/:action": "agents.manage",
     "POST /workspace/rules": "rules.edit", "PUT /workspace/rules/:id": "rules.edit", "DELETE /workspace/rules/:id": "rules.edit", "POST /workspace/rules/order": "rules.edit",
     "POST /workspace/suppliers/invite": "suppliers.invite", "POST /workspace/suppliers/:id/link": "suppliers.invite", "POST /workspace/suppliers/:id/review": "suppliers.review",
@@ -245,7 +246,7 @@ export async function buildApp() {
   app.post("/policy/evaluate", async (req) => { const x = b(req); return S.policyFor(x.agentId ?? "agt-buyer-1", x.supplierId, x.category, Number(x.amount)).decision; });
 
   app.post("/buyer/draft", async (req) => { const { t } = ctx(req); return S.draftPo(z.object({ need: z.string().min(3) }).parse(b(req)).need, t); });
-  app.post("/purchase-orders", async (req) => { const d = PoDraft.parse(b(req).draft); const sup = db.suppliers.find((x) => x.id === d.supplierId); if (sup) await S.ensureRates({ currency: d.currency, entityId: d.entityId, tenantId: sup.tenantId ?? "tnt-acme" }); return S.createPo(d, b(req).agentId); });
+  app.post("/purchase-orders", async (req) => { const d = PoDraft.parse(b(req).draft); const sup = db.suppliers.find((x) => x.id === d.supplierId); if (sup) await S.ensureRates({ currency: d.currency, entityId: d.entityId, tenantId: sup.tenantId ?? "tnt-acme" }); const po = S.createPo(d, b(req).agentId); po.requestedBy = who(req).id; save(); return po; });
   app.post("/approvals/:poId", async (req: any) => { const { u, t } = ctx(req); const po = db.pos.find((p) => p.id === req.params.poId); if (!po || (po.tenantId ?? "tnt-acme") !== t) throw new S.HttpError(404, "po not found"); if (b(req).approve) I.requirePermission(u, "payments.approve", { amount: po.total, tenantId: t }); return S.decideApproval(po.id, !!b(req).approve, u.id, String(b(req).comment ?? "")); });
   app.post("/goods-receipts", async (req) => S.receiveGoods(b(req).poId, Number(b(req).shortBy ?? 0)));
   app.post("/invoices/render", async (req) => ({ text: S.invoiceText(b(req).poId, { priceBumpPct: Number(b(req).priceBumpPct ?? 0), poison: !!b(req).poison }) }));
@@ -317,6 +318,22 @@ export async function buildApp() {
   // Step 6: revenue, KPIs, dispute evidence, developer keys and webhooks
   app.get("/ops/revenue", async (req) => { who(req); return A.revenue(); });
   app.get("/payments/:id/mandates", async (req: any) => { const i = scoped(scopeOf(req)).intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); return S.mandatesView(i.id); });
+  // Copilot. Read-only tools scoped like every other read view. Proposals are returned, never executed.
+  const cpCtx = (req: any): CP.Ctx => { const u = who(req); return { user: u, scope: scopeOf(req), prefix: P.isOperator(u) ? "/operator" : "/app" }; };
+  app.post("/copilot/answer", async (req) => CP.ask(cpCtx(req), String(b(req).question ?? "")));
+  app.post("/copilot/ask", async (req) => CP.enqueue(cpCtx(req), String(b(req).question ?? "")));
+  app.get("/copilot/stream/:id", async (req: any, reply) => {
+    const u = who(req); const p = CP.take(req.params.id, u.id);
+    reply.hijack();
+    reply.raw.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    const send = (event: string, data: unknown) => reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    try {
+      const r = await CP.ask(p.ctx, p.question, (s) => send(s.event, s.data));
+      for (const w of r.answer.match(/\S+\s*/g) ?? []) send("token", { text: w });
+      send("done", r);
+    } catch (e: any) { send("failed", { error: String(e.message ?? e) }); }
+    reply.raw.end();
+  });
   app.get("/payments/:id/why", async (req: any) => X.explainPayment(req.params.id, scopeOf(req)));
   app.get("/payments/:id/why/export.json", async (req: any, reply) => { const w = X.explainPayment(req.params.id, scopeOf(req)); return reply.header("content-disposition", `attachment; filename="why-${w.paymentId}.json"`).send({ ...w, records: S.evidenceView(undefined, null).records.filter((e) => [w.paymentId, w.poId, w.invoiceId].includes(e.subjectId)) }); });
   app.get("/payments/:id/why/export.md", async (req: any, reply) => { const w = X.explainPayment(req.params.id, scopeOf(req)); return reply.type("text/markdown; charset=utf-8").header("content-disposition", `attachment; filename="why-${w.paymentId}.md"`).send(X.whyMarkdown(w)); });

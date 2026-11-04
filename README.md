@@ -359,6 +359,16 @@ Each client tenant has several legal entities, each with a functional currency a
 - API: `GET /entities`, `GET /entities/:id/ledger`, `GET /fx/rate?from=EUR&to=USD`, `POST /fx/quotes`, `GET /fx/locks/:id`. `POST /invoices/:id/pay` takes an optional `fxLockId`.
 - Tests mock the rate fetch (`bff/test/fx.test.ts`): conversion, stale fallback, lock expiry, realised FX lines, per entity balance and tenant isolation.
 
+## Copilot chat
+
+A chat panel in the client workspace and the operator console. Open it with the Copilot button in the top bar, or press Ctrl K (Cmd K on a Mac), type a question and pick Ask copilot.
+
+- Grounding. The model never sees the database and never writes SQL. It picks from fixed, read-only tools in `bff/src/copilot.ts`: `spendBySupplier`, `paymentsByStatus`, `pendingApprovals`, `openInvoices`, `entityBalances`, `fxExposure` and `whyPayment`. Each tool reads only the rows of the active tenant, the same scope as every other read view, and checks `workspace.read` first. Every answer lists its sources: the tool, the record ids and a link to each record.
+- Streaming. `POST /copilot/ask` stores the question and returns an id. `GET /copilot/stream/:id` streams `status`, `tool`, `token` and `done` events over SSE to the panel through `useStream`. Only the user who asked can open the stream.
+- Actions. The copilot can only propose. A proposal is parsed from your own question, for example "approve po-1012" or "pause agent agt-buyer-1", and shown as a card. Nothing happens until you click Confirm and run, which calls the normal API with your own session, permissions, approval limits and maker checker rules. A person who raised a purchase order cannot approve it. There is no rail pause API, so the copilot does not offer one.
+- Prompt injection. Supplier names, invoice memos and other record text go to the model inside a data block marked as untrusted. Proposals never come from record text or model output, so injected text cannot create an action.
+- Modes. With `LLM_MODE=mock` the plan and answer are deterministic rules, so tests need no model. With `LLM_MODE=live` the claude CLI adapter picks tools and writes the answer, and the panel falls back to the rules answer if the model fails. The full reply arrives from the CLI at once and is then streamed word by word.
+
 ## Safety
 
 > [!IMPORTANT]

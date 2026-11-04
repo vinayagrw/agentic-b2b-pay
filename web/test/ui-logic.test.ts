@@ -33,3 +33,14 @@ describe("stream and permissions", () => {
   it("bounds the buffer", () => { expect(appendBounded([1, 2, 3], 4, 3)).toEqual([2, 3, 4]); });
   it("checks permissions", () => { const me = { permissions: ["workspace.read"] }; expect(can(me, "workspace.read")).toBe(true); expect(can(me, "payments.approve")).toBe(false); expect(can(null, "x")).toBe(false); expect(canAny(me, ["x", "workspace.read"])).toBe(true); });
 });
+
+import { foldStream } from "../src/lib/copilot";
+describe("copilot stream", () => {
+  it("folds tool, token and done events", () => {
+    const m = (event: string, data: any) => ({ event, data, at: 0 });
+    const f = foldStream([m("status", { step: "planning" }), m("tool", { tool: "pendingApprovals", rows: 2, error: null }), m("token", { text: "Two " }), m("token", { text: "orders" })]);
+    expect(f.text).toBe("Two orders"); expect(f.tools[0].rows).toBe(2); expect(f.done).toBeNull();
+    const d = foldStream([m("done", { question: "q", answer: "Final", sources: [], proposals: [], mode: "mock" })]);
+    expect(d.text).toBe("Final"); expect(d.step).toBe("done");
+  });
+});

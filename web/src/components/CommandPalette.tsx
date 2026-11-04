@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Command } from "cmdk";
 import * as D from "@radix-ui/react-dialog";
 import { useNavigate } from "react-router-dom";
-import { Banknote, Search, Truck } from "lucide-react";
+import { Banknote, Bot, Search, Truck } from "lucide-react";
 import { useGet, type Me } from "../lib/api";
 import { can } from "../lib/perm";
 import { usd } from "../lib/utils";
@@ -21,6 +21,7 @@ export function pagesFor(me: Pick<Me, "permissions">, kind: "operator" | "client
 export const SHORTCUTS: [string[], string][] = [
   [["Ctrl", "K"], "Open the command palette (Cmd K on a Mac)"],
   [["?"], "Show this list of shortcuts"],
+  [["Ctrl", "K"], "Type a question and pick Ask copilot to open the chat"],
   [["Up", "Down"], "Move through palette results"],
   [["Enter"], "Open the selected result"],
   [["Esc"], "Close a palette, panel or dialog"],
@@ -45,7 +46,7 @@ export function useShortcuts() {
 const item = "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] data-[selected=true]:bg-subtle";
 const group = "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-muted";
 
-export function CommandPalette({ me, kind, open, onOpenChange }: { me: Me; kind: "operator" | "client"; open: boolean; onOpenChange: (o: boolean) => void }) {
+export function CommandPalette({ me, kind, open, onOpenChange, onAsk }: { me: Me; kind: "operator" | "client"; open: boolean; onOpenChange: (o: boolean) => void; onAsk?: (q: string) => void }) {
   const nav = useNavigate(); const [q, setQ] = useState("");
   const prefix = kind === "operator" ? "/operator" : "/app";
   const read = can(me, "workspace.read");
@@ -61,6 +62,9 @@ export function CommandPalette({ me, kind, open, onOpenChange }: { me: Me; kind:
       <Command.Input value={q} onValueChange={setQ} placeholder="Jump to a page, payment or supplier" className="h-11 flex-1 bg-transparent text-[13px] outline-none" /></div>
     <Command.List className="max-h-[50vh] overflow-y-auto p-1.5">
       <Command.Empty className="px-3 py-6 text-center text-xs text-muted">No matches. Try a payment id or supplier name.</Command.Empty>
+      {onAsk && read && <Command.Group heading="Copilot" className={group}>
+        <Command.Item value="copilot ask" onSelect={() => { const t = q.trim(); onOpenChange(false); setQ(""); onAsk(t); }} className={item}><Bot size={14} aria-hidden className="text-muted" />{q.trim() ? <>Ask copilot: <span className="truncate">{q.trim()}</span></> : "Open copilot chat"}</Command.Item>
+      </Command.Group>}
       {pages.some((p) => !needle || p.label.toLowerCase().includes(needle)) && <Command.Group heading="Pages" className={group}>
         {pages.filter((p) => !needle || p.label.toLowerCase().includes(needle)).map((p) => <Command.Item key={p.to} value={`page ${p.to}`} onSelect={() => go(p.to)} className={item}><p.icon size={14} aria-hidden className="text-muted" />{p.label}</Command.Item>)}
       </Command.Group>}

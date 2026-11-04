@@ -7,6 +7,7 @@ import { applyTheme } from "../lib/theme";
 import { cn } from "../lib/utils";
 import { CommandPalette, ShortcutsOverlay, useShortcuts } from "./CommandPalette";
 import { EntitySwitcher } from "../pages/entities";
+import { CopilotPanel } from "./Copilot";
 import { Badge, Menu, MenuContent, MenuItem, MenuLabel, MenuSep, MenuTrigger } from "./ui";
 
 type Item = { to: string; label: string; icon: LucideIcon };
@@ -41,6 +42,7 @@ export function Shell({ kind }: { kind: "operator" | "client" }) {
   const { data: me } = useMe();
   const live = useLiveEvents();
   const keys = useShortcuts();
+  const [copilot, setCopilot] = useState<{ open: boolean; seed?: string }>({ open: false });
   useEffect(() => { applyTheme(me?.theme); }, [me?.theme]);
   if (!me) return null;
   const nav = kind === "operator" ? OPERATOR_NAV : CLIENT_NAV;
@@ -51,15 +53,16 @@ export function Shell({ kind }: { kind: "operator" | "client" }) {
       <div className="flex items-center gap-1.5 px-4 py-3 text-[11px] text-muted"><Activity size={12} className={live ? "text-ok" : "text-bad"} />{live ? "Live updates on" : "Reconnecting"}</div>
     </aside>
     <div className="flex min-w-0 flex-1 flex-col">
-      <TopBar me={me} kind={kind} onSearch={() => keys.setPalette(true)} />
-      <CommandPalette me={me} kind={kind} open={keys.palette} onOpenChange={keys.setPalette} />
+      <TopBar me={me} kind={kind} onSearch={() => keys.setPalette(true)} onCopilot={() => setCopilot({ open: true })} />
+      <CommandPalette me={me} kind={kind} open={keys.palette} onOpenChange={keys.setPalette} onAsk={(q) => setCopilot({ open: true, seed: q })} />
+      <CopilotPanel open={copilot.open} seed={copilot.seed} onClose={() => setCopilot({ open: false })} />
       <ShortcutsOverlay open={keys.help} onOpenChange={keys.setHelp} />
       <main className={cn("mx-auto w-full flex-1 px-4 py-5 md:px-6", kind === "operator" ? "max-w-[1400px]" : "max-w-[1200px]")}><Outlet /></main>
     </div>
   </div>;
 }
 
-function TopBar({ me, kind, onSearch }: { me: Me; kind: "operator" | "client"; onSearch: () => void }) {
+function TopBar({ me, kind, onSearch, onCopilot }: { me: Me; kind: "operator" | "client"; onSearch: () => void; onCopilot: () => void }) {
   const qc = useQueryClient(); const nav = useNavigate();
   const [mode, setMode] = useColorMode();
   const live = Object.values(me.tenant.railSettings ?? {}).some((r) => r.env === "live");
@@ -76,6 +79,7 @@ function TopBar({ me, kind, onSearch }: { me: Me; kind: "operator" | "client"; o
     {kind === "client" && <EntitySwitcher />}
     <span className="ml-auto" />
     <button className="hidden h-8 items-center gap-2 rounded-md border border-border px-2.5 text-xs text-muted hover:bg-subtle sm:flex" onClick={onSearch} aria-label="Open command palette"><Search size={13} aria-hidden />Search<kbd className="rounded border border-border bg-subtle px-1 font-mono text-[10px]">Ctrl K</kbd></button>
+    <button className="flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs hover:bg-subtle" onClick={onCopilot} aria-label="Open copilot"><Bot size={13} aria-hidden />Copilot</button>
     <Badge v={`LLM ${me.llmMode}`} tone="neutral" />
     <button className="grid h-8 w-8 place-items-center rounded-md hover:bg-subtle" aria-label="Toggle colour mode" onClick={() => setMode(mode === "dark" ? "light" : "dark")}>{mode === "dark" ? <Sun size={15} /> : <Moon size={15} />}</button>
     <Menu><MenuTrigger asChild><button className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-subtle" aria-label="User menu"><span className="grid h-7 w-7 place-items-center rounded-full bg-accent text-[11px] font-semibold text-accent-fg">{me.user.name.split(" ").map((w) => w[0]).join("")}</span><span className="hidden text-left sm:block"><span className="block text-[12px] font-medium leading-tight">{me.user.name}</span><span className="block text-[11px] leading-tight text-muted">{(me.roleName ?? me.user.role).replace("_", " ")}</span></span></button></MenuTrigger>

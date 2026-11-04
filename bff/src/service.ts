@@ -167,6 +167,7 @@ function pushPoToErp(po: PurchaseOrder, sup: Supplier) {
 export function canApprove(po: PurchaseOrder, user: { id: string; role: string; tenantId: string | null }) {
   if (po.status !== "pending_approval") return { ok: false, why: `PO is ${po.status}` };
   if (user.tenantId && user.tenantId !== tenantOf(po)) return { ok: false, why: "Wrong tenant" };
+  if (po.requestedBy && po.requestedBy === user.id) return { ok: false, why: "You raised this order, so another person must approve it" };
   const a = po.approval; if (!a) return { ok: ["approver", "client_admin", "operator_admin"].includes(user.role), why: "Needs an approver" };
   const lvl = a.levels[a.current];
   if (a.levels.some((l) => l.approvals.some((x) => x.userId === user.id))) return { ok: false, why: "You already approved this PO at an earlier level" };
