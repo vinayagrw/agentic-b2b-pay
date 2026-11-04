@@ -120,7 +120,7 @@ export async function buildApp() {
 
   // Auth. SSO first. Demo login (pick a seeded user, no password) only when DEMO_LOGIN=1.
   const demoOn = () => process.env.DEMO_LOGIN === "1";
-  const OIDC_COOKIE = { path: "/auth/oidc", httpOnly: true, sameSite: "lax" as const, signed: true, maxAge: 600 };
+  const OIDC_COOKIE = { path: "/", httpOnly: true, sameSite: "lax" as const, signed: true, maxAge: 600 };
   const sessionCookie = (reply: any, id: string) => reply.setCookie("sid", id, { ...COOKIE, maxAge: Math.floor(I.absoluteMs() / 1000) }).clearCookie("tenant", { path: "/" });
   const meta = (req: any) => ({ ip: req.ip, ua: String(req.headers["user-agent"] ?? "") });
   app.get("/auth/config", async () => ({ demo: demoOn(), sso: I.listIdps().filter((x) => x.enabled).map((x) => ({ id: x.id, scope: x.scope, label: x.scope === "platform" ? "Sign in with SSO" : `Sign in with ${P.getTenant(x.scope)?.name ?? x.scope}` })), saml: { available: false } }));
@@ -140,7 +140,7 @@ export async function buildApp() {
   });
   app.get("/auth/oidc/callback", async (req: any, reply) => {
     const raw = req.cookies?.oidc; const v = raw ? req.unsignCookie(raw) : null;
-    reply.clearCookie("oidc", { path: "/auth/oidc" });
+    reply.clearCookie("oidc", { path: "/" });
     const fail = (msg: string, idp?: string) => { P.audit(null, "auth", idp ?? "oidc", "auth.login_failed", { reason: msg }); return reply.redirect(`${OIDC.publicUrl()}/login?error=${encodeURIComponent(msg)}`); };
     if (!v?.valid || !v.value) return fail("Sign in expired. Start again.");
     const pending = JSON.parse(v.value) as OIDC.Pending;
