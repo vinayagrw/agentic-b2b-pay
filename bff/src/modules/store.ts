@@ -1,5 +1,4 @@
-import fs from "node:fs";
-import path from "node:path";
+import { sql } from "../db.js";
 import type { Rail, Category, PoLine, PolicyDecision, MatchResult, RouteDecision, ComplianceResult, InvoiceExtract } from "@b2b/shared";
 
 export type Org = { id: string; legalName: string; type: "buyer" | "supplier"; kybStatus: "verified" | "pending"; country: string };
@@ -73,18 +72,54 @@ export function seed(): Db {
   };
 }
 
-const FILE = process.env.DB_FILE ?? path.resolve(process.cwd(), "../data/db.json");
-const PERSIST = process.env.DB_PERSIST !== "0" && process.env.LLM_MODE !== "mock-test";
+const TENANT = "tnt-acme";
+const intentStatus = (s: PaymentIntent["status"]) => (s === "settled" ? "settled" : s === "routed" ? "pending" : s === "created" ? "submitted" : "failed");
+const KV_KEYS = ["orgs", "catalog", "receipts", "erp", "payeeChanges", "refunds", "alerts", "killSwitch", "seq"] as const;
+
+/** Loads the domain state from SQLite. An empty database is seeded. */
+function load(): Db {
+  const kv = sql.prepare("SELECT key, value FROM kv").all() as { key: string; value: string }[];
+  if (!kv.length) { const d = seed(); write(d); return d; }
+  const k = Object.fromEntries(kv.map((r) => [r.key, JSON.parse(r.value)]));
+  const rows = (t: string, order = "rowid") => (sql.prepare(`SELECT data FROM ${t} ORDER BY ${order}`).all() as { data: string }[]).map((r) => JSON.parse(r.data));
+  return {
+    orgs: k.orgs ?? [], catalog: k.catalog ?? [], receipts: k.receipts ?? [], erp: k.erp ?? [], payeeChanges: k.payeeChanges ?? [], refunds: k.refunds ?? [], alerts: k.alerts ?? [],
+    killSwitch: !!k.killSwitch, seq: k.seq ?? 1000,
+    agents: rows("agents"), mandates: rows("mandates"), suppliers: rows("suppliers"), pos: rows("pos"), invoices: rows("invoices"),
+    intents: rows("payment_intents"), settlements: rows("rail_events"), journals: rows("journals"), evidence: rows("audit", "seq"),
+  };
+}
+/** Writes the whole domain state in one transaction. Demo volumes keep this cheap. */
+function write(d: Db) {
+  sql.transaction(() => {
+    for (const t of ["agents", "mandates", "suppliers", "pos", "invoices", "payment_intents", "rail_events", "journals"]) sql.prepare(`DELETE FROM ${t}`).run();
+    const ins = (t: string, cols: string[], vals: unknown[][]) => { const st = sql.prepare(`INSERT INTO ${t} (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`); for (const v of vals) st.run(...v); };
+    ins("agents", ["id", "tenant_id", "status", "data"], d.agents.map((a) => [a.id, TENANT, a.status, JSON.stringify(a)]));
+    ins("mandates", ["id", "tenant_id", "agent_id", "data"], d.mandates.map((m) => [m.id, TENANT, m.agentId, JSON.stringify(m)]));
+    ins("suppliers", ["id", "tenant_id", "status", "data"], d.suppliers.map((s) => [s.id, TENANT, s.screeningStatus, JSON.stringify(s)]));
+    ins("pos", ["id", "tenant_id", "status", "data"], d.pos.map((p) => [p.id, TENANT, p.status, JSON.stringify(p)]));
+    ins("invoices", ["id", "tenant_id", "status", "data"], d.invoices.map((i) => [i.id, TENANT, i.matchStatus, JSON.stringify(i)]));
+    ins("payment_intents", ["id", "tenant_id", "status", "data"], d.intents.map((i) => [i.id, TENANT, intentStatus(i.status), JSON.stringify(i)]));
+    ins("rail_events", ["id", "tenant_id", "intent_id", "kind", "data"], d.settlements.map((s) => [s.id, TENANT, s.paymentIntentId, s.status, JSON.stringify(s)]));
+    ins("journals", ["id", "tenant_id", "data"], d.journals.map((j) => [j.id, TENANT, JSON.stringify(j)]));
+    // audit is append only: insert new links, never rewrite old ones (reset truncates)
+    const max = (sql.prepare("SELECT COALESCE(MAX(seq),0) m FROM audit").get() as { m: number }).m;
+    if (d.evidence.length < max) sql.prepare("DELETE FROM audit").run();
+    const from = d.evidence.length < max ? 0 : max;
+    ins("audit", ["seq", "id", "subject_type", "subject_id", "event", "hash", "prev_hash", "data"], d.evidence.filter((e) => e.seq > from).map((e) => [e.seq, e.id, e.subjectType, e.subjectId, e.event, e.hash, e.prevHash, JSON.stringify(e)]));
+    const kv = sql.prepare("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)");
+    for (const key of KV_KEYS) kv.run(key, JSON.stringify(d[key]));
+  })();
+}
+
+type Listener = (e: { type: string; at: string }) => void;
+const listeners = new Set<Listener>();
+export function onChange(fn: Listener) { listeners.add(fn); return () => listeners.delete(fn); }
+export function emit(type = "state.changed") { const e = { type, at: new Date().toISOString() }; for (const l of listeners) l(e); }
 
 export let db: Db = load();
-function load(): Db {
-  if (PERSIST && fs.existsSync(FILE)) { try { return JSON.parse(fs.readFileSync(FILE, "utf8")); } catch { /* reseed */ } }
-  return seed();
-}
-export function save() {
-  if (!PERSIST) return;
-  fs.mkdirSync(path.dirname(FILE), { recursive: true });
-  fs.writeFileSync(FILE, JSON.stringify(db, null, 1));
-}
+export function save() { write(db); emit(); }
+/** Reload state from the current connection, used after useDb() in tests. */
+export function reload() { db = load(); return db; }
 export function reset(fresh: Db = seed()) { db = fresh; save(); return db; }
 export function nextId(prefix: string) { db.seq += 1; return `${prefix}-${db.seq}`; }

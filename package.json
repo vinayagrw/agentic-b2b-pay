@@ -9,6 +9,7 @@
     "dev:web": "npm run dev --workspace web",
     "dev": "concurrently -n bff,web -c blue,green \"npm:dev:bff\" \"npm:dev:web\"",
     "test": "npm run test --workspace bff",
+    "typecheck": "npm run typecheck --workspace bff && npm run typecheck --workspace web",
     "e2e:live": "npm run e2e:live --workspace bff",
     "e2e:mock": "npm run e2e:mock --workspace bff",
     "build": "npm run build --workspace web"

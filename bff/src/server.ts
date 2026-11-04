@@ -1,8 +1,16 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import cookie from "@fastify/cookie";
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { config } from "./config.js";
+import { onChange } from "./modules/store.js";
+import { appendEvidence } from "./modules/evidence.js";
+import * as P from "./platform.js";
 import { z } from "zod";
 import { PoDraft, RegisterAgent } from "@b2b/shared";
-import { db, reset } from "./modules/store.js";
+import { db, reset, save } from "./modules/store.js";
 import * as S from "./service.js";
 import { llmMode } from "./llm.js";
 import { fileURLToPath } from "node:url";
@@ -19,13 +27,93 @@ export const TOOLS = [
 ];
 
 export async function buildApp() {
-  const app = Fastify({ logger: false });
-  await app.register(cors, { origin: true });
+  const app = Fastify({ logger: false, bodyLimit: 5 * 1024 * 1024 });
+  await app.register(cors, { origin: true, credentials: true });
+  await app.register(cookie, { secret: config.SESSION_SECRET });
+  P.seedPlatform();
+  const COOKIE = { path: "/", httpOnly: true, sameSite: "lax" as const, signed: true };
+  const userOf = (req: any): P.User | null => {
+    const raw = req.cookies?.sid; if (!raw) return null;
+    const v = req.unsignCookie(raw); return v.valid && v.value ? P.getUser(v.value) : null;
+  };
+  const guard = (req: any, roles: readonly P.Role[]) => P.requireRole(userOf(req), roles);
+  const activeTenant = (req: any, u: P.User) => {
+    const raw = req.cookies?.tenant; const v = raw ? req.unsignCookie(raw) : null;
+    const want = v?.valid ? v.value : null; const allowed = P.tenantsFor(u);
+    return allowed.find((t) => t.id === want) ?? allowed.find((t) => t.id === u.tenantId) ?? allowed[0];
+  };
+  // Every mutating call lands in the evidence hash chain.
+  app.addHook("onSend", async (req: any, reply, payload) => {
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && !req.url.startsWith("/auth/")) {
+      const u = userOf(req);
+      appendEvidence(db.evidence, "api", req.routeOptions?.url ?? req.url, `api.${req.method.toLowerCase()}`, { actor: u?.id ?? "anonymous", role: u?.role ?? null, url: req.url, status: reply.statusCode });
+      save();
+    }
+    return payload;
+  });
   app.setErrorHandler((err: any, _req, reply) => {
-    const status = err instanceof S.HttpError ? err.status : err instanceof z.ZodError ? 422 : err.statusCode ?? 500;
+    const status = err instanceof P.AuthError ? err.status : err instanceof S.HttpError ? err.status : err instanceof z.ZodError ? 422 : err.statusCode ?? 500;
     reply.status(status).send({ error: err instanceof z.ZodError ? "validation" : err.message, issues: err instanceof z.ZodError ? err.issues : undefined });
   });
   const b = (req: any) => (req.body ?? {}) as any;
+
+  // Auth (demo login: pick a seeded user, no password)
+  app.get("/auth/demo-users", async () => ({ demo: true, users: P.listUsers() }));
+  app.post("/auth/login", async (req, reply) => {
+    const { userId } = z.object({ userId: z.string() }).parse(b(req));
+    const u = P.getUser(userId); if (!u) throw new P.AuthError(401, "Unknown demo user");
+    reply.setCookie("sid", u.id, COOKIE).clearCookie("tenant", { path: "/" });
+    P.audit(u.id, "user", u.id, "auth.login", { role: u.role, demo: true });
+    return { user: u };
+  });
+  app.post("/auth/logout", async (_req, reply) => { reply.clearCookie("sid", { path: "/" }).clearCookie("tenant", { path: "/" }); return { ok: true }; });
+  app.get("/me", async (req) => {
+    const u = userOf(req); if (!u) throw new P.AuthError(401, "Sign in required");
+    const t = activeTenant(req, u);
+    return { user: u, operator: P.isOperator(u), tenant: t, theme: P.themeFor(t), tenants: P.tenantsFor(u), llmMode: llmMode() };
+  });
+  app.post("/me/tenant", async (req, reply) => {
+    const u = guard(req, P.ROLES); const id = String(b(req).tenantId);
+    if (!P.tenantsFor(u).some((t) => t.id === id)) throw new P.AuthError(403, "Not your tenant");
+    reply.setCookie("tenant", id, COOKIE); return { ok: true };
+  });
+  // Live updates
+  app.get("/events", (req, reply) => {
+    reply.hijack();
+    reply.raw.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    reply.raw.write(`event: hello\ndata: {}\n\n`);
+    const off = onChange((e) => reply.raw.write(`event: change\ndata: ${JSON.stringify(e)}\n\n`));
+    const ping = setInterval(() => reply.raw.write(`: ping\n\n`), 25000);
+    req.raw.on("close", () => { off(); clearInterval(ping); });
+  });
+  // Tenants, branding, rail settings
+  app.get("/tenants", async (req) => { const u = guard(req, P.ROLES); return P.tenantsFor(u); });
+  app.get("/users", async (req) => { guard(req, ["operator_admin", "auditor"]); return P.listUsers(); });
+  app.patch("/tenants/:id/branding", async (req: any) => {
+    const u = guard(req, ["operator_admin", "client_admin"]);
+    if (!P.canAccessTenant(u, req.params.id)) throw new P.AuthError(403, "Not your tenant");
+    const t = P.updateBranding(req.params.id, b(req)); P.audit(u.id, "tenant", t.id, "branding.updated", b(req)); return t;
+  });
+  app.post("/tenants/:id/logo", async (req: any) => {
+    const u = guard(req, ["operator_admin", "client_admin"]);
+    if (!P.canAccessTenant(u, req.params.id)) throw new P.AuthError(403, "Not your tenant");
+    const m = /^data:image\/(png|jpeg|svg\+xml|webp);base64,(.+)$/.exec(String(b(req).dataUrl ?? ""));
+    if (!m) throw new P.AuthError(422, "Logo must be a png, jpeg, svg or webp data URL");
+    const ext = m[1] === "svg+xml" ? "svg" : m[1] === "jpeg" ? "jpg" : m[1];
+    const name = `${req.params.id}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+    fs.mkdirSync(config.UPLOAD_DIR, { recursive: true }); fs.writeFileSync(path.join(config.UPLOAD_DIR, name), Buffer.from(m[2], "base64"));
+    return { logo: `/api/uploads/${name}` };
+  });
+  app.get("/uploads/:name", async (req: any, reply) => {
+    const name = path.basename(req.params.name); const f = path.join(config.UPLOAD_DIR, name);
+    if (!fs.existsSync(f)) throw new P.AuthError(404, "not found");
+    const ext = path.extname(name).slice(1); const type = ext === "svg" ? "image/svg+xml" : ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+    return reply.type(type).send(fs.readFileSync(f));
+  });
+  // Maker-checker
+  app.get("/changes", async (req: any) => { guard(req, P.ROLES); return P.listChanges(req.query?.status); });
+  app.post("/changes", async (req) => { const u = guard(req, ["operator_admin", "client_admin"]); const x = b(req); return P.requestChange(u, String(x.kind), x.payload, x.tenantId ?? null); });
+  app.post("/changes/:id/decide", async (req: any) => { const u = guard(req, P.ROLES); return P.decideChange(u, req.params.id, !!b(req).approve); });
 
   app.get("/health", async () => ({ ok: true, llmMode: llmMode() }));
   app.get("/state", async () => ({ ...db, llmMode: llmMode(), signers: S.SIGNERS }));
@@ -71,6 +159,6 @@ export async function buildApp() {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   S.bootstrap();
   const app = await buildApp();
-  await app.listen({ port: Number(process.env.BFF_PORT ?? 8790), host: "127.0.0.1" });
-  console.log(`bff on http://127.0.0.1:${process.env.BFF_PORT ?? 8790} LLM_MODE=${llmMode()}`);
+  await app.listen({ port: config.BFF_PORT, host: "127.0.0.1" });
+  console.log(`bff on http://127.0.0.1:${config.BFF_PORT} LLM_MODE=${llmMode()}`);
 }

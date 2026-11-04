@@ -19,3 +19,4 @@ const ok = pi?.status === "settled" && blocked && led.trialBalance.balanced && v
 console.log(`settled=${pi?.status} sanctionedBlocked=${blocked} ledgerBalanced=${led.trialBalance.balanced} chainValid=${verifyChain(db.evidence).valid} in ${Date.now() - t0} ms`);
 console.log(ok ? "E2E PASS" : "E2E FAIL");
 process.exit(ok ? 0 : 1);
+export {};

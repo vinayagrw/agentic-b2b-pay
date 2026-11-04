@@ -1,12 +1,30 @@
 {
-  "name": "@b2b/bff", "version": "0.1.0", "private": true, "type": "module",
+  "name": "@b2b/bff",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
-    "test": "LLM_MODE=mock vitest run",
+    "test": "LLM_MODE=mock DB_PERSIST=0 RAIL_DELAY_MS=0 vitest run",
+    "typecheck": "tsc -p . --noEmit",
     "e2e:live": "LLM_MODE=live tsx scripts/e2e.ts",
     "e2e:mock": "LLM_MODE=mock tsx scripts/e2e.ts"
   },
-  "dependencies": { "@b2b/shared": "*", "@fastify/cors": "^10.0.0", "fastify": "^5.1.0", "zod": "3.25.76" },
-  "devDependencies": { "@types/node": "^22.10.0", "tsx": "^4.19.0", "typescript": "^5.6.0", "vitest": "^2.1.8" }
+  "dependencies": {
+    "@b2b/shared": "*",
+    "@fastify/cookie": "^11.1.5",
+    "@fastify/cors": "^10.0.0",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^18.0.9",
+    "fastify": "^5.1.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.8"
+  }
 }
