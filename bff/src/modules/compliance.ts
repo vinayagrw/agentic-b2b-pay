@@ -47,6 +47,14 @@ export function screen(i: ComplianceInput): ComplianceResult {
   });
 
   let travelRule: Record<string, unknown> | undefined;
+  // A party whose wallet on file is OFAC listed is blocked on every rail, not only on stablecoin.
+  if (!isUsdc(i.rail) && i.beneficiary.wallet) {
+    const fiatHits = screenWallet(i.beneficiary.wallet.toLowerCase());
+    if (fiatHits.length) {
+      hits.push(...fiatHits);
+      checks.push({ kind: "ofac_wallet", result: "fail", detail: `Supplier wallet on file ${i.beneficiary.wallet} is on the ${fiatHits.map((x) => x.source).join(" and ")} digital currency address list, so the party is blocked on every rail`, providerRef: ofacRef(i.beneficiary.wallet.toLowerCase()) });
+    }
+  }
   if (isUsdc(i.rail)) {
     const w = (i.beneficiary.wallet ?? "").toLowerCase();
     const wHits = screenWallet(w); hits.push(...wHits); const ofacHit = wHits.length > 0;

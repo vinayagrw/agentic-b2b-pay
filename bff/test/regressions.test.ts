@@ -91,3 +91,13 @@ describe("router skips a prefunded wallet that cannot cover the payment", () => 
     expect(d.rail).toBe("stripe_ach");
   });
 });
+
+import { runFlow } from "../src/service.js";
+describe("sanctioned supplier is blocked on fiat rails too", () => {
+  it("does not pay Fabrikam over ACH when its wallet is OFAC listed", async () => {
+    const r: any = await runFlow("steel", { scenario: "sanctioned", autoApprove: true });
+    const sub = r.steps.find((s: any) => s.step === "Submitted to rail");
+    expect(sub?.detail?.status).not.toBe("pending");
+    expect(sub?.detail?.status).not.toBe("settled");
+  });
+});
