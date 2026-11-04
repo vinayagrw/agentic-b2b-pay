@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
-import type { PoDraft, Rail } from "@b2b/shared";
-import { db, save, nextId, type PurchaseOrder, type Supplier } from "./modules/store.js";
+import { isUsdc, type PoDraft, type Rail } from "@b2b/shared";
+import { db, save, nextId, type PurchaseOrder, type Supplier, type PaymentIntent, type Settlement, type TimelineEntry } from "./modules/store.js";
 import { issueKey, verifyAgent, signAs, verifySignature } from "./modules/kya.js";
 import { evaluatePolicy } from "./modules/policy.js";
 import { threeWayMatch, round } from "./modules/match.js";
@@ -8,7 +8,9 @@ import { routePayment } from "./modules/router.js";
 import { screen } from "./modules/compliance.js";
 import { makeJournal, trialBalance, reconcile } from "./modules/ledger.js";
 import { appendEvidence, verifyChain } from "./modules/evidence.js";
-import { sendOnRail } from "./modules/rails.js";
+import { adapter, allAdapters } from "./rails/index.js";
+import { sql } from "./db.js";
+import * as P from "./platform.js";
 import { erpCreatePo, erpPostPayment } from "./modules/erp.js";
 import { mpcSign, SIGNERS } from "./modules/custody.js";
 import { buyerDraft, readInvoice, explainRoute, renderInvoiceText } from "./agents.js";
@@ -117,24 +119,44 @@ export function matchInvoice(invId: string) {
 }
 
 const BUYER = { name: "Acme Manufacturing Inc", orgId: "org-acme", country: "US" };
+const TENANT = "tnt-acme";
+const now = () => new Date().toISOString();
+const cashAccount = (rail: Rail) => (isUsdc(rail) ? "1010 USDC treasury" : "1000 Cash operating");
+function mark(intent: PaymentIntent, status: PaymentIntent["status"], source: TimelineEntry["source"], detail: string) {
+  intent.status = status; (intent.timeline ??= []).push({ at: now(), status, source, detail });
+}
+
+/** Rails the router may use for this tenant. Adapters without keys are listed as not configured and skipped. */
+export function railCandidates(tenantId = TENANT, amount = 0) {
+  return allAdapters().map((a) => {
+    const env = P.railEnv(tenantId, a.id); const r = a.readiness(env);
+    return { ...a.quote(amount), configured: r.configured, notConfiguredReason: r.reason, env, address: r.address };
+  });
+}
+
 export async function payInvoice(invId: string, idempotencyKey: string, opts: { urgency?: "standard" | "urgent"; approvers?: string[] } = {}) {
-  const prior = db.intents.find((p) => p.idempotencyKey === idempotencyKey);
+  const key = sql.prepare("SELECT intent_id FROM idempotency_keys WHERE key = ?").get(idempotencyKey) as { intent_id: string } | undefined;
+  const prior = key && db.intents.find((p) => p.id === key.intent_id);
   if (prior) return { intent: prior, replay: true };
   const inv = must(db.invoices.find((i) => i.id === invId), "invoice");
   if (inv.matchStatus !== "matched") throw new HttpError(409, "Invoice is not matched");
   if (inv.paid) throw new HttpError(409, "Invoice already paid");
+  const open = db.intents.find((p) => p.invoiceId === inv.id && (p.status === "submitted" || p.status === "pending"));
+  if (open) throw new HttpError(409, `Payment ${open.id} for this invoice is already in flight`);
   const po = must(db.pos.find((p) => p.id === inv.poId), "po");
   const sup = supplier(inv.supplierId); const so = org(sup.orgId);
   const mandate = must(db.mandates.find((m) => m.id === po.mandateId), "mandate");
   const agent = must(db.agents.find((a) => a.id === po.agentId), "agent");
-  const intent: import("./modules/store.js").PaymentIntent = { id: nextId("pi"), invoiceId: inv.id, mandateId: mandate.id, amount: inv.amount, currency: "USD", status: "created", idempotencyKey };
+  const intent: PaymentIntent = { id: nextId("pi"), invoiceId: inv.id, mandateId: mandate.id, amount: inv.amount, currency: "USD", status: "created", idempotencyKey, createdAt: now(), tenantId: TENANT, timeline: [] };
   db.intents.push(intent);
+  sql.prepare("INSERT INTO idempotency_keys (key, intent_id, created_at) VALUES (?, ?, ?)").run(idempotencyKey, intent.id, now());
+  mark(intent, "created", "platform", "Payment intent created");
   ev("payment", intent.id, "intent.created", { invoice: inv.id, amount: inv.amount, idempotencyKey });
-  const stop = (status: "denied" | "blocked", why: string) => { intent.status = status; intent.blockedReason = why; ev("payment", intent.id, `payment.${status}`, { reason: why }); save(); return { intent, replay: false }; };
+  const stop = (status: "denied" | "blocked", why: string) => { mark(intent, status, "platform", why); intent.blockedReason = why; ev("payment", intent.id, `payment.${status}`, { reason: why }); save(); return { intent, replay: false }; };
   if (db.killSwitch || agent.status !== "active") return stop("denied", db.killSwitch ? "Kill switch on" : "Agent suspended");
 
-  const route = routePayment({ amount: inv.amount, urgency: opts.urgency ?? "standard", mandateRails: mandate.allowedRails, supplierRails: sup.acceptedRails, supplierPreferred: sup.preferredRail, supplierHasWallet: !!sup.walletAddress, supplierScreening: sup.screeningStatus, supplierCountry: so.country });
-  intent.route = route; intent.status = "routed";
+  const route = routePayment({ amount: inv.amount, urgency: opts.urgency ?? "standard", mandateRails: mandate.allowedRails, supplierRails: sup.acceptedRails, supplierPreferred: sup.preferredRail, supplierHasWallet: !!sup.walletAddress, supplierScreening: sup.screeningStatus, supplierCountry: so.country, candidates: railCandidates(TENANT, inv.amount) });
+  intent.route = route; mark(intent, "routed", "platform", route.reason);
   const ex = await explainRoute(route, inv.amount, sup.name);
   intent.explanation = ex.value; intent.explainedBy = ex.source;
   ev("payment", intent.id, "route.decided", { rail: route.rail, reason: route.reason, explainedBy: ex.source });
@@ -146,11 +168,10 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
   ev("payment", intent.id, "compliance.screened", { outcome: comp.outcome, checks: comp.checks.map((c) => `${c.kind}:${c.result}`) });
   if (comp.travelRule) ev("payment", intent.id, "travel_rule.record", comp.travelRule);
   if (comp.outcome === "blocked") {
-    db.alerts.push({ at: new Date().toISOString(), kind: "compliance", detail: `${intent.id}: ${comp.checks.filter((c) => c.result === "fail").map((c) => c.detail).join(", ")}` });
+    db.alerts.push({ at: now(), kind: "compliance", detail: `${intent.id}: ${comp.checks.filter((c) => c.result === "fail").map((c) => c.detail).join(", ")}` });
     return stop("blocked", comp.checks.filter((c) => c.result === "fail").map((c) => c.detail).join(". "));
   }
-
-  if (rail === "usdc") {
+  if (isUsdc(rail)) {
     const digest = crypto.createHash("sha256").update(`${intent.id}|${sup.walletAddress}|${inv.amount}|${idempotencyKey}`).digest("hex");
     const cust = mpcSign(digest, opts.approvers ?? ["signer-treasury-ops", "signer-policy-engine"]);
     intent.custody = { digest, ...cust };
@@ -158,33 +179,116 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
     if (!cust.approved) return stop("blocked", `Custody quorum not met: ${cust.shares.length} of ${cust.quorum} signers`);
   }
 
-  const rcpt = await sendOnRail(rail, inv.amount, idempotencyKey);
-  const fee = route.options.find((o) => o.rail === rail)!.feeUsd;
-  const st = { id: nextId("stl"), paymentIntentId: intent.id, rail, railRef: rcpt.railRef, txHash: rcpt.txHash, chain: rcpt.chain, feeUsd: fee, confirmedAt: rcpt.confirmedAt, status: "confirmed" as const };
-  db.settlements.push(st); intent.settlementId = st.id; intent.status = "settled"; inv.paid = true; po.status = "paid";
-  const cash = rail === "usdc" ? "1010 USDC treasury (simulated)" : "1000 Cash operating";
-  db.journals.push(makeJournal(nextId("jnl"), `Payment ${inv.number} via ${rail}`, intent.id, [{ account: "2000 Accounts payable", debit: inv.amount }, { account: cash, credit: inv.amount }]));
-  db.journals.push(makeJournal(nextId("jnl"), `Rail fee ${rail}`, intent.id, [{ account: "6100 Payment fees", debit: fee }, { account: cash, credit: fee }]));
-  ev("payment", intent.id, "settlement.confirmed", { rail, railRef: st.railRef, txHash: st.txHash, simulated: true });
-  erp(erpPostPayment(sup, po.erpRef ?? po.id, inv.number, inv.amount, st.railRef, st.txHash));
-  ev("payment", intent.id, "erp.payment_posted", { system: sup.erp, invoice: inv.number });
+  const env = P.railEnv(TENANT, rail);
+  intent.rail = rail; intent.env = env;
+  mark(intent, "submitted", "platform", `Sent to ${rail} (${env})`); save();
+  try {
+    const r = await adapter(rail).send({ intentId: intent.id, amount: inv.amount, currency: "USD", idempotencyKey, env, beneficiary: { name: so.legalName, wallet: sup.walletAddress, bankRef: sup.bankDetailsRef }, memo: `Invoice ${inv.number}` });
+    intent.providerRef = r.providerRef; intent.explorerUrl = r.explorerUrl; intent.dashboardUrl = r.dashboardUrl;
+    mark(intent, "pending", "adapter", r.detail ?? `Accepted by ${rail}`);
+    ev("payment", intent.id, "rail.submitted", { rail, env, providerRef: r.providerRef, providerStatus: r.status });
+  } catch (e: any) {
+    mark(intent, "failed", "adapter", e.message); intent.blockedReason = e.message;
+    ev("payment", intent.id, "rail.failed", { rail, env, error: e.message });
+  }
   save(); return { intent, replay: false };
 }
 
-/** Stablecoin sends cannot be reversed. A refund is a new forward payment from supplier back to buyer. */
+/** Moves a pending intent to settled or failed. Ledger, invoice and ERP change only on settled. Idempotent. */
+export function applyRailUpdate(intentId: string, u: { status: "pending" | "settled" | "failed"; source: TimelineEntry["source"]; detail?: string; explorerUrl?: string }) {
+  const intent = must(db.intents.find((i) => i.id === intentId), "payment intent");
+  if (u.explorerUrl) intent.explorerUrl = u.explorerUrl;
+  if (intent.status !== "pending" && intent.status !== "submitted") return intent;
+  if (u.status === "pending") { save(); return intent; }
+  if (u.status === "failed") {
+    mark(intent, "failed", u.source, u.detail ?? "Provider reported failure"); intent.blockedReason = u.detail;
+    ev("payment", intent.id, "settlement.failed", { rail: intent.rail, providerRef: intent.providerRef, source: u.source });
+    save(); return intent;
+  }
+  const inv = must(db.invoices.find((i) => i.id === intent.invoiceId), "invoice");
+  const po = must(db.pos.find((p) => p.id === inv.poId), "po"); const sup = supplier(inv.supplierId);
+  const rail = intent.rail!; const fee = intent.route?.options.find((o) => o.rail === rail)?.feeUsd ?? 0;
+  const txHash = intent.explorerUrl?.match(/0x[0-9a-fA-F]{64}/)?.[0] ?? null;
+  const st: Settlement = { id: nextId("stl"), paymentIntentId: intent.id, rail, railRef: intent.providerRef!, txHash, chain: isUsdc(rail) ? (intent.env === "live" ? "base" : "base-sepolia") : null, feeUsd: fee, confirmedAt: now(), status: "confirmed", explorerUrl: intent.explorerUrl, dashboardUrl: intent.dashboardUrl };
+  db.settlements.push(st); intent.settlementId = st.id; inv.paid = true; po.status = "paid";
+  mark(intent, "settled", u.source, u.detail ?? "Provider confirmed settlement");
+  const cash = cashAccount(rail);
+  db.journals.push(makeJournal(nextId("jnl"), `Payment ${inv.number} via ${rail}`, intent.id, [{ account: "2000 Accounts payable", debit: inv.amount }, { account: cash, credit: inv.amount }]));
+  if (fee) db.journals.push(makeJournal(nextId("jnl"), `Rail fee ${rail}`, intent.id, [{ account: "6100 Payment fees", debit: fee }, { account: cash, credit: fee }]));
+  ev("payment", intent.id, "settlement.confirmed", { rail, railRef: st.railRef, txHash, source: u.source, env: intent.env });
+  erp(erpPostPayment(sup, po.erpRef ?? po.id, inv.number, inv.amount, st.railRef, st.txHash));
+  ev("payment", intent.id, "erp.payment_posted", { system: sup.erp, invoice: inv.number });
+  save(); return intent;
+}
+
+/** The settlement watcher. Asks each adapter for the status of every pending intent. */
+export async function pollSettlements() {
+  const pending = db.intents.filter((i) => i.status === "pending" && i.rail && i.providerRef);
+  for (const i of pending) {
+    try { const r = await adapter(i.rail!).status(i.providerRef!, i.env ?? "sandbox"); if (r.status !== "pending" || r.explorerUrl !== i.explorerUrl) applyRailUpdate(i.id, { status: r.status, source: "watcher", detail: r.detail, explorerUrl: r.explorerUrl }); }
+    catch (e: any) { (i.timeline ??= []).push({ at: now(), status: i.status, source: "watcher", detail: `Status check failed: ${e.message}` }); }
+  }
+  return pending.length;
+}
+let watcher: ReturnType<typeof setInterval> | null = null;
+export function startSettlementWatcher(ms: number) {
+  if (watcher || ms <= 0) return; let busy = false;
+  watcher = setInterval(async () => { if (busy) return; busy = true; try { await pollSettlements(); } finally { busy = false; } }, ms);
+  watcher.unref?.();
+}
+
+/** Webhook entry point. The adapter verifies the signature, this dedupes by provider event id and applies updates. */
+export async function ingestWebhook(provider: "stripe" | "circle", raw: Buffer, headers: Record<string, string | string[] | undefined>) {
+  const events = await adapter(provider === "stripe" ? "stripe_card" : "circle_usdc").handleWebhook(raw, headers);
+  const out: { eventId: string; type: string; intentId: string | null; applied: boolean }[] = [];
+  for (const e of events) {
+    const intent = e.providerRef ? db.intents.find((i) => i.providerRef === e.providerRef) : undefined;
+    const fresh = sql.prepare("INSERT OR IGNORE INTO provider_events (provider, event_id, type, intent_id, received_at) VALUES (?,?,?,?,?)").run(provider, e.eventId, e.type, intent?.id ?? null, now()).changes > 0;
+    if (!fresh) { out.push({ eventId: e.eventId, type: e.type, intentId: intent?.id ?? null, applied: false }); continue; }
+    if (e.dispute) openCase({ kind: "dispute", intentId: intent?.id ?? null, title: `Card dispute ${e.dispute.reason}`, detail: { ...e.dispute, providerRef: e.providerRef, eventId: e.eventId } });
+    if (intent && e.status) { (intent.timeline ??= []).push({ at: now(), status: intent.status, source: "webhook", detail: `${provider} ${e.type}` }); applyRailUpdate(intent.id, { status: e.status, source: "webhook", detail: e.detail, explorerUrl: e.explorerUrl }); }
+    ev("webhook", e.eventId, `webhook.${provider}`, { type: e.type, intentId: intent?.id ?? null, providerRef: e.providerRef });
+    out.push({ eventId: e.eventId, type: e.type, intentId: intent?.id ?? null, applied: true });
+  }
+  save(); return { received: out };
+}
+
+export type Case = { id: string; kind: "dispute" | "sanctions"; status: "open" | "closed"; intentId: string | null; title: string; detail: unknown; openedAt: string };
+export function openCase(c: Omit<Case, "id" | "status" | "openedAt">) {
+  const x: Case = { id: `case-${crypto.randomUUID().slice(0, 8)}`, status: "open", openedAt: now(), ...c };
+  sql.prepare("INSERT INTO cases (id, tenant_id, status, data) VALUES (?,?,?,?)").run(x.id, TENANT, x.status, JSON.stringify(x));
+  db.alerts.push({ at: x.openedAt, kind: x.kind, detail: `${x.id}: ${x.title}` });
+  ev("case", x.id, "case.opened", x); return x;
+}
+export const listCases = () => (sql.prepare("SELECT data FROM cases ORDER BY rowid DESC").all() as { data: string }[]).map((r) => JSON.parse(r.data) as Case);
+
+/** Rails with readiness, environment and fee quote for the Settings and Payments pages. */
+export function railsView(tenantId = TENANT) {
+  return railCandidates(tenantId, 1000).map(({ rail, label, feeUsd, maxAmount, settleMinutes, configured, notConfiguredReason, env, address }) => ({ rail, label, feeUsd, maxAmount, settleMinutes, configured, notConfiguredReason, env, address }));
+}
+export async function railBalances(tenantId = TENANT) {
+  return Promise.all(allAdapters().map(async (a) => {
+    const env = P.railEnv(tenantId, a.id);
+    if (!a.readiness(env).configured) return { rail: a.id, error: "Not configured" };
+    try { return await a.balance(env); } catch (e: any) { return { rail: a.id, error: e.message }; }
+  }));
+}
+
+/** Refunds use the provider's own refund where it exists (Stripe). Stablecoin sends are final, a refund is a new payment from the supplier. */
 export async function refund(intentId: string, amount: number, reason: string) {
   const pi = must(db.intents.find((p) => p.id === intentId), "payment intent");
   const st = db.settlements.find((s) => s.id === pi.settlementId);
   if (!st) throw new HttpError(409, "Payment not settled");
-  const already = db.refunds.filter((r) => r.originalIntentId === intentId && r.status === "settled").reduce((a, r) => a + r.amount, 0);
+  const already = db.refunds.filter((r) => r.originalIntentId === intentId && r.status !== "failed" && r.status !== "rejected").reduce((a, r) => a + r.amount, 0);
   if (amount <= 0 || already + amount > pi.amount) throw new HttpError(422, `Refund ${amount} exceeds refundable ${round(pi.amount - already)}`);
+  const a = adapter(st.rail);
+  if (!a.refund) throw new HttpError(501, `${st.rail} transfers are final. Ask the supplier to send a new payment back.`);
   const id = nextId("rf");
-  const rc = await sendOnRail(st.rail, amount, `refund-${id}`);
-  const r = { id, originalIntentId: intentId, amount, reason, rail: st.rail, status: "settled" as const, railRef: rc.railRef, txHash: rc.txHash, createdAt: new Date().toISOString() };
+  const rc = await a.refund(st.railRef, amount, pi.env ?? "sandbox");
+  const r = { id, originalIntentId: intentId, amount, reason, rail: st.rail, status: rc.status === "settled" ? "settled" as const : rc.status === "failed" ? "failed" as const : "pending" as const, railRef: rc.providerRef, txHash: null, createdAt: now() };
   db.refunds.push(r);
-  const cash = st.rail === "usdc" ? "1010 USDC treasury (simulated)" : "1000 Cash operating";
-  db.journals.push(makeJournal(nextId("jnl"), `Refund ${id} for ${intentId}`, id, [{ account: cash, debit: amount }, { account: "1400 Supplier refunds receivable cleared", credit: amount }]));
-  ev("refund", id, "refund.settled", { originalIntentId: intentId, amount, rail: st.rail, txHash: rc.txHash, note: "New forward payment, original transfer not reversed" });
+  if (r.status === "settled") db.journals.push(makeJournal(nextId("jnl"), `Refund ${id} for ${intentId}`, id, [{ account: cashAccount(st.rail), debit: amount }, { account: "1400 Supplier refunds receivable cleared", credit: amount }]));
+  ev("refund", id, `refund.${r.status}`, { originalIntentId: intentId, amount, rail: st.rail, providerRef: rc.providerRef });
   save(); return r;
 }
 
@@ -226,7 +330,7 @@ export function evidenceView(subjectId?: string) {
 /** ISO 20022 camt.053 style bank to customer statement from the ledger cash accounts. Tx hash in end to end id. */
 export function camt053(date = new Date().toISOString().slice(0, 10)) {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  const cashAccts = ["1000 Cash operating", "1010 USDC treasury (simulated)"];
+  const cashAccts = ["1000 Cash operating", "1010 USDC treasury"];
   const ntries = db.journals.flatMap((j) => j.entries.filter((e) => cashAccts.includes(e.account)).map((e) => {
     const st = db.settlements.find((s) => s.paymentIntentId === j.ref);
     const amt = e.debit || e.credit;
@@ -264,7 +368,7 @@ export async function runFlow(need: string, opts: { scenario?: "happy" | "sancti
   const { intent } = await payInvoice(inv.id, `idem-${inv.id}`);
   log("Rail choice", !!intent.route?.rail, { rail: intent.route?.rail, explanation: intent.explanation, explainedBy: intent.explainedBy });
   log("Compliance", intent.compliance?.outcome === "clear", intent.compliance);
-  log("Settlement", intent.status === "settled", { status: intent.status, blockedReason: intent.blockedReason, settlement: db.settlements.find((s) => s.id === intent.settlementId) });
+  log("Submitted to rail", intent.status === "pending" || intent.status === "settled", { status: intent.status, rail: intent.rail, providerRef: intent.providerRef, blockedReason: intent.blockedReason });
   return { steps, poId: po.id, invoiceId: inv.id, intentId: intent.id };
 }
 export { SIGNERS };

@@ -3,14 +3,22 @@ import { reset, db } from "../src/modules/store.js";
 import * as S from "../src/service.js";
 import { buildApp } from "../src/server.js";
 import { verifyChain } from "../src/modules/evidence.js";
+import { installFakes } from "./fakeRail.js";
+import * as P from "../src/platform.js";
 
-beforeEach(() => { reset(); S.bootstrap(); });
+let rails: ReturnType<typeof installFakes>;
+beforeEach(() => { rails = installFakes(); reset(); S.bootstrap(); });
 
 describe("end to end flow (mock LLM)", () => {
-  it("happy path settles on USDC, balances ledger, chain valid", async () => {
+  it("happy path goes pending, settles from the watcher, balances ledger, chain valid", async () => {
     const r = await S.runFlow("Need 2000 sealed 6204 bearings for line 3");
     const pi = db.intents.find((i) => i.id === r.intentId)!;
-    expect(pi.status).toBe("settled"); expect(pi.route?.rail).toBe("usdc");
+    expect(pi.status).toBe("pending"); expect(pi.route?.rail).toBe("onchain_usdc");
+    const inv = db.invoices.find((i) => i.id === pi.invoiceId)!;
+    expect(inv.paid).toBe(false); expect(db.journals.some((j) => j.ref === pi.id)).toBe(false);
+    await S.pollSettlements();
+    expect(pi.status).toBe("settled"); expect(inv.paid).toBe(true);
+    expect(pi.timeline!.map((t) => t.status)).toEqual(["created", "routed", "submitted", "pending", "settled"]);
     expect(db.settlements[0].txHash).toMatch(/^0x[0-9a-f]{64}$/);
     expect(S.ledgerView().trialBalance.balanced).toBe(true);
     expect(S.ledgerView().reconciliation.every((x) => x.matched)).toBe(true);
@@ -22,21 +30,59 @@ describe("end to end flow (mock LLM)", () => {
     const r = await S.runFlow("steel", { scenario: "sanctioned" });
     const pi = db.intents.find((i) => i.id === r.intentId)!;
     expect(pi.status).toBe("blocked"); expect(db.settlements).toHaveLength(0);
-    expect(S.ledgerView().trialBalance.accounts["1010 USDC treasury (simulated)"]).toBeUndefined();
+    expect(S.ledgerView().trialBalance.accounts["1010 USDC treasury"]).toBeUndefined();
     expect(verifyChain(db.evidence).valid).toBe(true);
   });
   it("idempotent payment execution", async () => {
     const r = await S.runFlow("Need 100 nitrile gloves");
     const inv = r.invoiceId!;
     const again = await S.payInvoice(inv, `idem-${inv}`);
-    expect(again.replay).toBe(true); expect(db.settlements).toHaveLength(1);
+    expect(again.replay).toBe(true);
+    await expect(S.payInvoice(inv, "another-key")).rejects.toThrow(/in flight/);
+    await S.pollSettlements(); await S.pollSettlements();
+    expect(db.settlements).toHaveLength(1);
   });
-  it("refund is a new forward payment, capped at original", async () => {
-    const r = await S.runFlow("Need 100 nitrile gloves");
-    const rf = await S.refund(r.intentId!, 100, "damaged");
-    expect(rf.status).toBe("settled"); expect(db.settlements[0].txHash).not.toBe(rf.txHash);
+  it("stablecoin refund is refused as final, amount still capped", async () => {
+    const r = await S.runFlow("Need 100 nitrile gloves"); await S.pollSettlements();
     await expect(S.refund(r.intentId!, 5000, "too much")).rejects.toThrow(/exceeds/);
+    await expect(S.refund(r.intentId!, 100, "damaged")).rejects.toThrow(/final/);
     expect(S.ledgerView().trialBalance.balanced).toBe(true);
+  });
+  it("provider failure from the watcher fails the payment and leaves the invoice open", async () => {
+    rails.onchain_usdc.outcome = "failed";
+    const r = await S.runFlow("Need 100 nitrile gloves"); await S.pollSettlements();
+    const pi = db.intents.find((i) => i.id === r.intentId)!;
+    expect(pi.status).toBe("failed"); expect(db.invoices.find((i) => i.id === pi.invoiceId)!.paid).toBe(false);
+    expect(db.settlements).toHaveLength(0);
+  });
+  it("send error fails at once with no simulated fallback", async () => {
+    rails.onchain_usdc.failSend = "RPC down";
+    const r = await S.runFlow("Need 100 nitrile gloves");
+    const pi = db.intents.find((i) => i.id === r.intentId)!;
+    expect(pi.status).toBe("failed"); expect(pi.blockedReason).toBe("RPC down"); expect(pi.rail).toBe("onchain_usdc");
+  });
+  it("router skips rails that are not configured", async () => {
+    rails = installFakes({ onchain_usdc: false, circle_usdc: false });
+    const r = await S.runFlow("Need 100 nitrile gloves");
+    expect(db.intents.find((i) => i.id === r.intentId)!.rail).toBe("stripe_ach");
+  });
+  it("webhook settles, dedupes replays and turns a dispute into a case", async () => {
+    rails = installFakes({ onchain_usdc: false, circle_usdc: false });
+    const r = await S.runFlow("Need 100 nitrile gloves");
+    const pi = db.intents.find((i) => i.id === r.intentId)!;
+    await expect(S.ingestWebhook("stripe", Buffer.from("forged"), {})).rejects.toThrow(/signature/);
+    const evt = { eventId: "evt_1", type: "payment_intent.succeeded", providerRef: pi.providerRef!, status: "settled" as const };
+    rails.stripe_card.webhookQueue.push(evt);
+    await S.ingestWebhook("stripe", Buffer.from("signed"), {});
+    expect(pi.status).toBe("settled");
+    rails.stripe_card.webhookQueue.push(evt);
+    expect((await S.ingestWebhook("stripe", Buffer.from("signed"), {})).received[0].applied).toBe(false);
+    expect(db.settlements).toHaveLength(1);
+    rails.stripe_card.webhookQueue.push({ eventId: "evt_2", type: "charge.dispute.created", providerRef: pi.providerRef!, dispute: { id: "dp_1", amount: 50, reason: "fraudulent", chargeId: "ch_1" } });
+    await S.ingestWebhook("stripe", Buffer.from("signed"), {});
+    expect(S.listCases()[0]).toMatchObject({ kind: "dispute", intentId: pi.id, status: "open" });
+    const rf = await S.refund(pi.id, 10, "credit");
+    expect(rf.status).toBe("settled");
   });
 });
 
@@ -75,13 +121,19 @@ describe("prompt injection and payee control", () => {
 });
 
 describe("gateway", () => {
-  it("lists MCP tools and requires idempotency key", async () => {
+  it("old routes need auth, then list MCP tools and require an idempotency key", async () => {
+    P.seedPlatform();
     const app = await buildApp();
-    const t = await app.inject({ method: "GET", url: "/mcp/tools" });
+    for (const [method, url] of [["GET", "/state"], ["GET", "/mcp/tools"], ["POST", "/reset"], ["POST", "/kill-switch"], ["POST", "/invoices/inv-x/pay"], ["GET", "/payments"]] as const) expect((await app.inject({ method, url, payload: method === "POST" ? {} : undefined })).statusCode).toBe(401);
+    const lr = await app.inject({ method: "POST", url: "/auth/login", payload: { userId: "usr-clerk-pat" } });
+    const cookie = `sid=${lr.cookies.find((c: any) => c.name === "sid")!.value}`;
+    expect((await app.inject({ method: "POST", url: "/reset", headers: { cookie } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "POST", url: "/webhooks/stripe", payload: "{}", headers: { "content-type": "application/json" } })).statusCode).toBe(400);
+    const t = await app.inject({ method: "GET", url: "/mcp/tools", headers: { cookie } });
     expect(t.json().tools.map((x: any) => x.name)).toContain("execute_payment");
-    const p = await app.inject({ method: "POST", url: "/invoices/inv-x/pay", payload: {} });
+    const p = await app.inject({ method: "POST", url: "/invoices/inv-x/pay", payload: {}, headers: { cookie } });
     expect(p.statusCode).toBe(400);
-    const bad = await app.inject({ method: "POST", url: "/purchase-orders", payload: { draft: { supplierId: "x" } } });
+    const bad = await app.inject({ method: "POST", url: "/purchase-orders", payload: { draft: { supplierId: "x" } }, headers: { cookie } });
     expect(bad.statusCode).toBe(422);
   });
 });

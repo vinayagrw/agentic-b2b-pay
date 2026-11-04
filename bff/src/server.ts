@@ -12,6 +12,8 @@ import { z } from "zod";
 import { PoDraft, RegisterAgent } from "@b2b/shared";
 import { db, reset, save } from "./modules/store.js";
 import * as S from "./service.js";
+import { RailError } from "./rails/index.js";
+import { onchainAddress } from "./rails/onchain.js";
 import { llmMode } from "./llm.js";
 import { fileURLToPath } from "node:url";
 
@@ -29,6 +31,12 @@ export const TOOLS = [
 export async function buildApp() {
   const app = Fastify({ logger: false, bodyLimit: 5 * 1024 * 1024 });
   await app.register(cors, { origin: true, credentials: true });
+  // Keep the raw bytes for webhook signature checks, parse JSON for everything else.
+  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (req: any, body: Buffer, done) => {
+    req.rawBody = body;
+    if (!body.length) return done(null, {});
+    try { done(null, JSON.parse(body.toString("utf8"))); } catch (e: any) { e.statusCode = 400; done(e, undefined); }
+  });
   await app.register(cookie, { secret: config.SESSION_SECRET });
   P.seedPlatform();
   const COOKIE = { path: "/", httpOnly: true, sameSite: "lax" as const, signed: true };
@@ -44,7 +52,7 @@ export async function buildApp() {
   };
   // Every mutating call lands in the evidence hash chain.
   app.addHook("onSend", async (req: any, reply, payload) => {
-    if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && !req.url.startsWith("/auth/")) {
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && !req.url.startsWith("/auth/") && !req.url.startsWith("/webhooks/")) {
       const u = userOf(req);
       appendEvidence(db.evidence, "api", req.routeOptions?.url ?? req.url, `api.${req.method.toLowerCase()}`, { actor: u?.id ?? "anonymous", role: u?.role ?? null, url: req.url, status: reply.statusCode });
       save();
@@ -52,10 +60,25 @@ export async function buildApp() {
     return payload;
   });
   app.setErrorHandler((err: any, _req, reply) => {
-    const status = err instanceof P.AuthError ? err.status : err instanceof S.HttpError ? err.status : err instanceof z.ZodError ? 422 : err.statusCode ?? 500;
+    const status = err instanceof P.AuthError ? err.status : err instanceof S.HttpError ? err.status : err instanceof RailError ? err.status : err instanceof z.ZodError ? 422 : err.statusCode ?? 500;
     reply.status(status).send({ error: err instanceof z.ZodError ? "validation" : err.message, issues: err instanceof z.ZodError ? err.issues : undefined });
   });
   const b = (req: any) => (req.body ?? {}) as any;
+  // Every route needs a signed-in user unless listed as public. Mutations need a role from ROUTE_ROLES or a sensible default.
+  const PUBLIC = new Set(["/health", "/auth/demo-users", "/auth/login", "/auth/logout", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle"]);
+  const ADM = ["operator_admin", "client_admin"] as const; const APPR = ["operator_admin", "client_admin", "approver"] as const;
+  const PAYERS = ["operator_admin", "client_admin", "approver", "ap_clerk"] as const;
+  const ROUTE_ROLES: Record<string, readonly P.Role[]> = {
+    "POST /reset": ["operator_admin"], "POST /kill-switch": ADM, "POST /agents": ADM, "POST /agents/:id/verify": ADM, "POST /agents/:id/suspend": ADM, "POST /agents/:id/resume": ADM,
+    "POST /approvals/:poId": APPR, "POST /refunds": APPR, "POST /erp/vendor-master/changes": ADM, "POST /erp/vendor-master/changes/:id/approve": APPR, "POST /erp/vendor-master/changes/:id/callback": APPR,
+    "GET /rails/balances": ["operator_admin", "client_admin", "auditor"],
+  };
+  app.addHook("preHandler", async (req: any) => {
+    const url = req.routeOptions?.url as string | undefined;
+    if (!url || PUBLIC.has(url) || url.startsWith("/uploads/") || req.method === "HEAD" || req.method === "OPTIONS") return;
+    const roles = ROUTE_ROLES[`${req.method} ${url}`] ?? (req.method === "GET" ? P.ROLES : PAYERS);
+    guard(req, roles);
+  });
 
   // Auth (demo login: pick a seeded user, no password)
   app.get("/auth/demo-users", async () => ({ demo: true, users: P.listUsers() }));
@@ -153,6 +176,16 @@ export async function buildApp() {
   app.get("/evidence", async () => S.evidenceView());
   app.get("/evidence/:subjectId", async (req: any) => S.evidenceView(req.params.subjectId));
   app.post("/scenario/run", async (req) => S.runFlow(String(b(req).need ?? "Need 2000 sealed 6204 bearings for line 3 maintenance"), { scenario: b(req).scenario ?? "happy" }));
+  // Rails, payments, webhooks
+  app.get("/rails", async () => S.railsView());
+  app.get("/rails/balances", async () => S.railBalances());
+  app.get("/payments", async () => [...db.intents].reverse());
+  app.get("/payments/:id", async (req: any) => { const i = db.intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); return { intent: i, settlement: db.settlements.find((s) => s.id === i.settlementId) ?? null, evidence: db.evidence.filter((e) => e.subjectId === i.id) }; });
+  app.post("/payments/poll", async () => ({ checked: await S.pollSettlements() }));
+  app.get("/cases", async () => S.listCases());
+  app.post("/webhooks/stripe", async (req: any) => S.ingestWebhook("stripe", req.rawBody ?? Buffer.alloc(0), req.headers));
+  app.post("/webhooks/circle", async (req: any) => S.ingestWebhook("circle", req.rawBody ?? Buffer.alloc(0), req.headers));
+  app.head("/webhooks/circle", async () => "");
   return app;
 }
 
@@ -161,4 +194,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const app = await buildApp();
   await app.listen({ port: config.BFF_PORT, host: "127.0.0.1" });
   console.log(`bff on http://127.0.0.1:${config.BFF_PORT} LLM_MODE=${llmMode()}`);
+  for (const r of S.railsView()) console.log(`rail ${r.rail} ${r.env}: ${r.configured ? "configured" : "Not configured (" + r.notConfiguredReason + ")"}`);
+  console.log(`Base Sepolia wallet ${onchainAddress("sandbox")}, fund it with test USDC from https://faucet.circle.com`);
+  S.startSettlementWatcher(config.RAIL_POLL_MS);
 }

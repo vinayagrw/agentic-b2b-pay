@@ -17,7 +17,13 @@ const Schema = z.object({
   UPLOAD_DIR: z.string().default(path.join(root, "data/uploads")),
   STRIPE_SECRET_KEY: opt, STRIPE_WEBHOOK_SECRET: opt, STRIPE_LIVE_SECRET_KEY: opt,
   CIRCLE_API_KEY: opt, CIRCLE_ENTITY_SECRET: opt, CIRCLE_LIVE_API_KEY: opt,
+  CIRCLE_LIVE_ENTITY_SECRET: opt, CIRCLE_API_BASE: z.string().default("https://api.circle.com"),
   BASE_SEPOLIA_RPC: z.string().default("https://sepolia.base.org"),
+  BASE_MAINNET_RPC: z.string().default("https://mainnet.base.org"),
+  ONCHAIN_KEY_FILE: z.string().default(path.join(root, "data/keys/base-sepolia.json")),
+  ONCHAIN_LIVE_PRIVATE_KEY: opt,
+  /** Settlement watcher interval. 0 turns it off. */
+  RAIL_POLL_MS: z.coerce.number().int().default(5000),
 });
 export type Config = z.infer<typeof Schema>;
 export const config: Config = Schema.parse(process.env);

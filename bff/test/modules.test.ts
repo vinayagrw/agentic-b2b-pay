@@ -7,6 +7,7 @@ import { screen } from "../src/modules/compliance.js";
 import { makeJournal, trialBalance, reconcile } from "../src/modules/ledger.js";
 import { appendEvidence, verifyChain } from "../src/modules/evidence.js";
 import { mpcSign } from "../src/modules/custody.js";
+import { fake } from "./fakeRail.js";
 
 const s = seed();
 const agent = { ...s.agents[0], kyaStatus: "verified" as const };
@@ -36,27 +37,34 @@ describe("3-way match", () => {
 });
 
 describe("rail router", () => {
-  const r = { amount: 9000, urgency: "standard" as const, mandateRails: ["card", "ach", "rtp", "usdc"] as any, supplierRails: ["ach", "rtp", "usdc"] as any, supplierPreferred: "usdc" as const, supplierHasWallet: true, supplierScreening: "clear" as const, supplierCountry: "US" };
-  it("picks USDC on supplier preference", () => expect(routePayment(r).rail).toBe("usdc"));
-  it("falls back to fiat without wallet", () => expect(routePayment({ ...r, supplierHasWallet: false }).rail).toBe("rtp"));
-  it("card excluded above card limit", () => expect(routePayment({ ...r, amount: 20000, supplierRails: ["card", "ach"], supplierPreferred: "card" }).rail).toBe("ach"));
-  it("respects mandate rails", () => expect(routePayment({ ...r, mandateRails: ["ach"] }).rail).toBe("ach"));
-  it("no eligible rail holds payment", () => expect(routePayment({ ...r, mandateRails: ["card"], supplierRails: ["ach"] }).rail).toBeNull());
+  const all = ["stripe_card", "stripe_ach", "circle_usdc", "onchain_usdc"] as const;
+  const quotes = (off: string[] = []) => all.map((id) => ({ ...fake(id).quote(9000), configured: !off.includes(id) }));
+  const r = { amount: 9000, urgency: "standard" as const, mandateRails: [...all] as any, supplierRails: ["stripe_ach", "circle_usdc", "onchain_usdc"] as any, supplierPreferred: "onchain_usdc" as const, supplierHasWallet: true, supplierScreening: "clear" as const, supplierCountry: "US", candidates: quotes() };
+  it("picks onchain USDC on supplier preference", () => expect(routePayment(r).rail).toBe("onchain_usdc"));
+  it("falls back to fiat without wallet", () => expect(routePayment({ ...r, supplierHasWallet: false }).rail).toBe("stripe_ach"));
+  it("card excluded above card limit", () => expect(routePayment({ ...r, amount: 20000, supplierRails: ["stripe_card", "stripe_ach"], supplierPreferred: "stripe_card", candidates: all.map((id) => ({ ...fake(id).quote(20000), configured: true })) }).rail).toBe("stripe_ach"));
+  it("respects mandate rails", () => expect(routePayment({ ...r, mandateRails: ["stripe_ach"] }).rail).toBe("stripe_ach"));
+  it("no eligible rail holds payment", () => expect(routePayment({ ...r, mandateRails: ["stripe_card"], supplierRails: ["stripe_ach"] }).rail).toBeNull());
+  it("skips a rail whose keys are missing", () => {
+    const d = routePayment({ ...r, candidates: quotes(["onchain_usdc"]) });
+    expect(d.rail).toBe("circle_usdc");
+    expect(d.options.find((o) => o.rail === "onchain_usdc")!.why[0]).toMatch(/Not configured/);
+  });
 });
 
 describe("compliance", () => {
   const ben = { name: "Northwind Components LLC", orgId: "org-northwind", country: "US", wallet: "0x9a1C00000000000000000000000000000000C0DE", kybVerified: true };
   const org = { name: "Acme", orgId: "org-acme", country: "US" };
   it("clears good wallet and builds Travel Rule on every USDC transfer", () => {
-    const small = screen({ rail: "usdc", amount: 100, originator: org, beneficiary: ben });
+    const small = screen({ rail: "onchain_usdc", amount: 100, originator: org, beneficiary: ben });
     expect(small.outcome).toBe("clear"); expect(small.travelRule).toBeDefined();
     expect(small.checks.map((c) => c.kind)).toEqual(["kyb", "sanctions", "ofac_wallet", "kyt", "travel_rule"]);
   });
   it("blocks sanctioned wallet", () => {
-    const r = screen({ rail: "usdc", amount: 6200, originator: org, beneficiary: { ...ben, wallet: "0xBAD0000000000000000000000000000000000BAD" } });
+    const r = screen({ rail: "onchain_usdc", amount: 6200, originator: org, beneficiary: { ...ben, wallet: "0xBAD0000000000000000000000000000000000BAD" } });
     expect(r.outcome).toBe("blocked"); expect(r.checks.find((c) => c.kind === "ofac_wallet")!.result).toBe("fail");
   });
-  it("blocks sanctioned name on fiat", () => expect(screen({ rail: "ach", amount: 10, originator: org, beneficiary: { ...ben, name: "Rogue Metals Trading" } }).outcome).toBe("blocked"));
+  it("blocks sanctioned name on fiat", () => expect(screen({ rail: "stripe_ach", amount: 10, originator: org, beneficiary: { ...ben, name: "Rogue Metals Trading" } }).outcome).toBe("blocked"));
 });
 
 describe("ledger", () => {

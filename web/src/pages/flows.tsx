@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Ban, Play, ShieldAlert, Sparkles } from "lucide-react";
 import { api, useAppState, useGet, useMe, useAct } from "../lib/api";
 import { usd } from "../lib/utils";
+import { RAIL_LABEL, type Rail } from "@b2b/shared";
 import { Badge, Button, Card, EmptyState, ErrorNote, Input, Json, Label, Mono, Muted, Select, Table, Textarea } from "../components/ui";
 
 const EMPTY = { pos: [], invoices: [], intents: [], settlements: [], refunds: [], receipts: [], agents: [], mandates: [], suppliers: [], payeeChanges: [], alerts: [], erp: [], evidence: [], journals: [], signers: [], killSwitch: false };
@@ -28,7 +29,7 @@ export function FlowTracker({ st, poId }: { st: any; poId?: string }) {
     ["Goods receipt", st.receipts.some((g: any) => g.poId === po.id) ? "done" : ""], ["Invoice", inv ? "done" : ""],
     ["3-way match", inv?.matchStatus === "matched" ? "done" : inv?.matchStatus === "exception" ? "fail" : ""],
     ["Rail", pi?.route?.rail ? "done" : pi ? "fail" : ""], ["Compliance", pi?.compliance ? (pi.compliance.outcome === "clear" ? "done" : "fail") : ""],
-    ["Settlement", settled ? "done" : pi?.status === "blocked" ? "fail" : ""], ["Ledger", settled ? "done" : ""], ["ERP sync", settled ? "done" : ""],
+    ["Settlement", settled ? "done" : pi?.status === "blocked" || pi?.status === "failed" ? "fail" : ""], ["Ledger", settled ? "done" : ""], ["ERP sync", settled ? "done" : ""],
   ];
   return <div className="flex flex-wrap gap-1.5">{steps.map(([n, s]) => <span key={n} className={s === "done" ? "rounded-full bg-ok/10 px-2.5 py-1 text-[11px] font-medium text-ok" : s === "fail" ? "rounded-full bg-bad/10 px-2.5 py-1 text-[11px] font-medium text-bad" : "rounded-full bg-subtle px-2.5 py-1 text-[11px] text-muted"}>{n}</span>)}</div>;
 }
@@ -199,9 +200,9 @@ export function PaymentDesk({ st }: { st: any }) {
     </Card>
     {pi && <div className="grid gap-4 lg:grid-cols-2">
       <Card title={`Rail choice for ${pi.id}`}>
-        <div className="mb-2 flex items-center gap-2">Status <Badge v={pi.status} />{pi.route?.rail && <>Rail <b>{pi.route.rail.toUpperCase()}</b></>}</div>
+        <div className="mb-2 flex items-center gap-2">Status <Badge v={pi.status} />{pi.route?.rail && <>Rail <b>{RAIL_LABEL[pi.route.rail as Rail] ?? pi.route.rail}</b></>}</div>
         <p className="mb-2 text-xs"><Badge v={pi.explainedBy === "llm" ? "Model explanation" : "Template explanation"} tone="neutral" /> {pi.explanation}</p>
-        <Table head={["Rail", "Eligible", "Fee", "Score", "Why"]}>{pi.route?.options.map((o: any) => <tr key={o.rail}><td>{o.rail.toUpperCase()}</td><td><Badge v={String(o.eligible)} /></td><td>{usd(o.feeUsd)}</td><td>{o.score}</td><td><Muted>{o.why.join(", ")}</Muted></td></tr>)}</Table>
+        <Table head={["Rail", "Eligible", "Fee", "Score", "Why"]}>{pi.route?.options.map((o: any) => <tr key={o.rail}><td>{RAIL_LABEL[o.rail as Rail] ?? o.rail}</td><td><Badge v={String(o.eligible)} /></td><td>{usd(o.feeUsd)}</td><td>{o.score}</td><td><Muted>{o.why.join(", ")}</Muted></td></tr>)}</Table>
         {pi.blockedReason && <ErrorNote msg={pi.blockedReason} />}
       </Card>
       <Card title="Compliance, Travel Rule and custody">
@@ -217,7 +218,7 @@ export function Settlements({ st }: { st: any }) {
   const [amt, setAmt] = useState(100); const { run, busy, error } = useAct();
   return <Card title="Settlements and refunds" pad={false} action={<><Label>Refund amount</Label><Input className="h-7 w-24" type="number" value={amt} onChange={(e) => setAmt(Number(e.target.value))} /></>}>
     <ErrorNote msg={error} />
-    {st.settlements.length ? <Table head={["Settlement", "Rail", "Amount", "Reference", ""]}>{st.settlements.map((s: any) => <tr key={s.id}><td><Mono>{s.id}</Mono></td><td>{s.rail.toUpperCase()}</td><td className="tabular-nums">{usd(st.intents.find((i: any) => i.id === s.paymentIntentId)?.amount)}</td><td><Mono>{s.txHash ?? s.railRef}</Mono></td>
+    {st.settlements.length ? <Table head={["Settlement", "Rail", "Amount", "Reference", ""]}>{st.settlements.map((s: any) => <tr key={s.id}><td><Mono>{s.id}</Mono></td><td>{RAIL_LABEL[s.rail as Rail] ?? s.rail}</td><td className="tabular-nums">{usd(st.intents.find((i: any) => i.id === s.paymentIntentId)?.amount)}</td><td>{s.explorerUrl || s.dashboardUrl ? <a className="text-primary hover:underline" href={s.explorerUrl ?? s.dashboardUrl} target="_blank" rel="noreferrer"><Mono>{s.txHash ?? s.railRef}</Mono></a> : <Mono>{s.txHash ?? s.railRef}</Mono>}</td>
       <td className="text-right"><Button size="sm" disabled={busy} onClick={() => run(() => api("/refunds", { paymentIntentId: s.paymentIntentId, amount: amt, reason: "Damaged goods credit" }))}>Refund {usd(amt)}</Button></td></tr>)}</Table>
       : <EmptyState title="No settlements yet" />}
     {!!st.refunds.length && <Table head={["Refund", "For", "Amount", "Status", "Reference"]}>{st.refunds.map((r: any) => <tr key={r.id}><td><Mono>{r.id}</Mono></td><td><Mono>{r.originalIntentId}</Mono></td><td>{usd(r.amount)}</td><td><Badge v={r.status} /></td><td><Mono>{r.txHash ?? r.railRef}</Mono></td></tr>)}</Table>}

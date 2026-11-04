@@ -1,7 +1,11 @@
 import { z } from "zod";
 
-export const Rail = z.enum(["card", "ach", "rtp", "usdc"]);
+/** Provider rails. Each one maps to a real adapter in bff/src/rails. */
+export const Rail = z.enum(["stripe_card", "stripe_ach", "circle_usdc", "onchain_usdc"]);
 export type Rail = z.infer<typeof Rail>;
+export const isUsdc = (r: Rail) => r === "circle_usdc" || r === "onchain_usdc";
+export const RAIL_LABEL: Record<Rail, string> = { stripe_card: "Card (Stripe)", stripe_ach: "ACH (Stripe)", circle_usdc: "USDC (Circle)", onchain_usdc: "USDC on Base (direct)" };
+export type PaymentStatus = "submitted" | "pending" | "settled" | "failed";
 export const Category = z.enum(["mro", "components", "logistics", "it"]);
 export type Category = z.infer<typeof Category>;
 

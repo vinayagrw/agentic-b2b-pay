@@ -7,6 +7,7 @@ import { usd } from "../lib/utils";
 import { Badge, Button, Card, DataTable, EmptyState, ErrorNote, Input, Label, Mono, Muted, PageHeader, Select, Stat, Table } from "../components/ui";
 import { Logo, Section } from "../components/Shell";
 import * as F from "./flows";
+import { PaymentsTable, RailStatus, type RailRow } from "./payments";
 
 export function OperatorHome() {
   const { data: st, error } = useAppState(); const { data: tenants } = useGet<Tenant[]>("/tenants");
@@ -24,22 +25,11 @@ export function OperatorHome() {
       <Stat icon={ShieldAlert} label="Blocked payments" value={st.intents.filter((i: any) => i.status === "blocked").length} />
       <Stat icon={Building2} label="Business clients" value={tenants?.filter((t) => t.kind === "client").length ?? 0} />
     </div>
-    <PaymentsTable st={st} />
+    <PaymentsTable title="Latest payments" />
   </Section>;
 }
 
-function PaymentsTable({ st }: { st: any }) {
-  const cols = useMemo<ColumnDef<any>[]>(() => [
-    { header: "Payment", accessorKey: "id", cell: (c) => <Mono>{c.getValue<any>()}</Mono> },
-    { header: "Amount", accessorKey: "amount", cell: (c) => <span className="tabular-nums">{usd(c.getValue<any>())}</span> },
-    { header: "Status", accessorKey: "status", cell: (c) => <Badge v={c.getValue<any>()} /> },
-    { header: "Rail", id: "rail", accessorFn: (r) => r.route?.rail ?? "", cell: (c) => String(c.getValue<any>()).toUpperCase() },
-    { header: "Invoice", accessorKey: "invoiceId", cell: (c) => <Mono>{c.getValue<any>()}</Mono> },
-    { header: "Reason", accessorKey: "blockedReason", enableSorting: false, cell: (c) => <Muted>{c.getValue<any>() ?? ""}</Muted> },
-  ], []);
-  return <Card title="Payments" pad={false}><DataTable data={[...st.intents].reverse()} columns={cols} empty={<EmptyState title="No payments yet" body="Payments from every tenant appear here as they are created." />} /></Card>;
-}
-export function OperatorPayments() { const { data: st, error } = useAppState(); return <Section><PageHeader title="Payments" sub="Every payment intent across tenants" />{st ? <><PaymentsTable st={st} /><F.Settlements st={st} /></> : <F.Loading error={error as Error} />}</Section>; }
+export function OperatorPayments() { const { data: st, error } = useAppState(); return <Section><PageHeader title="Payments" sub="Every payment across tenants. Status updates live from webhooks and the settlement watcher." /><RailStatus /><PaymentsTable />{st ? <F.Settlements st={st} /> : <F.Loading error={error as Error} />}</Section>; }
 
 export function Tenants() {
   const { data } = useGet<Tenant[]>("/tenants");
@@ -47,7 +37,7 @@ export function Tenants() {
     { header: "Name", accessorKey: "name", cell: (c) => <span className="flex items-center gap-2"><Logo name={c.row.original.branding.name} logo={c.row.original.branding.logo} size={20} />{c.getValue<any>()}</span> },
     { header: "Type", accessorKey: "kind", cell: (c) => <Badge v={c.getValue<any>() === "bank" ? "bank" : "business client"} tone="neutral" /> },
     { header: "Bank", accessorKey: "parentId", cell: (c) => <Mono>{c.getValue<any>() ?? ""}</Mono> },
-    { header: "Rails", id: "rails", enableSorting: false, cell: (c) => <span className="flex flex-wrap gap-1">{Object.entries(c.row.original.railSettings).map(([r, s]) => <Badge key={r} v={`${r} ${s.env}`} />)}</span> },
+    { header: "Rails", id: "rails", enableSorting: false, cell: (c) => <span className="flex flex-wrap gap-1">{Object.entries(c.row.original.railSettings).map(([r, s]) => <Badge key={r} v={`${r} ${s.env === "live" ? "LIVE" : "TEST"}`} tone={s.env === "live" ? "bad" : "neutral"} />)}</span> },
     { header: "Created", accessorKey: "createdAt", cell: (c) => <Muted>{String(c.getValue<any>()).slice(0, 10)}</Muted> },
   ], []);
   return <Section><PageHeader title="Tenants" sub="Banks you white label for and their business clients" /><Card pad={false}><DataTable data={data ?? []} columns={cols} /></Card></Section>;
@@ -97,15 +87,19 @@ export function BrandingPage() {
 
 export function SettingsPage() {
   const { data: me } = useMe(); const { data: tenants } = useGet<Tenant[]>("/tenants"); const { data: changes } = useGet<any[]>("/changes");
+  const { data: rails } = useGet<RailRow[]>("/rails");
   const { run, busy, error } = useAct();
   const [tid, setTid] = useState("tnt-acme"); const t = tenants?.find((x) => x.id === tid);
-  const request = (rail: string, s: any) => run(() => api("/changes", { kind: "rail.settings", tenantId: tid, payload: { tenantId: tid, rail, setting: s } }));
+  const request = (rail: string, env: string) => run(() => api("/changes", { kind: "rail.settings", tenantId: tid, payload: { tenantId: tid, rail, setting: { env } } }));
   return <Section>
-    <PageHeader title="Settings" sub="Rail providers and environments. Every change needs a second operator to approve." actions={<Select value={tid} onChange={(e) => setTid(e.target.value)}>{(tenants ?? []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>} />
+    <PageHeader title="Settings" sub="Sandbox or Live for each rail and tenant. Every change needs a second operator to approve." actions={<Select value={tid} onChange={(e) => setTid(e.target.value)}>{(tenants ?? []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>} />
     <ErrorNote msg={error} />
-    <Card title="Rails" pad={false}>{t ? <Table head={["Rail", "Provider", "Environment", ""]}>{Object.entries(t.railSettings).map(([r, s]) => <tr key={r}><td className="font-medium">{r.toUpperCase()}</td><td>{s.provider}</td><td><Badge v={s.env} /></td>
-      <td className="text-right"><Button size="sm" disabled={busy} onClick={() => request(r, { ...s, env: s.env === "live" ? "sandbox" : "live" })}>Request switch to {s.env === "live" ? "sandbox" : "live"}</Button></td></tr>)}</Table> : <F.Loading />}
-      <p className="px-4 py-2 text-xs text-muted">Live mode is refused until live keys are set in the server .env file.</p></Card>
+    <Card title="Rails" pad={false}>{t && rails ? <Table head={["Rail", "Keys", "Environment", ""]}>{rails.map((r) => { const env = t.railSettings[r.rail]?.env ?? "sandbox"; const next = env === "live" ? "sandbox" : "live";
+      return <tr key={r.rail}><td className="font-medium">{r.label}</td>
+        <td>{r.configured ? <Badge v="Ready" tone="ok" /> : <span className="flex flex-col"><Badge v="Not configured" tone="bad" className="w-fit" /><Muted>{r.notConfiguredReason}</Muted></span>}</td>
+        <td><Badge v={env === "live" ? "LIVE" : "SANDBOX"} tone={env === "live" ? "bad" : "neutral"} /></td>
+        <td className="text-right"><Button size="sm" disabled={busy} onClick={() => request(r.rail, next)}>Request switch to {next}</Button></td></tr>; })}</Table> : <F.Loading />}
+      <p className="px-4 py-2 text-xs text-muted">Live is refused unless the matching live keys are set in the server .env file. Rails without keys are skipped by the router.</p></Card>
     <Card title="Changes waiting for a checker" pad={false}>{changes?.length ? <Table head={["Change", "Kind", "Detail", "Maker", "Status", ""]}>{changes.map((c) => <tr key={c.id}><td><Mono>{c.id}</Mono></td><td>{c.kind}</td><td><Mono>{c.payload.tenantId} {c.payload.rail} {c.payload.setting?.env}</Mono></td><td>{c.requestedBy}</td><td><Badge v={c.status} /></td>
       <td className="flex justify-end gap-1">{c.status === "pending" && (c.requestedBy === me?.user.id ? <Muted>Another operator must approve</Muted> : <><Button size="sm" variant="primary" disabled={busy} onClick={() => run(() => api(`/changes/${c.id}/decide`, { approve: true }))}>Approve</Button><Button size="sm" disabled={busy} onClick={() => run(() => api(`/changes/${c.id}/decide`, { approve: false }))}>Reject</Button></>)}</td></tr>)}</Table>
       : <EmptyState title="No pending changes" body="Requests for rail or environment changes wait here for a second operator." />}</Card>

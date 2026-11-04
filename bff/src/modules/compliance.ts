@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { ComplianceResult, Rail } from "@b2b/shared";
+import { isUsdc, type ComplianceResult, type Rail } from "@b2b/shared";
 import { SANCTIONED_NAMES, SANCTIONED_WALLETS } from "./store.js";
 
 /** Large transfer marker. A Travel Rule record is built for every stablecoin send regardless of amount. */
@@ -20,7 +20,7 @@ export function screen(i: ComplianceInput): ComplianceResult {
   const nameHit = SANCTIONED_NAMES.some((n) => n.toLowerCase() === i.beneficiary.name.toLowerCase());
   checks.push({ kind: "sanctions", result: nameHit ? "fail" : "pass", detail: nameHit ? "Name match on simulated OFAC SDN list" : "No name match on sanctions lists", providerRef: ref("sanctions") });
   let travelRule: Record<string, unknown> | undefined;
-  if (i.rail === "usdc") {
+  if (isUsdc(i.rail)) {
     const w = (i.beneficiary.wallet ?? "").toLowerCase();
     const ofacHit = SANCTIONED_WALLETS.some((s) => s.toLowerCase() === w);
     checks.push({ kind: "ofac_wallet", result: !w || ofacHit ? "fail" : "pass", detail: !w ? "No wallet on file" : ofacHit ? `Wallet ${i.beneficiary.wallet} is on the simulated OFAC SDN digital currency address list` : "Wallet not on OFAC list", providerRef: ref("ofac") });
@@ -28,7 +28,7 @@ export function screen(i: ComplianceInput): ComplianceResult {
     const kytScore = ofacHit || kytHit ? 92 : 8;
     checks.push({ kind: "kyt", result: kytScore >= 75 ? "fail" : "pass", detail: `KYT risk score ${kytScore} of 100 (simulated chain analytics)`, providerRef: ref("kyt") });
     travelRule = {
-      standard: "IVMS101", amount: i.amount, asset: "USDC", chain: "base-sim", aboveThreshold: i.amount >= TRAVEL_RULE_THRESHOLD_USD,
+      standard: "IVMS101", amount: i.amount, asset: "USDC", chain: i.rail === "circle_usdc" ? "BASE-SEPOLIA via Circle" : "base-sepolia", aboveThreshold: i.amount >= TRAVEL_RULE_THRESHOLD_USD,
       originator: { legalPerson: i.originator.name, id: i.originator.orgId, country: i.originator.country, wallet: i.originator.wallet ?? "treasury-mpc-wallet-sim" },
       beneficiary: { legalPerson: i.beneficiary.name, id: i.beneficiary.orgId, country: i.beneficiary.country, wallet: i.beneficiary.wallet },
       originatingVasp: "Platform custody partner (simulated)", beneficiaryVasp: "Supplier custody (simulated)",

@@ -14,8 +14,10 @@ export type CatalogItem = { sku: string; supplierId: string; description: string
 export type PurchaseOrder = { id: string; buyerOrgId: string; supplierId: string; agentId: string; mandateId: string; erpRef: string | null; category: Category; lines: PoLine[]; total: number; currency: "USD"; status: "pending_approval" | "approved" | "rejected" | "received" | "invoiced" | "paid"; justification: string; policy: PolicyDecision; createdAt: string };
 export type GoodsReceipt = { id: string; poId: string; lines: { sku: string; qty: number }[]; receivedAt: string };
 export type Invoice = { id: string; poId: string; supplierId: string; number: string; amount: number; currency: "USD"; dueDate: string; extract: InvoiceExtract; extractedBy: string; matchStatus: "unmatched" | "matched" | "exception"; match?: MatchResult; erpApproval: "pending" | "approved"; paid: boolean };
-export type PaymentIntent = { id: string; invoiceId: string; mandateId: string; amount: number; currency: "USD"; status: "created" | "routed" | "blocked" | "settled" | "denied"; idempotencyKey: string; route?: RouteDecision; explanation?: string; explainedBy?: string; compliance?: ComplianceResult; custody?: unknown; settlementId?: string; blockedReason?: string };
-export type Settlement = { id: string; paymentIntentId: string; rail: Rail; railRef: string; txHash: string | null; chain: string | null; feeUsd: number; confirmedAt: string; status: "confirmed" };
+export type TimelineEntry = { at: string; status: string; source: "platform" | "adapter" | "webhook" | "watcher"; detail: string };
+export type PaymentIntent = { id: string; invoiceId: string; mandateId: string; amount: number; currency: "USD"; status: "created" | "routed" | "blocked" | "denied" | "submitted" | "pending" | "settled" | "failed";
+  rail?: Rail; env?: "sandbox" | "live"; providerRef?: string; explorerUrl?: string; dashboardUrl?: string; timeline?: TimelineEntry[]; createdAt?: string; tenantId?: string; idempotencyKey: string; route?: RouteDecision; explanation?: string; explainedBy?: string; compliance?: ComplianceResult; custody?: unknown; settlementId?: string; blockedReason?: string };
+export type Settlement = { id: string; paymentIntentId: string; rail: Rail; railRef: string; txHash: string | null; chain: string | null; feeUsd: number; confirmedAt: string; status: "confirmed"; explorerUrl?: string; dashboardUrl?: string };
 export type LedgerEntry = { id: string; journalId: string; account: string; debit: number; credit: number; currency: string; ref: string };
 export type Journal = { id: string; memo: string; ref: string; createdAt: string; entries: LedgerEntry[] };
 export type EvidenceRecord = { id: string; seq: number; subjectType: string; subjectId: string; event: string; payload: unknown; payloadHash: string; prevHash: string; hash: string; createdAt: string };
@@ -29,7 +31,7 @@ export type Db = {
   killSwitch: boolean; seq: number;
 };
 export type PayeeChange = { id: string; supplierId: string; field: "walletAddress" | "bankDetailsRef"; newValue: string; source: "erp"; requestedBy: string; approvals: string[]; callbackVerified: boolean; status: "pending" | "applied" | "rejected"; createdAt: string };
-export type RefundIntent = { id: string; originalIntentId: string; amount: number; reason: string; rail: Rail; status: "settled" | "rejected"; railRef?: string; txHash?: string | null; createdAt: string };
+export type RefundIntent = { id: string; originalIntentId: string; amount: number; reason: string; rail: Rail; status: "settled" | "pending" | "failed" | "rejected"; railRef?: string; txHash?: string | null; createdAt: string };
 
 export const SANCTIONED_WALLETS = ["0xBAD0000000000000000000000000000000000BAD"];
 export const SANCTIONED_NAMES = ["Rogue Metals Trading"];
@@ -52,13 +54,13 @@ export function seed(): Db {
       id: "mdt-1", agentId: "agt-buyer-1", principalUserId: "usr-cfo-jane", type: "intent",
       maxAmount: 100000, perTxnMax: 40000, approvalThreshold: 10000, currency: "USD",
       allowedSuppliers: ["sup-northwind", "sup-contoso", "sup-fabrikam"], allowedCategories: ["mro", "components", "logistics"],
-      allowedRails: ["card", "ach", "rtp", "usdc"], perSupplierLimit: { "sup-northwind": 60000, "sup-contoso": 20000, "sup-fabrikam": 30000 },
+      allowedRails: ["stripe_card", "stripe_ach", "circle_usdc", "onchain_usdc"], perSupplierLimit: { "sup-northwind": 60000, "sup-contoso": 20000, "sup-fabrikam": 30000 },
       validFrom: now.toISOString(), validTo: later.toISOString(), signature: "",
     }],
     suppliers: [
-      { id: "sup-northwind", orgId: "org-northwind", name: "Northwind Components LLC", bankDetailsRef: "bank-ref-001", walletAddress: "0x9a1C00000000000000000000000000000000C0DE", preferredRail: "usdc", acceptedRails: ["ach", "rtp", "usdc"], screeningStatus: "clear", erp: "SAP" },
-      { id: "sup-contoso", orgId: "org-contoso", name: "Contoso Logistics Ltd", bankDetailsRef: "bank-ref-002", walletAddress: null, preferredRail: "ach", acceptedRails: ["card", "ach"], screeningStatus: "clear", erp: "Coupa" },
-      { id: "sup-fabrikam", orgId: "org-fabrikam", name: "Fabrikam Metals SA", bankDetailsRef: "bank-ref-003", walletAddress: SANCTIONED_WALLETS[0], preferredRail: "usdc", acceptedRails: ["ach", "usdc"], screeningStatus: "clear", erp: "SAP" },
+      { id: "sup-northwind", orgId: "org-northwind", name: "Northwind Components LLC", bankDetailsRef: "bank-ref-001", walletAddress: "0x9a1C00000000000000000000000000000000C0DE", preferredRail: "onchain_usdc", acceptedRails: ["stripe_ach", "circle_usdc", "onchain_usdc"], screeningStatus: "clear", erp: "SAP" },
+      { id: "sup-contoso", orgId: "org-contoso", name: "Contoso Logistics Ltd", bankDetailsRef: "bank-ref-002", walletAddress: null, preferredRail: "stripe_ach", acceptedRails: ["stripe_card", "stripe_ach"], screeningStatus: "clear", erp: "Coupa" },
+      { id: "sup-fabrikam", orgId: "org-fabrikam", name: "Fabrikam Metals SA", bankDetailsRef: "bank-ref-003", walletAddress: SANCTIONED_WALLETS[0], preferredRail: "circle_usdc", acceptedRails: ["stripe_ach", "circle_usdc"], screeningStatus: "clear", erp: "SAP" },
     ],
     catalog: [
       { sku: "NW-BRG-6204", supplierId: "sup-northwind", description: "Ball bearing 6204 sealed", category: "components", unitPrice: 4.5, keywords: ["bearing", "bearings", "6204"] },
@@ -73,21 +75,29 @@ export function seed(): Db {
 }
 
 const TENANT = "tnt-acme";
-const intentStatus = (s: PaymentIntent["status"]) => (s === "settled" ? "settled" : s === "routed" ? "pending" : s === "created" ? "submitted" : "failed");
+const intentStatus = (s: PaymentIntent["status"]) => (s === "settled" || s === "pending" || s === "submitted" ? s : s === "routed" || s === "created" ? "submitted" : "failed");
 const KV_KEYS = ["orgs", "catalog", "receipts", "erp", "payeeChanges", "refunds", "alerts", "killSwitch", "seq"] as const;
 
+const LEGACY_RAIL: Record<string, Rail> = { card: "stripe_card", ach: "stripe_ach", rtp: "stripe_ach", usdc: "onchain_usdc" };
+const railOf = (r: string) => (LEGACY_RAIL[r] ?? r) as Rail;
+/** Databases written before the provider rails keep working: old rail names map to the new ones. */
+function upgrade(d: Db): Db {
+  for (const s of d.suppliers) { s.preferredRail = railOf(s.preferredRail); s.acceptedRails = [...new Set(s.acceptedRails.map(railOf))]; }
+  for (const m of d.mandates) m.allowedRails = [...new Set(m.allowedRails.map(railOf))];
+  return d;
+}
 /** Loads the domain state from SQLite. An empty database is seeded. */
 function load(): Db {
   const kv = sql.prepare("SELECT key, value FROM kv").all() as { key: string; value: string }[];
   if (!kv.length) { const d = seed(); write(d); return d; }
   const k = Object.fromEntries(kv.map((r) => [r.key, JSON.parse(r.value)]));
   const rows = (t: string, order = "rowid") => (sql.prepare(`SELECT data FROM ${t} ORDER BY ${order}`).all() as { data: string }[]).map((r) => JSON.parse(r.data));
-  return {
+  return upgrade({
     orgs: k.orgs ?? [], catalog: k.catalog ?? [], receipts: k.receipts ?? [], erp: k.erp ?? [], payeeChanges: k.payeeChanges ?? [], refunds: k.refunds ?? [], alerts: k.alerts ?? [],
     killSwitch: !!k.killSwitch, seq: k.seq ?? 1000,
     agents: rows("agents"), mandates: rows("mandates"), suppliers: rows("suppliers"), pos: rows("pos"), invoices: rows("invoices"),
     intents: rows("payment_intents"), settlements: rows("rail_events"), journals: rows("journals"), evidence: rows("audit", "seq"),
-  };
+  });
 }
 /** Writes the whole domain state in one transaction. Demo volumes keep this cheap. */
 function write(d: Db) {
@@ -121,5 +131,5 @@ export let db: Db = load();
 export function save() { write(db); emit(); }
 /** Reload state from the current connection, used after useDb() in tests. */
 export function reload() { db = load(); return db; }
-export function reset(fresh: Db = seed()) { db = fresh; save(); return db; }
+export function reset(fresh: Db = seed()) { db = fresh; sql.prepare("DELETE FROM idempotency_keys").run(); sql.prepare("DELETE FROM provider_events").run(); save(); return db; }
 export function nextId(prefix: string) { db.seq += 1; return `${prefix}-${db.seq}`; }

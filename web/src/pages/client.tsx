@@ -5,6 +5,7 @@ import { usd } from "../lib/utils";
 import { Card, EmptyState, Muted, PageHeader, Stat } from "../components/ui";
 import { Section } from "../components/Shell";
 import * as F from "./flows";
+import { PaymentsTable, RailStatus } from "./payments";
 
 function useSt() { const s = F.useScopedState(); return s; }
 const Wrap = ({ title, sub, children }: { title: string; sub?: string; children: (st: any) => React.ReactNode }) => {
@@ -41,6 +42,6 @@ export const Invoices = () => <Wrap title="Invoices" sub="Supplier invoices read
 export const Approvals = () => <Wrap title="Approvals" sub="Everything that needs a person">{(st) => <><F.ApprovalInbox st={st} /><F.PayeeChanges st={st} /><F.Alerts st={st} /></>}</Wrap>;
 export const Agents = () => <Wrap title="Agents" sub="Identity, mandates and the kill switch">{(st) => <><F.AgentRegistry st={st} /><F.Mandates st={st} /><F.McpTools /></>}</Wrap>;
 export const Suppliers = () => <Wrap title="Suppliers">{(st) => <F.SupplierTable st={st} />}</Wrap>;
-export const Payments = () => <Wrap title="Payments" sub="Route, screen, sign and settle">{(st) => <><F.PaymentDesk st={st} /><F.ErpFeed st={st} /></>}</Wrap>;
+export const Payments = () => <Wrap title="Payments" sub="Route, screen and submit. Payments settle when the rail confirms.">{(st) => <><F.PaymentDesk st={st} /><PaymentsTable /><RailStatus /><F.ErpFeed st={st} /></>}</Wrap>;
 export const Rules = () => <Wrap title="Rules" sub="Approval rules by amount, category and entity">{(st) => <><Card title="Current rule">{st.mandates[0] ? <p className="text-[13px]">Purchases above <b>{usd(st.mandates[0].approvalThreshold)}</b> need one human approver. The rest follow the agent mandate.</p> : <Muted>No rules yet.</Muted>}</Card>
   <Card><EmptyState title="Multi level rule designer is not built yet" body="You will add rules by amount, category and entity here. It ships in build step 4." /></Card></>}</Wrap>;

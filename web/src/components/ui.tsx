@@ -59,7 +59,7 @@ export function Table({ head, children, className }: { head?: React.ReactNode[];
     <tbody className="[&>tr]:border-b [&>tr]:border-border [&>tr:last-child]:border-0 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top">{children}</tbody>
   </table></div>;
 }
-export function DataTable<T>({ data, columns, empty }: { data: T[]; columns: ColumnDef<T, any>[]; empty?: React.ReactNode }) {
+export function DataTable<T>({ data, columns, empty, onRow }: { data: T[]; columns: ColumnDef<T, any>[]; empty?: React.ReactNode; onRow?: (row: T) => void }) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const t = useReactTable({ data, columns, state: { sorting }, onSortingChange: setSorting, getCoreRowModel: getCoreRowModel(), getSortedRowModel: getSortedRowModel() });
   if (!data.length) return <>{empty ?? <EmptyState title="Nothing here yet" />}</>;
@@ -67,7 +67,7 @@ export function DataTable<T>({ data, columns, empty }: { data: T[]; columns: Col
     <thead>{t.getHeaderGroups().map((g) => <tr key={g.id} className="border-b border-border">{g.headers.map((h) => <th key={h.id} className="px-3 py-2 text-left text-xs font-medium text-muted">
       {h.column.getCanSort() ? <button className="inline-flex items-center gap-1 hover:text-fg" onClick={h.column.getToggleSortingHandler()}>{flexRender(h.column.columnDef.header, h.getContext())}<ArrowUpDown size={11} /></button> : flexRender(h.column.columnDef.header, h.getContext())}
     </th>)}</tr>)}</thead>
-    <tbody>{t.getRowModel().rows.map((r) => <tr key={r.id} className="border-b border-border last:border-0 hover:bg-subtle">{r.getVisibleCells().map((c) => <td key={c.id} className="px-3 py-2 align-top">{flexRender(c.column.columnDef.cell, c.getContext())}</td>)}</tr>)}</tbody>
+    <tbody>{t.getRowModel().rows.map((r) => <tr key={r.id} className={cn("border-b border-border last:border-0 hover:bg-subtle", onRow && "cursor-pointer")} tabIndex={onRow ? 0 : undefined} onClick={onRow ? () => onRow(r.original) : undefined} onKeyDown={onRow ? (e) => { if (e.key === "Enter") onRow(r.original); } : undefined}>{r.getVisibleCells().map((c) => <td key={c.id} className="px-3 py-2 align-top">{flexRender(c.column.columnDef.cell, c.getContext())}</td>)}</tr>)}</tbody>
   </table></div>;
 }
 

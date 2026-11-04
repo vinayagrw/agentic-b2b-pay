@@ -17,10 +17,10 @@ const login = async (app: any, userId: string) => {
 describe("sqlite store", () => {
   it("runs migrations and creates every table", () => {
     const names = (sql.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as any[]).map((r) => r.name);
-    for (const t of ["tenants", "users", "agents", "mandates", "suppliers", "pos", "invoices", "payment_intents", "rail_events", "journals", "cases", "audit", "pending_changes"]) expect(names).toContain(t);
+    for (const t of ["tenants", "users", "agents", "mandates", "suppliers", "pos", "invoices", "payment_intents", "rail_events", "journals", "cases", "audit", "pending_changes", "idempotency_keys", "provider_events"]) expect(names).toContain(t);
   });
   it("round trips the domain state and maps intent status", async () => {
-    await S.runFlow("Need 2000 sealed 6204 bearings for line 3");
+    await S.runFlow("Need 2000 sealed 6204 bearings for line 3"); await S.pollSettlements();
     const before = JSON.parse(JSON.stringify(db));
     reload();
     expect(JSON.parse(JSON.stringify(db))).toEqual(before);
@@ -74,7 +74,7 @@ describe("auth", () => {
 });
 
 describe("maker-checker", () => {
-  const change = { kind: "rail.settings", payload: { tenantId: "tnt-acme", rail: "rtp", setting: { provider: "simulated", env: "sandbox" } } };
+  const change = { kind: "rail.settings", payload: { tenantId: "tnt-acme", rail: "stripe_ach", setting: { env: "sandbox" } } };
   it("maker cannot approve own change, a second operator can", async () => {
     const app = await buildApp();
     const olivia = await login(app, "usr-op-olivia"); const omar = await login(app, "usr-op-omar");
@@ -90,6 +90,6 @@ describe("maker-checker", () => {
     expect(() => P.decideChange(P.getUser("usr-controller-sam")!, c.id, true)).toThrow(/operator_admin/);
   });
   it("live mode is refused without live keys", () => {
-    expect(() => P.requestChange(P.getUser("usr-op-olivia")!, "rail.settings", { tenantId: "tnt-acme", rail: "card", setting: { provider: "stripe", env: "live" } })).toThrow(/live keys/);
+    expect(() => P.requestChange(P.getUser("usr-op-olivia")!, "rail.settings", { tenantId: "tnt-acme", rail: "stripe_card", setting: { env: "live" } })).toThrow(/live keys/);
   });
 });

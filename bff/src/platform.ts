@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { Rail } from "@b2b/shared";
 import { sql } from "./db.js";
-import { config } from "./config.js";
+import { adapter, RAIL_IDS } from "./rails/index.js";
 import { db, save, emit } from "./modules/store.js";
 import { appendEvidence } from "./modules/evidence.js";
 
@@ -9,16 +9,14 @@ export const ROLES = ["operator_admin", "client_admin", "approver", "ap_clerk", 
 export type Role = (typeof ROLES)[number];
 export type User = { id: string; tenantId: string | null; name: string; email: string; role: Role };
 export type Branding = { name: string; logo: string | null; primary: string; accent: string };
-export type RailSetting = { provider: "stripe" | "circle" | "onchain" | "simulated"; env: "sandbox" | "live" };
+export type RailSetting = { env: "sandbox" | "live" };
 export type Tenant = { id: string; kind: "bank" | "client"; parentId: string | null; name: string; branding: Branding; railSettings: Partial<Record<Rail, RailSetting>>; createdAt: string };
 export type PendingChange = { id: string; tenantId: string | null; kind: string; payload: any; requiredRole: Role; requestedBy: string; approvedBy: string | null; status: "pending" | "approved" | "rejected"; createdAt: string; decidedAt: string | null };
 
 export class AuthError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 
-const rails = (): Tenant["railSettings"] => ({
-  card: { provider: "stripe", env: "sandbox" }, ach: { provider: "stripe", env: "sandbox" },
-  rtp: { provider: "simulated", env: "sandbox" }, usdc: { provider: "circle", env: "sandbox" },
-});
+const rails = (): Tenant["railSettings"] => Object.fromEntries(RAIL_IDS.map((r) => [r, { env: "sandbox" }]));
+export const railEnv = (tenantId: string, rail: Rail): RailSetting["env"] => getTenant(tenantId)?.railSettings[rail]?.env ?? "sandbox";
 export const SEED_TENANTS: Omit<Tenant, "createdAt">[] = [
   { id: "bank-northstar", kind: "bank", parentId: null, name: "Northstar Bank", branding: { name: "Northstar Bank", logo: null, primary: "#1d4ed8", accent: "#f59e0b" }, railSettings: rails() },
   { id: "bank-harbor", kind: "bank", parentId: null, name: "Harbor Trust", branding: { name: "Harbor Trust", logo: null, primary: "#0f766e", accent: "#e11d48" }, railSettings: rails() },
@@ -89,13 +87,15 @@ const HANDLERS: Record<string, Handler> = {
     role: "operator_admin",
     validate: (p) => {
       if (!getTenant(p.tenantId)) throw new AuthError(404, "tenant not found");
-      if (p.setting?.env === "live") {
-        const ok = p.setting.provider === "stripe" ? !!config.STRIPE_LIVE_SECRET_KEY : p.setting.provider === "circle" ? !!config.CIRCLE_LIVE_API_KEY : false;
-        if (!ok) throw new AuthError(409, `Live mode needs live keys for ${p.setting.provider} in .env`);
+      if (!RAIL_IDS.includes(p.rail)) throw new AuthError(422, `unknown rail ${p.rail}`);
+      if (!["sandbox", "live"].includes(p.setting?.env)) throw new AuthError(422, "env must be sandbox or live");
+      if (p.setting.env === "live") {
+        const r = adapter(p.rail).readiness("live");
+        if (!r.configured) throw new AuthError(409, `Live mode needs live keys for ${p.rail} in .env (${r.reason})`);
       }
     },
     apply: (p) => {
-      const t = getTenant(p.tenantId)!; t.railSettings[p.rail as Rail] = p.setting;
+      const t = getTenant(p.tenantId)!; t.railSettings[p.rail as Rail] = { env: p.setting.env };
       sql.prepare("UPDATE tenants SET rail_settings = ? WHERE id = ?").run(JSON.stringify(t.railSettings), t.id); return t;
     },
   },
