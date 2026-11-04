@@ -6,6 +6,8 @@ import { Link } from "react-router-dom";
 import { RAIL_LABEL, type Rail } from "@b2b/shared";
 import { api, useAct, useGet } from "../lib/api";
 import { usd } from "../lib/utils";
+import { SmartTable } from "../components/TableKit";
+import { RiskChip } from "../components/RiskChip";
 import { Badge, Button, Card, DataTable, EmptyState, ErrorNote, Mono, Muted, Table } from "../components/ui";
 
 export type RailRow = { rail: Rail; label: string; feeUsd: number; maxAmount: number; settleMinutes: number; configured: boolean; notConfiguredReason?: string; env: "sandbox" | "live"; address?: string };
@@ -25,6 +27,7 @@ export function PaymentsTable({ title = "Payments" }: { title?: string }) {
     { header: "Payment", accessorKey: "id", cell: (c) => <span className="flex flex-col"><Mono>{c.getValue<any>()}</Mono>{c.row.original.kind === "refund" && <Muted>Refund of {c.row.original.linkedIntentId}</Muted>}</span> },
     { header: "Amount", accessorKey: "amount", cell: (c) => <span className="tabular-nums">{usd(c.getValue<any>())}</span> },
     { header: "Status", accessorKey: "status", cell: (c) => <StatusDot tone={toneOf(c.getValue<any>())} label={c.getValue<any>()} pulse={["pending", "submitted"].includes(c.getValue<any>())} /> },
+    { header: "Risk", id: "risk", accessorFn: (r) => r.risk?.score ?? -1, cell: (c) => <RiskChip score={c.row.original.risk?.score} level={c.row.original.risk?.level} /> },
     { header: "Rail", id: "rail", accessorFn: (r) => r.rail ?? r.route?.rail ?? "", cell: (c) => <span className="flex items-center gap-1">{railName(c.getValue<any>())}{c.row.original.env && <Badge v={c.row.original.env === "live" ? "LIVE" : "TEST"} tone={c.row.original.env === "live" ? "bad" : "neutral"} />}</span> },
     { header: "Provider ref", accessorKey: "providerRef", cell: (c) => <Mono className="block max-w-[180px] truncate">{c.getValue<any>() ?? ""}</Mono> },
     { header: "Link", id: "link", enableSorting: false, cell: (c) => <ProviderLink pi={c.row.original} /> },
@@ -33,7 +36,7 @@ export function PaymentsTable({ title = "Payments" }: { title?: string }) {
   if (error) return <ErrorNote msg={(error as Error).message} />;
   return <Card title={title} pad={false} action={<Button size="sm" variant="ghost" disabled={busy} onClick={() => run(() => api("/payments/poll", {}))}><RefreshCw size={13} />Check status now</Button>}>
     <ErrorNote msg={e2} />
-    {!data ? <SkeletonTable cols={6} /> : <DataTable data={data} columns={cols} onRow={(r: any) => setOpen(r.id)} empty={<EmptyState title="No payments yet" body="Payments show here as soon as they are submitted, and update live as rails confirm them." />} />}
+    {!data ? <SkeletonTable cols={6} /> : <SmartTable table="payments" data={data} columns={cols} getId={(r: any) => r.id} onRow={(r: any) => setOpen(r.id)} empty={<EmptyState title="No payments yet" body="Payments show here as soon as they are submitted, and update live as rails confirm them." />} />}
     <PaymentDrawer id={open} onClose={() => setOpen(null)} />
   </Card>;
 }
@@ -45,6 +48,7 @@ export function PaymentDrawer({ id, onClose }: { id: string | null; onClose: () 
         {!pi ? <Skeleton lines={6} /> : <>
           <Table>
             <tr><td className="text-muted">Status</td><td><Badge v={pi.status} /></td></tr>
+            {pi.risk && <tr><td className="text-muted">Risk</td><td><span className="flex flex-col gap-1"><RiskChip score={pi.risk.score} level={pi.risk.level} />{pi.risk.reasons.map((r: any) => <Muted key={r.code}>{r.label}: {r.detail}</Muted>)}{data.riskReview && <Muted>Review: {data.riskReview.status}, "{data.riskReview.reason}"</Muted>}</span></td></tr>}
             <tr><td className="text-muted">Amount</td><td className="tabular-nums">{usd(pi.amount)}</td></tr>
             <tr><td className="text-muted">Rail</td><td>{railName(pi.rail ?? pi.route?.rail)} {pi.env && <Badge v={pi.env === "live" ? "LIVE" : "TEST"} tone="neutral" />}</td></tr>
             <tr><td className="text-muted">Provider ref</td><td><Mono className="break-all">{pi.providerRef ?? "None yet"}</Mono></td></tr>

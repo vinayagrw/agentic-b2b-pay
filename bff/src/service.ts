@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import * as Risk from "./risk.js";
 import { isUsdc, type PoDraft, type Rail } from "@b2b/shared";
 import { db, save, nextId, tenantOf, TENANT, type PurchaseOrder, type Supplier, type PaymentIntent, type Settlement, type TimelineEntry } from "./modules/store.js";
 import { issueKey, verifyAgent, signAs, verifySignature } from "./modules/kya.js";
@@ -298,7 +299,13 @@ async function withBalances<T extends { rail: Rail; configured: boolean; env: Ra
   }));
 }
 
+/** Pays an invoice, then stores a rule based risk score on the payment. */
 export async function payInvoice(invId: string, idempotencyKey: string, opts: { urgency?: "standard" | "urgent"; approvers?: string[]; fxLockId?: string } = {}) {
+  const r = await payInvoiceCore(invId, idempotencyKey, opts);
+  if (!r.replay) Risk.scoreAndStore(r.intent);
+  return r;
+}
+async function payInvoiceCore(invId: string, idempotencyKey: string, opts: { urgency?: "standard" | "urgent"; approvers?: string[]; fxLockId?: string } = {}) {
   const key = sql.prepare("SELECT intent_id FROM idempotency_keys WHERE key = ?").get(idempotencyKey) as { intent_id: string } | undefined;
   const prior = key && db.intents.find((p) => p.id === key.intent_id);
   if (prior) return { intent: prior, replay: true };

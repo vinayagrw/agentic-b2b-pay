@@ -30,6 +30,8 @@ import * as OIDC from "./oidc.js";
 import { registerScim } from "./scim.js";
 import * as SAML from "./saml.js";
 import * as SU from "./stepup.js";
+import * as Risk from "./risk.js";
+import * as TB from "./tables.js";
 import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -129,7 +131,7 @@ export async function buildApp() {
     "POST /ops/cases/:id/sar/file": "compliance.case.file", "POST /ops/cases/:id/close": "compliance.case.file", "GET /ops/revenue": "treasury.read", "GET /ops/sankey": "treasury.read", "GET /ops/kpis": "treasury.read",
     "GET /cases/:id/evidence-pack": "audit.read", "GET /payments/:id/why/export.json": "audit.read", "GET /payments/:id/why/export.md": "audit.read",
     "GET /identity/configs": "identity.manage", "POST /identity/configs": "identity.manage", "GET /iam/users": "roles.manage", "GET /iam/roles": "roles.manage", "POST /iam/roles": "roles.manage", "PUT /iam/roles/:id": "roles.manage", "DELETE /iam/roles/:id": "roles.manage", "POST /iam/users/:id/role": "roles.manage",
-    "POST /sessions/:id/revoke": "workspace.read", "GET /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens/:id/revoke": "developers.keys",
+    "POST /sessions/:id/revoke": "workspace.read", "POST /risk/:paymentId/decide": "risk.review", "POST /views": "workspace.read", "DELETE /views/:id": "workspace.read", "GET /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens/:id/revoke": "developers.keys",
   };
   /** The permission a route needs. Developer routes need developers.keys, other reads need workspace.read, other writes need flow.operate. */
   const permFor = (method: string, url: string): I.Permission => ROUTE_PERMS[`${method} ${url}`] ?? (url.startsWith("/dev/") ? "developers.keys" : method === "GET" ? "workspace.read" : "flow.operate");
@@ -202,6 +204,12 @@ export async function buildApp() {
     const u = userOf(req); if (!u) throw new P.AuthError(401, "Sign in required");
     const t = activeTenant(req, u); const g = I.grantOf(u);
     return { user: u, operator: P.isOperator(u), tenant: t, theme: P.themeFor(t), tenants: P.tenantsFor(u).filter((x) => x.kind !== "client" || I.inEntityScope(u, x.id)), llmMode: llmMode(), permissions: [...g.permissions], roleName: g.roleName, approveLimit: g.approveLimit };
+  });
+  app.post("/me/tenant", async (req, reply) => {
+    const u = who(req); const id = String(b(req).tenantId ?? "");
+    const t = P.tenantsFor(u).find((x) => x.id === id);
+    if (!t || (t.kind === "client" && !I.inEntityScope(u, t.id))) throw new P.AuthError(403, "Not your tenant");
+    reply.setCookie("tenant", id, COOKIE); return { ok: true };
   });
   // Identity, roles, permission check, sessions
   const roleTenant = (u: P.User) => (P.isOperator(u) ? null : u.tenantId);
@@ -315,8 +323,14 @@ export async function buildApp() {
   // Rails, payments, webhooks
   app.get("/rails", async () => S.railsView());
   app.get("/rails/balances", async () => S.railBalances());
-  app.get("/payments", async (req) => [...scoped(scopeOf(req)).intents].reverse());
-  app.get("/payments/:id", async (req: any) => { const i = db.intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); return { intent: i, settlement: db.settlements.find((s) => s.id === i.settlementId) ?? null, evidence: db.evidence.filter((e) => e.subjectId === i.id) }; });
+  app.get("/payments", async (req) => { const st = scoped(scopeOf(req)); Risk.ensureScores(st.intents); return [...st.intents].reverse(); });
+  app.get("/risk/inbox", async (req: any) => Risk.inbox(scopeOf(req), { status: req.query?.status ? String(req.query.status) : undefined }));
+  app.post("/risk/:paymentId/decide", async (req: any) => Risk.decide(who(req), scopeOf(req), req.params.paymentId, String(b(req).action ?? ""), String(b(req).reason ?? "")));
+  app.get("/views", async (req: any) => TB.listViews(who(req), String(req.query?.table ?? "")));
+  app.post("/views", async (req) => TB.saveView(who(req), b(req)));
+  app.delete("/views/:id", async (req: any) => TB.deleteView(who(req), req.params.id));
+  app.get("/export/:kind", async (req: any, reply) => { const u = who(req); const ids = req.query?.ids ? new Set(String(req.query.ids).split(",").filter(Boolean).slice(0, 1000)) : undefined; const csv = TB.exportCsv(req.params.kind, scopeOf(req), u, () => clientOf(req, u), ids); return reply.type("text/csv; charset=utf-8").header("content-disposition", `attachment; filename="${req.params.kind}.csv"`).send(csv); });
+  app.get("/payments/:id", async (req: any) => { const i = db.intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); Risk.ensureScores([i]); return { intent: i, riskReview: Risk.reviewOf(i.id), settlement: db.settlements.find((s) => s.id === i.settlementId) ?? null, evidence: db.evidence.filter((e) => e.subjectId === i.id) }; });
   app.post("/payments/poll", async () => ({ checked: await S.pollSettlements() }));
   app.get("/cases", async (req) => S.listCases(scopeOf(req)));
   app.post("/webhooks/stripe", async (req: any) => S.ingestWebhook("stripe", req.rawBody ?? Buffer.alloc(0), req.headers));

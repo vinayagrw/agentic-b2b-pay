@@ -30,22 +30,22 @@ export function decisionBlock(item: Pick<ApprovalItem, "status" | "canAct" | "wh
 
 
 /** Asks for a code from the authenticator app, with first time setup. */
-function StepUpPrompt({ s, threshold }: { s: StepUpStatus; threshold: number }) {
+export function StepUpPrompt({ s, threshold }: { s: StepUpStatus; threshold: number }) {
   const { run, busy, error } = useAct(); const [code, setCode] = useState(""); const [setup, setSetup] = useState<{ secret: string; otpauthUri: string } | null>(null);
   const verify = async () => { const r = await run(() => api("/auth/step-up/verify", { code })); if (r !== undefined) setCode(""); };
   return <div className="mt-3 rounded-lg border border-warn/40 bg-warn/10 p-3" data-testid="step-up">
     <div className="flex items-center gap-1.5 text-xs font-medium"><KeyRound size={13} aria-hidden className="text-warn" />Confirm it is you</div>
     <p className="mt-1 text-xs text-muted">Approvals above {usd(threshold)} need a fresh code from your authenticator app. It stays valid for a few minutes.</p>
-    {!s.enrolled && !setup && <Button size="sm" className="mt-2" disabled={busy} onClick={async () => { const r = await run(() => api<{ secret: string; otpauthUri: string }>("/auth/step-up/enroll", {})); if (r) setSetup(r); }}>Set up authenticator</Button>}
+    {!s.enrolled && !setup && <Button size="sm" className="mt-2 h-11 w-full sm:h-7 sm:w-auto" disabled={busy} onClick={async () => { const r = await run(() => api<{ secret: string; otpauthUri: string }>("/auth/step-up/enroll", {})); if (r) setSetup(r); }}>Set up authenticator</Button>}
     {setup && <div className="mt-2 text-xs">Add this key to your authenticator app, then enter the 6 digit code. <Mono className="break-all">{setup.secret}</Mono> <a className="text-primary underline" href={setup.otpauthUri}>Open in app</a></div>}
-    {(s.enrolled || setup) && <div className="mt-2 flex gap-2"><Input aria-label="Authenticator code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="123456" className="w-28" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
-      <Button size="sm" variant="primary" disabled={busy || code.length !== 6} onClick={verify}>Verify</Button></div>}
+    {(s.enrolled || setup) && <div className="mt-2 flex gap-2"><Input aria-label="Authenticator code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="123456" className="h-11 w-full text-base sm:h-8 sm:w-28 sm:text-[13px]" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
+      <Button size="sm" variant="primary" className="h-11 px-5 sm:h-7 sm:px-2.5" disabled={busy || code.length !== 6} onClick={verify}>Verify</Button></div>}
     <ErrorNote msg={error} />
   </div>;
 }
 
 /** Maker checker card. The maker is shown up front, the checker decides with a reason on record. */
-export function ApprovalCard({ p, onDecided }: { p: ApprovalItem; onDecided?: (approve: boolean) => void }) {
+export function ApprovalCard({ p, onDecided, selected, onSelect }: { p: ApprovalItem; onDecided?: (approve: boolean) => void; selected?: boolean; onSelect?: (on: boolean) => void }) {
   const { data: me } = useMe(); const { run, busy, error } = useAct();
   const [reason, setReason] = useState(""); const [rejecting, setRejecting] = useState(false);
   const blocked = decisionBlock(p, can(me, "payments.approve"));
@@ -58,6 +58,7 @@ export function ApprovalCard({ p, onDecided }: { p: ApprovalItem; onDecided?: (a
   const flags = p.riskFlags ?? [];
   return <Card className={cn(p.status !== "pending_approval" && "opacity-80")}>
     <div className="flex flex-wrap items-start gap-3">
+      {onSelect && p.status === "pending_approval" && <label className="-m-2 grid h-11 w-11 shrink-0 cursor-pointer place-items-center"><input type="checkbox" className="h-5 w-5" aria-label={`Select ${p.id}`} checked={!!selected} onChange={(e) => onSelect(e.target.checked)} /></label>}
       <div className="min-w-0 flex-1">
         <div className="text-[13px] text-muted">{p.supplier}</div>
         <div className="text-2xl font-semibold tabular-nums">{usd(p.total)}</div>
@@ -93,8 +94,8 @@ export function ApprovalCard({ p, onDecided }: { p: ApprovalItem; onDecided?: (a
     {p.status === "pending_approval" && (blocked ? <Muted className="mt-3 block">{blocked}</Muted> : <div className="mt-3 flex flex-col gap-2">
       {needStepUp && su && <StepUpPrompt s={su} threshold={su.thresholdUsd} />}
       <label className="text-xs font-medium text-muted" htmlFor={`reason-${p.id}`}>{rejecting ? "Reason for rejecting (required)" : "Reason for the record"}</label>
-      <Textarea id={`reason-${p.id}`} className="min-h-12 font-sans text-[13px]" placeholder={rejecting ? "Tell the maker what to change" : "Optional when approving"} value={reason} onChange={(e) => setReason(e.target.value)} />
-      <div className="flex gap-2">
+      <Textarea id={`reason-${p.id}`} className="min-h-12 font-sans text-base sm:text-[13px]" placeholder={rejecting ? "Tell the maker what to change" : "Optional when approving"} value={reason} onChange={(e) => setReason(e.target.value)} />
+      <div className="flex gap-2 [&>button]:h-11 [&>button]:flex-1 sm:[&>button]:h-8 sm:[&>button]:flex-none">
         {!rejecting ? <><Button variant="primary" disabled={busy || needStepUp} title={needStepUp ? "Enter an authenticator code first" : undefined} onClick={() => decide(true)}><Check size={13} aria-hidden />Approve</Button><Button disabled={busy} onClick={() => setRejecting(true)}><X size={13} aria-hidden />Reject</Button></>
           : <><Button variant="danger" disabled={busy || !reason.trim()} onClick={() => decide(false)}><X size={13} aria-hidden />Confirm reject</Button><Button variant="ghost" disabled={busy} onClick={() => setRejecting(false)}>Cancel</Button></>}
       </div>

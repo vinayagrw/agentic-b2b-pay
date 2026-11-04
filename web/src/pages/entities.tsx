@@ -1,3 +1,4 @@
+import { ExportButton } from "../components/TableKit";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Building, Lock } from "lucide-react";
@@ -43,7 +44,7 @@ export function EntityLedgerPage() {
   const byCcy = l ? Object.entries(l.byCurrency) as [string, Record<string, number>][] : [];
   const fxPays = (l?.payments ?? []).filter((p: any) => p.fx);
   return <Section>
-    <PageHeader title="Entity ledger" sub={`${entity.name} keeps its books in ${entity.currency}. Every journal balances inside this entity.`} actions={<div className="flex items-center gap-2"><EntitySwitcher /></div>} />
+    <PageHeader title="Entity ledger" sub={`${entity.name} keeps its books in ${entity.currency}. Every journal balances inside this entity.`} actions={<div className="flex items-center gap-2"><ExportButton kind="ledger" /><EntitySwitcher /></div>} />
     <div className="grid gap-3 sm:grid-cols-3">
       <Stat label="Functional currency" value={entity.currency} hint={entity.country} />
       <Stat label="Journals" value={l?.journals.length ?? 0} />

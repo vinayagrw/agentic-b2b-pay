@@ -1,3 +1,4 @@
+import { ExportButton } from "../components/TableKit";
 import { useEffect, useState } from "react";
 import { applyTheme } from "../lib/theme";
 import { Logo } from "../components/Shell";
@@ -8,7 +9,8 @@ import { usd } from "../lib/utils";
 import { Badge, Button, Card, EmptyState, ErrorNote, Input, Label, Mono, Muted, PageHeader, Select, Table, Textarea } from "../components/ui";
 import { Section } from "../components/Shell";
 import { Loading } from "./flows";
-import { ApprovalCard } from "../components/ApprovalCard";
+import { ApprovalCard, StepUpPrompt } from "../components/ApprovalCard";
+import { stepUpNeeded, type StepUpStatus } from "../lib/perm";
 import { Skeleton, SkeletonTable } from "../components/kit";
 
 const CATS = ["mro", "components", "logistics", "it"] as const;
@@ -140,13 +142,41 @@ export function RulesPage() {
 
 export function ApprovalsInbox() {
   const { data, error } = useGet<any[]>("/workspace/approvals"); const [tab, setTab] = useState<"mine" | "all" | "done">("mine");
+  const [sel, setSel] = useState<Set<string>>(new Set());
   if (!data) return error ? <Loading error={error as Error} /> : <div className="grid gap-3 lg:grid-cols-2">{[0, 1].map((n) => <Card key={n}><Skeleton lines={5} /></Card>)}</div>;
   const pending = data.filter((p) => p.status === "pending_approval"); const mine = pending.filter((p) => p.canAct);
   const list = tab === "mine" ? mine : tab === "all" ? pending : data.filter((p) => p.status !== "pending_approval");
+  const chosen = data.filter((p) => sel.has(p.id) && p.status === "pending_approval");
+  const toggle = (id: string, on: boolean) => setSel((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; });
   return <div className="flex flex-col gap-3">
-    <div className="flex gap-1">{([["mine", `For you (${mine.length})`], ["all", `All waiting (${pending.length})`], ["done", "Decided"]] as const).map(([k, l]) => <Button key={k} size="sm" variant={tab === k ? "primary" : "ghost"} onClick={() => setTab(k)}>{l}</Button>)}</div>
-    {!list.length ? <Card><EmptyState icon={Inbox} title={tab === "mine" ? "Inbox zero" : "Nothing here"} body="Purchases that match a rule, or go above the mandate threshold, land here for the right people." /></Card> : <div className="grid gap-3 lg:grid-cols-2">{list.map((p) => <ApprovalCard key={p.id} p={p} />)}</div>}
+    <div className="flex flex-wrap items-center gap-1">{([["mine", `For you (${mine.length})`], ["all", `All waiting (${pending.length})`], ["done", "Decided"]] as const).map(([k, l]) => <Button key={k} size="sm" className="h-10 sm:h-7" variant={tab === k ? "primary" : "ghost"} onClick={() => setTab(k)}>{l}</Button>)}
+      <span className="ml-auto flex gap-1">{tab !== "done" && list.length > 0 && <Button size="sm" variant="ghost" className="h-10 sm:h-7" onClick={() => setSel(chosen.length === list.length ? new Set() : new Set(list.map((p) => p.id)))}>{chosen.length === list.length ? "Clear selection" : "Select all"}</Button>}<ExportButton kind="approvals" /></span></div>
+    {chosen.length > 0 && <BulkApprovals items={chosen} onDone={() => setSel(new Set())} />}
+    {!list.length ? <Card><EmptyState icon={Inbox} title={tab === "mine" ? "Inbox zero" : "Nothing here"} body="Purchases that match a rule, or go above the mandate threshold, land here for the right people." /></Card> : <div className="grid gap-3 lg:grid-cols-2">{list.map((p) => <ApprovalCard key={p.id} p={p} selected={sel.has(p.id)} onSelect={(on) => toggle(p.id, on)} />)}</div>}
   </div>;
+}
+
+/** Bulk decide. Each order goes through the normal maker checker call, so permissions, limits and step-up still apply one by one. */
+function BulkApprovals({ items, onDone }: { items: any[]; onDone: () => void }) {
+  const { run, busy } = useAct(); const [reason, setReason] = useState(""); const [result, setResult] = useState<{ ok: number; failed: string[] } | null>(null);
+  const { data: su } = useGet<StepUpStatus>("/auth/step-up");
+  const big = Math.max(...items.map((p) => p.total)); const needStepUp = stepUpNeeded(big, su);
+  const go = async (approve: boolean) => {
+    let ok = 0; const failed: string[] = [];
+    await run(async () => { for (const p of items) { try { await api(`/approvals/${p.id}`, { approve, comment: reason.trim() }); ok++; } catch (e: any) { failed.push(`${p.id}: ${e.message}`); } } });
+    setResult({ ok, failed }); if (!failed.length) { setReason(""); onDone(); }
+  };
+  return <Card className="sticky bottom-2 z-10 border-primary/40 shadow-lg sm:static sm:shadow-none" title={`${items.length} selected, ${usd(items.reduce((a, p) => a + p.total, 0))} in total`}>
+    {needStepUp && su && <StepUpPrompt s={su} threshold={su.thresholdUsd} />}
+    <label htmlFor="bulk-reason" className="mt-2 block text-xs font-medium text-muted">Reason for the record (required to reject)</label>
+    <Textarea id="bulk-reason" className="min-h-12 font-sans text-base sm:text-[13px]" value={reason} onChange={(e) => setReason(e.target.value)} />
+    <div className="mt-2 flex flex-wrap gap-2 [&>button]:h-11 [&>button]:flex-1 sm:[&>button]:h-8 sm:[&>button]:flex-none">
+      <Button variant="primary" disabled={busy || needStepUp} onClick={() => go(true)}><Check size={13} aria-hidden />Approve {items.length}</Button>
+      <Button variant="danger" disabled={busy || !reason.trim()} onClick={() => go(false)}><X size={13} aria-hidden />Reject {items.length}</Button>
+      <ExportButton kind="approvals" ids={items.map((p) => p.id)} label="Export selected" />
+    </div>
+    {result && <p className="mt-2 text-xs" role="status">{result.ok} decided.{result.failed.length ? ` ${result.failed.length} not decided: ${result.failed.join(". ")}` : ""}</p>}
+  </Card>;
 }
 
 // Suppliers
@@ -221,7 +251,7 @@ export function SuppliersPage() {
       <div><Label>Country</Label><Input maxLength={2} value={f.country} onChange={(e) => setF({ ...f, country: e.target.value.toUpperCase() })} /></div>
       <div className="flex items-end"><Button variant="primary" disabled={busy || !f.name || !f.email} onClick={async () => { const r = await run(() => api("/workspace/suppliers/invite", f)); if (r) { setLink(`${location.origin}${r.link}`); setOpen(false); setF({ name: "", email: "", country: "US" }); } }}>Create link</Button></div></div><ErrorNote msg={e2} /></Card>}
     {link && <Reveal secret={link} what="onboarding link" onDone={() => setLink("")} />}
-    <Card title="All suppliers" pad={false}>{data.length ? <ul className="divide-y divide-border">{data.map((s) => <SupplierRow key={s.id} s={s} me={me} />)}</ul> : <EmptyState icon={Truck} title="No suppliers yet" body="Invite a supplier to start onboarding. They show here once invited." />}</Card>
+    <Card title="All suppliers" pad={false} action={<ExportButton kind="suppliers" />}>{data.length ? <ul className="divide-y divide-border">{data.map((s) => <SupplierRow key={s.id} s={s} me={me} />)}</ul> : <EmptyState icon={Truck} title="No suppliers yet" body="Invite a supplier to start onboarding. They show here once invited." />}</Card>
   </Section>;
 }
 

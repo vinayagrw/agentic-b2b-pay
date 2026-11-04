@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { scoped, tenantOf, db } from "./modules/store.js";
 import * as S from "./service.js";
 import * as X from "./explain.js";
+import * as Risk from "./risk.js";
 import * as FX from "./modules/fx.js";
 import * as I from "./iam.js";
 import * as P from "./platform.js";
@@ -72,6 +73,12 @@ export const TOOLS: Tool[] = [
     const summary = rows.length ? rows.slice(0, 6).map((r) => `${r.number} from ${r.supplier} ${money(r.amount)} ${r.match}`).join(", ") : "No open invoices";
     return { summary, rows, source: src("openInvoices", rows.map((r) => ({ id: r.invoiceId, href: `${c.prefix === "/app" ? "/app/invoices" : "/operator/payments"}` }))) };
   } },
+  { name: "riskInbox", description: "Payments flagged by the risk rules, with score, reasons and review state", args: [], run: (c) => {
+    const rows = Risk.inbox(c.scope).map((r) => ({ paymentId: r.paymentId, supplier: r.supplier, amount: r.amount, score: r.score, level: r.level, reasons: r.reasons.map((x) => x.label), review: r.review }));
+    const open = rows.filter((r) => r.review === "open");
+    const summary = rows.length ? `${open.length} open of ${rows.length} flagged. ` + rows.slice(0, 5).map((r) => `${r.paymentId} ${r.supplier} ${money(r.amount)} score ${r.score} (${r.reasons.join(", ")}) ${r.review}`).join(", ") : "No payments are flagged for risk review";
+    return { summary, rows, source: src("riskInbox", rows.slice(0, 8).map((r) => ({ id: r.paymentId, href: `${c.prefix}/payments/${r.paymentId}` }))) };
+  } },
   { name: "whyPayment", description: "Plain words reasons behind one payment, by payment id", args: ["paymentId"], run: (c, a) => {
     const w = X.explainPayment(a.paymentId, c.scope);
     const summary = `${w.paymentId} is ${w.status}. ${w.headline}. ` + w.items.map((i) => `${i.decision}: ${i.outcome}`).join(", ");
@@ -95,6 +102,7 @@ export function mockPlan(q: string): { name: string; args: Record<string, string
   const s = q.toLowerCase(); const plan: { name: string; args: Record<string, string> }[] = [];
   const pi = q.match(/\bpi-[\w-]+/i)?.[0];
   if (pi && /why|explain|block|stuck|happen|status/.test(s)) plan.push({ name: "whyPayment", args: { paymentId: pi.toLowerCase() } });
+  if (/risk|fraud|flagged|suspicious/.test(s)) plan.push({ name: "riskInbox", args: {} });
   if (/supplier|vendor|spend|spent|top/.test(s)) plan.push({ name: "spendBySupplier", args: {} });
   if (/approv|pending|waiting|queue/.test(s)) plan.push({ name: "pendingApprovals", args: {} });
   if (/invoice|memo|unpaid|owe/.test(s)) plan.push({ name: "openInvoices", args: {} });
@@ -126,7 +134,7 @@ export function proposalsFor(c: Ctx, q: string): Proposal[] {
 }
 
 const mockAnswer = (q: string, results: ToolResult[]) => results.map((r) => `${LABEL[r.tool] ?? r.tool}: ${r.summary}.`).join(" ");
-const LABEL: Record<string, string> = { spendBySupplier: "Spend by supplier", paymentsByStatus: "Payments by status", pendingApprovals: "Waiting for approval", entityBalances: "Entity balances", fxExposure: "FX", openInvoices: "Open invoices", whyPayment: "Why" };
+const LABEL: Record<string, string> = { spendBySupplier: "Spend by supplier", paymentsByStatus: "Payments by status", pendingApprovals: "Waiting for approval", entityBalances: "Entity balances", fxExposure: "FX", openInvoices: "Open invoices", whyPayment: "Why", riskInbox: "Risk inbox" };
 
 /** Wraps record data so the model reads it as data. */
 const dataBlock = (results: ToolResult[]) => `<data>\n${JSON.stringify(results.map((r) => ({ tool: r.tool, summary: r.summary, error: r.error, rows: r.rows.slice(0, 15) })), null, 1).replace(/<\/?data>/gi, "")}\n</data>`;

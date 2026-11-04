@@ -54,6 +54,7 @@ export function Shell({ kind }: { kind: "operator" | "client" }) {
     </aside>
     <div className="flex min-w-0 flex-1 flex-col">
       <TopBar me={me} kind={kind} onSearch={() => keys.setPalette(true)} onCopilot={() => setCopilot({ open: true })} />
+      <nav aria-label="Sections" className="sticky top-12 z-10 flex gap-1 overflow-x-auto border-b border-border bg-surface px-2 py-1.5 md:hidden">{nav.map((n) => <NavLink key={n.to} to={n.to} end={n.to === "/operator" || n.to === "/app"} className={({ isActive }) => cn("flex h-10 shrink-0 items-center gap-1.5 rounded-md px-3 text-[13px] text-muted", isActive && "bg-primary/10 font-medium text-primary")}><n.icon size={15} aria-hidden />{n.label}</NavLink>)}</nav>
       <CommandPalette me={me} kind={kind} open={keys.palette} onOpenChange={keys.setPalette} onAsk={(q) => setCopilot({ open: true, seed: q })} />
       <CopilotPanel open={copilot.open} seed={copilot.seed} onClose={() => setCopilot({ open: false })} />
       <ShortcutsOverlay open={keys.help} onOpenChange={keys.setHelp} />
@@ -68,7 +69,7 @@ function TopBar({ me, kind, onSearch, onCopilot }: { me: Me; kind: "operator" | 
   const live = Object.values(me.tenant.railSettings ?? {}).some((r) => r.env === "live");
   const pick = async (id: string, k: string) => { await api("/me/tenant", { tenantId: id }); await qc.invalidateQueries(); nav(k === "client" ? "/app" : "/operator"); };
   const logout = async () => { const r = await api<{ redirect?: string | null }>("/auth/logout", {}); qc.clear(); if (r?.redirect) location.href = r.redirect; else nav("/login"); };
-  return <header className="sticky top-0 z-20 flex h-12 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur">
+  return <header className="sticky top-0 z-20 flex h-12 items-center gap-3 overflow-x-auto border-b border-border bg-surface/90 px-4 backdrop-blur">
     <Menu><MenuTrigger asChild><button className="flex items-center gap-2 rounded-md px-2 py-1 text-[13px] hover:bg-subtle" aria-label="Switch tenant"><Building2 size={14} className="text-muted" /><span className="font-medium">{me.tenant.name}</span><ChevronsUpDown size={13} className="text-muted" /></button></MenuTrigger>
       <MenuContent align="start">
         {(["bank", "client"] as const).map((k) => { const ts = me.tenants.filter((t) => t.kind === k); return ts.length ? <div key={k}><MenuLabel>{k === "bank" ? "Banks" : "Business clients"}</MenuLabel>
@@ -79,8 +80,8 @@ function TopBar({ me, kind, onSearch, onCopilot }: { me: Me; kind: "operator" | 
     {kind === "client" && <EntitySwitcher />}
     <span className="ml-auto" />
     <button className="hidden h-8 items-center gap-2 rounded-md border border-border px-2.5 text-xs text-muted hover:bg-subtle sm:flex" onClick={onSearch} aria-label="Open command palette"><Search size={13} aria-hidden />Search<kbd className="rounded border border-border bg-subtle px-1 font-mono text-[10px]">Ctrl K</kbd></button>
-    <button className="flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs hover:bg-subtle" onClick={onCopilot} aria-label="Open copilot"><Bot size={13} aria-hidden />Copilot</button>
-    <Badge v={`LLM ${me.llmMode}`} tone="neutral" />
+    <button className="flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs hover:bg-subtle" onClick={onCopilot} aria-label="Open copilot"><Bot size={13} aria-hidden /><span className="hidden sm:inline">Copilot</span></button>
+    <Badge v={`LLM ${me.llmMode}`} tone="neutral" className="hidden sm:inline-flex" />
     <button className="grid h-8 w-8 place-items-center rounded-md hover:bg-subtle" aria-label="Toggle colour mode" onClick={() => setMode(mode === "dark" ? "light" : "dark")}>{mode === "dark" ? <Sun size={15} /> : <Moon size={15} />}</button>
     <Menu><MenuTrigger asChild><button className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-subtle" aria-label="User menu"><span className="grid h-7 w-7 place-items-center rounded-full bg-accent text-[11px] font-semibold text-accent-fg">{me.user.name.split(" ").map((w) => w[0]).join("")}</span><span className="hidden text-left sm:block"><span className="block text-[12px] font-medium leading-tight">{me.user.name}</span><span className="block text-[11px] leading-tight text-muted">{(me.roleName ?? me.user.role).replace("_", " ")}</span></span></button></MenuTrigger>
       <MenuContent>

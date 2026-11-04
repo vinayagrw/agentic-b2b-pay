@@ -4,11 +4,12 @@ import { verifyChain } from "./modules/evidence.js";
 import * as AP2 from "./modules/ap2.js";
 import * as P from "./platform.js";
 import { HttpError, entityFor } from "./service.js";
+import * as Risk from "./risk.js";
 
 /** Plain words "why" for every decision on a payment. Built only from stored records. Deterministic, no model. */
 export type Actor = { kind: "agent" | "system" | "person"; id: string; name: string };
 export type WhyItem = {
-  key: "mandates" | "policy" | "approval" | "fx" | "compliance" | "route" | "settlement";
+  key: "mandates" | "policy" | "risk" | "approval" | "fx" | "compliance" | "route" | "settlement";
   decision: string;
   outcome: "passed" | "failed" | "waiting" | "not reached";
   why: string;
@@ -133,7 +134,20 @@ export function explainPayment(paymentId: string, tenantId: string | null): WhyV
     at: se?.createdAt ?? null, evidence: ref(se),
   });
 
-  const order: WhyItem["key"][] = ["policy", "approval", "mandates", "fx", "compliance", "route", "settlement"];
+  // Risk score: rule based, stored on the payment, reviewed by a person when it reaches the review mark.
+  Risk.ensureScores([pi]);
+  const rk = pi.risk; const rv = Risk.reviewOf(pi.id);
+  const rkEv = last(pi.id, "risk.cleared", "risk.escalated", "risk.scored");
+  if (rk) items.push({
+    key: "risk", decision: "Risk score", outcome: rk.score < Risk.REVIEW_AT ? "passed" : rv?.status === "cleared" ? "passed" : rv?.status === "escalated" ? "failed" : "waiting",
+    why: rk.score < Risk.REVIEW_AT ? `Risk score ${rk.score} of 100 is ${rk.level}, below the review mark of ${Risk.REVIEW_AT}.${rk.reasons.length ? ` Signals: ${rk.reasons.map((r) => r.label.toLowerCase()).join(", ")}.` : " No risk signals fired."}`
+      : rv ? `Risk score ${rk.score} of 100 (${rk.level}). ${person(rv.decidedBy).name} ${rv.status} it, saying "${rv.reason}".`
+      : `Risk score ${rk.score} of 100 (${rk.level}) is at or above the review mark of ${Risk.REVIEW_AT}, so it waits in the risk inbox for a person to clear or escalate.`,
+    drivers: rk.reasons.length ? rk.reasons.map((r) => `${r.label} (+${r.points}): ${r.detail}`) : ["No risk rules fired"],
+    decidedBy: rv ? person(rv.decidedBy) : { kind: "system", id: "risk", name: "Risk rules" }, at: rv?.decidedAt ?? rk.scoredAt, evidence: ref(rkEv),
+  });
+
+  const order: WhyItem["key"][] = ["policy", "approval", "mandates", "fx", "compliance", "risk", "route", "settlement"];
   items.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
   const stop = items.find((i) => i.outcome === "failed");
   const headline = st === "settled" ? `Paid ${money(pi.amount)}. Every check passed.` : stop ? `Stopped at ${stop.decision.toLowerCase()}. ${stop.why}` : `Payment is ${st}.`;

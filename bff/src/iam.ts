@@ -34,6 +34,7 @@ export const PERMISSIONS = {
   "workspace.read": "Read workspace pages",
   "changes.request": "Request a maker checker change",
   "erp.vendor_master": "Push vendor master changes from the ERP",
+  "risk.review": "Clear or escalate payments in the risk inbox",
 } as const;
 export type Permission = keyof typeof PERMISSIONS;
 export const ALL_PERMS = Object.keys(PERMISSIONS) as Permission[];
@@ -41,8 +42,8 @@ export const ALL_PERMS = Object.keys(PERMISSIONS) as Permission[];
 const READ: Permission[] = ["workspace.read", "changes.decide"];
 export const BUILTIN: Record<P.Role, Permission[]> = {
   operator_admin: ALL_PERMS.filter((p) => !["suppliers.review", "suppliers.payee_change"].includes(p)),
-  client_admin: [...READ, "payments.pay", "payments.approve", "payments.refund", "flow.operate", "agents.manage", "rules.edit", "suppliers.invite", "suppliers.review", "suppliers.payee_change", "developers.keys", "settings.branding", "roles.manage", "changes.request", "erp.vendor_master", "sessions.manage", "audit.read", "rails.balances"],
-  approver: [...READ, "payments.pay", "payments.approve", "payments.refund", "flow.operate"],
+  client_admin: [...READ, "payments.pay", "payments.approve", "payments.refund", "flow.operate", "agents.manage", "rules.edit", "suppliers.invite", "suppliers.review", "suppliers.payee_change", "developers.keys", "settings.branding", "roles.manage", "changes.request", "erp.vendor_master", "sessions.manage", "audit.read", "rails.balances", "risk.review"],
+  approver: [...READ, "payments.pay", "payments.approve", "payments.refund", "flow.operate", "risk.review"],
   ap_clerk: [...READ, "payments.pay", "flow.operate", "suppliers.invite", "suppliers.payee_change"],
   auditor: [...READ, "audit.read", "compliance.read", "treasury.read", "users.read", "rails.balances"],
 };
