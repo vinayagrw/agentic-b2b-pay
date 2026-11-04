@@ -10,7 +10,8 @@ export type Role = (typeof ROLES)[number];
 export type User = { id: string; tenantId: string | null; name: string; email: string; role: Role };
 export type Branding = { name: string; logo: string | null; primary: string; accent: string };
 export type RailSetting = { env: "sandbox" | "live" };
-export type Tenant = { id: string; kind: "bank" | "client"; parentId: string | null; name: string; branding: Branding; railSettings: Partial<Record<Rail, RailSetting>>; createdAt: string };
+export type Pricing = Partial<Record<Rail, { pct: number; fixed: number }>>;
+export type Tenant = { id: string; kind: "bank" | "client"; parentId: string | null; name: string; branding: Branding; railSettings: Partial<Record<Rail, RailSetting>>; createdAt: string; pricing?: Pricing };
 export type PendingChange = { id: string; tenantId: string | null; kind: string; payload: any; requiredRole: Role; requestedBy: string; approvedBy: string | null; status: "pending" | "approved" | "rejected"; createdAt: string; decidedAt: string | null };
 
 export class AuthError extends Error { constructor(public status: number, msg: string) { super(msg); } }
@@ -32,10 +33,12 @@ export const SEED_USERS: User[] = [
   { id: "usr-treasurer-lee", tenantId: "tnt-acme", name: "Lee Park", email: "lee@acme.demo", role: "approver" },
   { id: "usr-clerk-pat", tenantId: "tnt-acme", name: "Pat Morgan", email: "pat@acme.demo", role: "ap_clerk" },
   { id: "usr-globex-gina", tenantId: "tnt-globex", name: "Gina Lopez", email: "gina@globex.demo", role: "client_admin" },
+  { id: "usr-globex-gus", tenantId: "tnt-globex", name: "Gus Novak", email: "gus@globex.demo", role: "approver" },
+  { id: "usr-globex-gwen", tenantId: "tnt-globex", name: "Gwen Ito", email: "gwen@globex.demo", role: "ap_clerk" },
 ];
 
 export function seedPlatform() {
-  if ((sql.prepare("SELECT COUNT(*) n FROM tenants").get() as { n: number }).n) return;
+  if ((sql.prepare("SELECT COUNT(*) n FROM tenants").get() as { n: number }).n) return topUpSeed();
   const now = new Date().toISOString();
   sql.transaction(() => {
     const t = sql.prepare("INSERT INTO tenants (id, kind, parent_id, name, branding, rail_settings, created_at) VALUES (?,?,?,?,?,?,?)");
@@ -43,6 +46,11 @@ export function seedPlatform() {
     const u = sql.prepare("INSERT INTO users (id, tenant_id, name, email, role) VALUES (?,?,?,?,?)");
     for (const x of SEED_USERS) u.run(x.id, x.tenantId, x.name, x.email, x.role);
   })();
+}
+/** Adds seeded users that a later build step introduced to an existing database. */
+export function topUpSeed() {
+  const u = sql.prepare("INSERT OR IGNORE INTO users (id, tenant_id, name, email, role) VALUES (?,?,?,?,?)");
+  for (const x of SEED_USERS) u.run(x.id, x.tenantId, x.name, x.email, x.role);
 }
 
 const toTenant = (r: any): Tenant => ({ id: r.id, kind: r.kind, parentId: r.parent_id, name: r.name, branding: JSON.parse(r.branding), railSettings: JSON.parse(r.rail_settings), createdAt: r.created_at });
@@ -110,7 +118,10 @@ export function requestChange(user: User, kind: string, payload: any, tenantId: 
   audit(user.id, "change", c.id, "change.requested", { kind, payload });
   return c;
 }
-export function listChanges(status?: string) { return (sql.prepare(`SELECT * FROM pending_changes ${status ? "WHERE status = ?" : ""} ORDER BY created_at DESC`).all(...(status ? [status] : [])) as any[]).map(toChange); }
+export function listChanges(status?: string, tenantId?: string | null) {
+  const rows = (sql.prepare(`SELECT * FROM pending_changes ${status ? "WHERE status = ?" : ""} ORDER BY created_at DESC`).all(...(status ? [status] : [])) as any[]).map(toChange);
+  return tenantId ? rows.filter((c) => c.tenantId === tenantId) : rows;
+}
 export function getChange(id: string) { const r = sql.prepare("SELECT * FROM pending_changes WHERE id = ?").get(id); return r ? toChange(r) : null; }
 
 export function decideChange(user: User, id: string, approve: boolean) {

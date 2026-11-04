@@ -7,6 +7,8 @@ export type PolicyInput = {
   spentTotal: number; spentBySupplier: number;
   /** Amounts of this agent's POs to the same supplier in the last 24h, for split detection. */
   recentSameSupplier?: number[];
+  /** Spend by this agent in the current calendar month. */
+  spentThisMonth?: number;
 };
 
 /** Deterministic policy engine. Runs outside the model. Order matters: hard denies first, then approval routing. */
@@ -25,7 +27,8 @@ export function evaluatePolicy(i: PolicyInput): PolicyDecision {
   add("Category allowed", i.mandate.allowedCategories.includes(i.category), i.category);
   add("Per transaction limit", i.amount <= i.mandate.perTxnMax, `${i.amount.toFixed(2)} vs max ${i.mandate.perTxnMax}`);
   add("Mandate total limit", i.spentTotal + i.amount <= i.mandate.maxAmount, `${(i.spentTotal + i.amount).toFixed(2)} vs max ${i.mandate.maxAmount}`);
-  const supLimit = i.mandate.perSupplierLimit[i.supplierId] ?? 0;
+  if (i.mandate.monthlyLimit !== undefined) add("Monthly limit", (i.spentThisMonth ?? 0) + i.amount <= i.mandate.monthlyLimit, `${((i.spentThisMonth ?? 0) + i.amount).toFixed(2)} vs max ${i.mandate.monthlyLimit} this month`);
+  const supLimit = i.mandate.perSupplierLimit[i.supplierId] ?? i.mandate.maxAmount;
   add("Per supplier limit", i.spentBySupplier + i.amount <= supLimit, `${(i.spentBySupplier + i.amount).toFixed(2)} vs max ${supLimit}`);
 
   const failed = checks.filter((c) => !c.pass);

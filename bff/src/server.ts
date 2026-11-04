@@ -16,6 +16,8 @@ import { RailError } from "./rails/index.js";
 import { onchainAddress } from "./rails/onchain.js";
 import { llmMode } from "./llm.js";
 import { fileURLToPath } from "node:url";
+import * as W from "./workspace.js";
+import { scoped } from "./modules/store.js";
 
 /** MCP style tool registry. Same names as REST operations. */
 export const TOOLS = [
@@ -41,10 +43,23 @@ export async function buildApp() {
   P.seedPlatform();
   const COOKIE = { path: "/", httpOnly: true, sameSite: "lax" as const, signed: true };
   const userOf = (req: any): P.User | null => {
+    const bearer = /^Bearer (\S+)$/.exec(String(req.headers?.authorization ?? ""))?.[1];
+    if (bearer) return bearerUser(bearer);
     const raw = req.cookies?.sid; if (!raw) return null;
     const v = req.unsignCookie(raw); return v.valid && v.value ? P.getUser(v.value) : null;
   };
   const guard = (req: any, roles: readonly P.Role[]) => P.requireRole(userOf(req), roles);
+  /** The business client a request acts on: ?tenantId for operators, otherwise the active tenant. */
+  const clientOf = (req: any, u: P.User) => {
+    const want = req.query?.tenantId ?? b(req).tenantId;
+    const t = want ? P.tenantsFor(u).find((x) => x.id === want) : activeTenant(req, u);
+    if (!t) throw new P.AuthError(403, "Not your tenant");
+    if (t.kind !== "client") throw new P.AuthError(409, "Pick a business client in the tenant menu first");
+    return t.id;
+  };
+  const ctx = (req: any, roles: readonly P.Role[] = P.ROLES) => { const u = guard(req, roles); return { u, t: clientOf(req, u) }; };
+  /** Data scope for read views: a client tenant sees its own rows, an operator on a bank sees all. */
+  const scopeOf = (req: any) => { const u = guard(req, P.ROLES); const t = activeTenant(req, u); return t.kind === "client" ? t.id : null; };
   const activeTenant = (req: any, u: P.User) => {
     const raw = req.cookies?.tenant; const v = raw ? req.unsignCookie(raw) : null;
     const want = v?.valid ? v.value : null; const allowed = P.tenantsFor(u);
@@ -75,7 +90,7 @@ export async function buildApp() {
   };
   app.addHook("preHandler", async (req: any) => {
     const url = req.routeOptions?.url as string | undefined;
-    if (!url || PUBLIC.has(url) || url.startsWith("/uploads/") || req.method === "HEAD" || req.method === "OPTIONS") return;
+    if (!url || PUBLIC.has(url) || url.startsWith("/uploads/") || url.startsWith("/onboard/") || req.method === "HEAD" || req.method === "OPTIONS") return;
     const roles = ROUTE_ROLES[`${req.method} ${url}`] ?? (req.method === "GET" ? P.ROLES : PAYERS);
     guard(req, roles);
   });
@@ -134,12 +149,12 @@ export async function buildApp() {
     return reply.type(type).send(fs.readFileSync(f));
   });
   // Maker-checker
-  app.get("/changes", async (req: any) => { guard(req, P.ROLES); return P.listChanges(req.query?.status); });
+  app.get("/changes", async (req: any) => { const u = guard(req, P.ROLES); return P.listChanges(req.query?.status, P.isOperator(u) ? null : u.tenantId); });
   app.post("/changes", async (req) => { const u = guard(req, ["operator_admin", "client_admin"]); const x = b(req); return P.requestChange(u, String(x.kind), x.payload, x.tenantId ?? null); });
   app.post("/changes/:id/decide", async (req: any) => { const u = guard(req, P.ROLES); return P.decideChange(u, req.params.id, !!b(req).approve); });
 
   app.get("/health", async () => ({ ok: true, llmMode: llmMode() }));
-  app.get("/state", async () => ({ ...db, llmMode: llmMode(), signers: S.SIGNERS }));
+  app.get("/state", async (req) => ({ ...scoped(scopeOf(req)), llmMode: llmMode(), signers: S.SIGNERS }));
   app.post("/reset", async () => { reset(); S.bootstrap(); return { ok: true }; });
 
   // Agent gateway: MCP style
@@ -155,9 +170,9 @@ export async function buildApp() {
   app.post("/kill-switch", async (req) => S.setKillSwitch(!!b(req).on));
   app.post("/policy/evaluate", async (req) => { const x = b(req); return S.policyFor(x.agentId ?? "agt-buyer-1", x.supplierId, x.category, Number(x.amount)).decision; });
 
-  app.post("/buyer/draft", async (req) => S.draftPo(z.object({ need: z.string().min(3) }).parse(b(req)).need));
+  app.post("/buyer/draft", async (req) => { const { t } = ctx(req, PAYERS); return S.draftPo(z.object({ need: z.string().min(3) }).parse(b(req)).need, t); });
   app.post("/purchase-orders", async (req) => S.createPo(PoDraft.parse(b(req).draft), b(req).agentId));
-  app.post("/approvals/:poId", async (req: any) => S.decideApproval(req.params.poId, !!b(req).approve, b(req).approver));
+  app.post("/approvals/:poId", async (req: any) => { const { u, t } = ctx(req, APPR); const po = db.pos.find((p) => p.id === req.params.poId); if (!po || (po.tenantId ?? "tnt-acme") !== t) throw new S.HttpError(404, "po not found"); return S.decideApproval(po.id, !!b(req).approve, u.id, String(b(req).comment ?? "")); });
   app.post("/goods-receipts", async (req) => S.receiveGoods(b(req).poId, Number(b(req).shortBy ?? 0)));
   app.post("/invoices/render", async (req) => ({ text: S.invoiceText(b(req).poId, { priceBumpPct: Number(b(req).priceBumpPct ?? 0), poison: !!b(req).poison }) }));
   app.post("/invoices", async (req) => S.submitInvoice(b(req).poId, String(b(req).text)));
@@ -175,18 +190,48 @@ export async function buildApp() {
   app.get("/statements/camt053", async (_req, reply) => reply.type("application/xml").send(S.camt053()));
   app.get("/evidence", async () => S.evidenceView());
   app.get("/evidence/:subjectId", async (req: any) => S.evidenceView(req.params.subjectId));
-  app.post("/scenario/run", async (req) => S.runFlow(String(b(req).need ?? "Need 2000 sealed 6204 bearings for line 3 maintenance"), { scenario: b(req).scenario ?? "happy" }));
+  app.post("/scenario/run", async (req) => { const { t } = ctx(req, PAYERS); return S.runFlow(String(b(req).need ?? "Need 2000 sealed 6204 bearings for line 3 maintenance"), { scenario: b(req).scenario ?? "happy", tenantId: t }); });
   // Rails, payments, webhooks
   app.get("/rails", async () => S.railsView());
   app.get("/rails/balances", async () => S.railBalances());
-  app.get("/payments", async () => [...db.intents].reverse());
+  app.get("/payments", async (req) => [...scoped(scopeOf(req)).intents].reverse());
   app.get("/payments/:id", async (req: any) => { const i = db.intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); return { intent: i, settlement: db.settlements.find((s) => s.id === i.settlementId) ?? null, evidence: db.evidence.filter((e) => e.subjectId === i.id) }; });
   app.post("/payments/poll", async () => ({ checked: await S.pollSettlements() }));
-  app.get("/cases", async () => S.listCases());
+  app.get("/cases", async (req) => S.listCases(scopeOf(req)));
   app.post("/webhooks/stripe", async (req: any) => S.ingestWebhook("stripe", req.rawBody ?? Buffer.alloc(0), req.headers));
   app.post("/webhooks/circle", async (req: any) => S.ingestWebhook("circle", req.rawBody ?? Buffer.alloc(0), req.headers));
   app.head("/webhooks/circle", async () => "");
+  // Step 4: agent registry, approval rules and inbox, supplier onboarding
+  app.get("/workspace/agents", async (req) => W.agentsView(ctx(req).t));
+  app.post("/workspace/agents", async (req) => { const { u, t } = ctx(req, ADM); return W.registerAgent(u, t, W.NewAgent.parse(b(req))); });
+  app.put("/workspace/agents/:id/mandate", async (req: any) => { const { u, t } = ctx(req, ADM); return W.updateMandate(u, t, req.params.id, W.MandateInput.parse(b(req))); });
+  app.post("/workspace/agents/:id/keys", async (req: any) => { const { u, t } = ctx(req, ADM); const a = W.agentsView(t).find((x) => x.id === req.params.id); if (!a) throw new S.HttpError(404, "agent not found"); if (a.status !== "active") throw new S.HttpError(409, "Resume the agent before issuing a key"); const k = W.issueAgentKey(db.agents.find((x) => x.id === a.id)!, u.id); save(); return k; });
+  app.post("/workspace/agents/:id/:action", async (req: any) => { const { u, t } = ctx(req, ADM); const action = req.params.action; if (!["suspend", "resume", "kill"].includes(action)) throw new S.HttpError(404, "unknown action"); return W.setAgentState(u, t, req.params.id, action); });
+  app.get("/workspace/rules", async (req) => S.listRules(ctx(req).t));
+  app.post("/workspace/rules", async (req) => { const { u, t } = ctx(req, ADM); return W.upsertRule(u, t, W.RuleInput.parse(b(req))); });
+  app.put("/workspace/rules/:id", async (req: any) => { const { u, t } = ctx(req, ADM); return W.upsertRule(u, t, W.RuleInput.parse(b(req)), req.params.id); });
+  app.delete("/workspace/rules/:id", async (req: any) => { const { u, t } = ctx(req, ADM); return W.deleteRule(u, t, req.params.id); });
+  app.post("/workspace/rules/order", async (req) => { const { u, t } = ctx(req, ADM); return W.reorderRules(u, t, z.array(z.string()).parse(b(req).ids)); });
+  app.get("/workspace/approvals", async (req) => { const { u, t } = ctx(req); return W.approvalsInbox(u, t); });
+  app.get("/workspace/suppliers", async (req) => W.suppliersView(ctx(req).t));
+  app.post("/workspace/suppliers/invite", async (req) => { const { u, t } = ctx(req, ["operator_admin", "client_admin", "ap_clerk"]); return W.inviteSupplier(u, t, b(req)); });
+  app.post("/workspace/suppliers/:id/link", async (req: any) => { const { u, t } = ctx(req, ["operator_admin", "client_admin", "ap_clerk"]); return W.newInviteLink(u, t, req.params.id); });
+  app.post("/workspace/suppliers/:id/review", async (req: any) => { const { u, t } = ctx(req, ["client_admin"]); return W.reviewSupplier(u, t, req.params.id, !!b(req).verify, String(b(req).note ?? "")); });
+  app.post("/workspace/suppliers/:id/payee-change", async (req: any) => { const { u, t } = ctx(req, ["client_admin", "ap_clerk"]); return W.requestPayeeChange(u, t, req.params.id, b(req)); });
+  app.post("/workspace/suppliers/:id/wallet-message", async (req: any) => { const { t } = ctx(req); return W.walletMessageFor(t, req.params.id, String(b(req).address ?? "")); });
+  // Public supplier portal. The token in the path is the only credential.
+  app.get("/onboard/:token", async (req: any) => W.onboardingView(req.params.token));
+  app.post("/onboard/:token/kyb", async (req: any) => W.saveKyb(req.params.token, b(req)));
+  app.post("/onboard/:token/bank", async (req: any) => W.saveBank(req.params.token, b(req)));
+  app.post("/onboard/:token/wallet-message", async (req: any) => W.onboardingMessage(req.params.token, String(b(req).address ?? "")));
+  app.post("/onboard/:token/wallet", async (req: any) => W.saveWallet(req.params.token, b(req)));
+  app.post("/onboard/:token/submit", async (req: any) => W.submitOnboarding(req.params.token));
   return app;
+}
+/** Bearer keys: scoped agent keys act as an AP clerk in their tenant. */
+function bearerUser(key: string): P.User | null {
+  if (key.startsWith("agk_")) { const a = W.agentForKey(key); return a ? { id: `agent:${a.id}`, tenantId: a.tenantId ?? "tnt-acme", name: a.name, email: "", role: "ap_clerk" } : null; }
+  return null;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

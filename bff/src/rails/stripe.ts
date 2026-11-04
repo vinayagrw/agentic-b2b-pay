@@ -17,6 +17,8 @@ function client(env: RailEnv) {
   let c = clients.get(key); if (!c) { c = new Stripe(key, { maxNetworkRetries: 2, appInfo: { name: "agentic-b2b-pay" } }); clients.set(key, c); }
   return c;
 }
+/** The Stripe SDK client for other modules (supplier bank tokens, dispute evidence). Throws when keys are missing. */
+export const stripeClient = (env: RailEnv) => client(env);
 const dash = (env: RailEnv, id: string) => `https://dashboard.stripe.com/${env === "live" ? "" : "test/"}payments/${id}`;
 export function mapPi(s: Stripe.PaymentIntent.Status): ProviderStatus {
   if (s === "succeeded") return "settled";

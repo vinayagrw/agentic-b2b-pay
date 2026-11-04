@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { isUsdc, type PoDraft, type Rail } from "@b2b/shared";
-import { db, save, nextId, type PurchaseOrder, type Supplier, type PaymentIntent, type Settlement, type TimelineEntry } from "./modules/store.js";
+import { db, save, nextId, tenantOf, TENANT, type PurchaseOrder, type Supplier, type PaymentIntent, type Settlement, type TimelineEntry } from "./modules/store.js";
 import { issueKey, verifyAgent, signAs, verifySignature } from "./modules/kya.js";
 import { evaluatePolicy } from "./modules/policy.js";
 import { threeWayMatch, round } from "./modules/match.js";
@@ -14,6 +14,8 @@ import * as P from "./platform.js";
 import { erpCreatePo, erpPostPayment } from "./modules/erp.js";
 import { mpcSign, SIGNERS } from "./modules/custody.js";
 import { buyerDraft, readInvoice, explainRoute, renderInvoiceText } from "./agents.js";
+import { pickRule, type ApprovalRule } from "./modules/rules.js";
+import { publish } from "./hooks.js";
 
 export class HttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 const must = <T>(v: T | undefined, what: string): T => { if (!v) throw new HttpError(404, `${what} not found`); return v; };
@@ -24,11 +26,32 @@ const org = (id: string) => must(db.orgs.find((o) => o.id === id), "org");
 
 export function bootstrap() {
   for (const a of db.agents) { issueKey(a); const r = verifyAgent(a, org(a.orgId).kybStatus === "verified"); ev("agent", a.id, "kya.verified", r); }
-  const m = db.mandates[0];
-  const body = JSON.stringify({ ...m, signature: "" });
-  m.signature = signAs(m.agentId, body);
-  ev("mandate", m.id, "mandate.signed", { mandate: m.id, principal: m.principalUserId, maxAmount: m.maxAmount, signatureValid: verifySignature(db.agents[0], body, m.signature) });
+  for (const m of db.mandates) signMandate(m);
+  seedRules();
   save();
+}
+export function signMandate(m: import("./modules/store.js").Mandate) {
+  const a = db.agents.find((x) => x.id === m.agentId); if (!a) return;
+  if (!a.publicKey) issueKey(a);
+  const body = JSON.stringify({ ...m, signature: "" });
+  try { m.signature = signAs(m.agentId, body); } catch { issueKey(a); m.signature = signAs(m.agentId, body); }
+  ev("mandate", m.id, "mandate.signed", { mandate: m.id, principal: m.principalUserId, maxAmount: m.maxAmount, signatureValid: verifySignature(a, body, m.signature) });
+}
+
+// Approval rules
+const toRule = (r: any): ApprovalRule => JSON.parse(r.data);
+export const listRules = (tenantId: string) => (sql.prepare("SELECT data FROM approval_rules WHERE tenant_id = ? ORDER BY position").all(tenantId) as any[]).map(toRule);
+export function saveRule(r: ApprovalRule) { sql.prepare("INSERT OR REPLACE INTO approval_rules (id, tenant_id, position, data) VALUES (?,?,?,?)").run(r.id, r.tenantId, r.position, JSON.stringify(r)); return r; }
+export const SEED_RULES: Omit<ApprovalRule, "id" | "position">[] = [
+  { tenantId: "tnt-acme", name: "Large spend", active: true, minAmount: 25000, maxAmount: null, categories: [], entities: [], levels: [{ role: "approver", count: 1 }, { role: "client_admin", count: 1 }] },
+  { tenantId: "tnt-acme", name: "Mid spend", active: true, minAmount: 10000, maxAmount: 25000, categories: [], entities: [], levels: [{ role: "approver", count: 1 }] },
+  { tenantId: "tnt-acme", name: "IT hardware", active: true, minAmount: 0, maxAmount: null, categories: ["it"], entities: [], levels: [{ role: "client_admin", count: 1 }] },
+  { tenantId: "tnt-globex", name: "Over 12,000", active: true, minAmount: 12000, maxAmount: null, categories: [], entities: [], levels: [{ role: "approver", count: 1 }, { role: "client_admin", count: 1 }] },
+  { tenantId: "tnt-globex", name: "Over 5,000", active: true, minAmount: 5000, maxAmount: 12000, categories: [], entities: [], levels: [{ role: "approver", count: 1 }] },
+];
+function seedRules() {
+  if ((sql.prepare("SELECT COUNT(*) n FROM approval_rules").get() as { n: number }).n) return;
+  SEED_RULES.forEach((r, n) => saveRule({ ...r, id: `rule-${r.tenantId.slice(4)}-${n + 1}`, position: n + 1 }));
 }
 
 export function registerAgent(input: { name: string; orgId: string; erpRole: string; protocols: string[] }) {
@@ -47,37 +70,86 @@ export function policyFor(agentId: string, supplierId: string, category: PoDraft
   const mandate = must(db.mandates.find((m) => m.agentId === agentId), "mandate");
   const dayAgo = Date.now() - 864e5;
   const recent = db.pos.filter((p) => p.agentId === agentId && p.supplierId === supplierId && p.status !== "rejected" && new Date(p.createdAt).getTime() > dayAgo).map((p) => p.total);
-  return { mandate, decision: evaluatePolicy({ agent, mandate, killSwitch: db.killSwitch, supplierId, category, amount, spentTotal: spend(agentId), spentBySupplier: spend(agentId, supplierId), recentSameSupplier: recent }) };
+  const month = new Date().toISOString().slice(0, 7);
+  const spentThisMonth = db.pos.filter((p) => p.agentId === agentId && p.status !== "rejected" && p.createdAt.startsWith(month)).reduce((a, p) => a + p.total, 0);
+  return { mandate, decision: evaluatePolicy({ agent, mandate, killSwitch: db.killSwitch, supplierId, category, amount, spentTotal: spend(agentId), spentBySupplier: spend(agentId, supplierId), recentSameSupplier: recent, spentThisMonth }) };
 }
 
-export async function draftPo(need: string) {
-  const r = await buyerDraft(need, db.catalog);
-  ev("agent", "agt-buyer-1", "llm.po_draft_proposed", { need, source: r.source, note: r.note, draft: r.value });
+/** The tenant's first active buyer agent. */
+export function buyerAgent(tenantId = TENANT) { return db.agents.find((a) => tenantOf(a) === tenantId && a.erpRole.startsWith("buyer") && db.mandates.some((m) => m.agentId === a.id)) ?? db.agents.find((a) => tenantOf(a) === tenantId); }
+export async function draftPo(need: string, tenantId = TENANT) {
+  const r = await buyerDraft(need, db.catalog.filter((c) => tenantOf(c) === tenantId));
+  ev("agent", buyerAgent(tenantId)?.id ?? "agent", "llm.po_draft_proposed", { need, source: r.source, note: r.note, draft: r.value });
   save(); return r;
 }
 
-export function createPo(draft: PoDraft, agentId = "agt-buyer-1") {
+export function createPo(draft: PoDraft, agentId?: string) {
   const sup = supplier(draft.supplierId);
+  const tenantId = tenantOf(sup);
+  agentId ??= buyerAgent(tenantId)?.id ?? "agt-buyer-1";
+  const agent = must(db.agents.find((a) => a.id === agentId), "agent");
+  if (tenantOf(agent) !== tenantId) throw new HttpError(403, "Agent and supplier belong to different tenants");
+  if (sup.onboarding && sup.onboarding.status !== "verified") throw new HttpError(409, `Supplier onboarding is ${sup.onboarding.status}. A client admin must verify it first.`);
   const total = round(draft.lines.reduce((a, l) => a + l.qty * l.unitPrice, 0));
   const { mandate, decision } = policyFor(agentId, sup.id, draft.category, total);
-  const po: PurchaseOrder = { id: nextId("po"), buyerOrgId: "org-acme", supplierId: sup.id, agentId, mandateId: mandate.id, erpRef: null, category: draft.category, lines: draft.lines, total, currency: "USD", justification: draft.justification,
-    status: decision.outcome === "allow" ? "approved" : decision.outcome === "needs_approval" ? "pending_approval" : "rejected", policy: decision, createdAt: new Date().toISOString() };
+  // Approval rules: the first matching rule decides who approves. Hard denies stay denies.
+  let approval: PurchaseOrder["approval"];
+  if (decision.outcome !== "deny") {
+    const rule = pickRule(listRules(tenantId), { amount: total, category: draft.category, supplierId: sup.id, buyerOrgId: agent.orgId });
+    if (rule) {
+      approval = { ruleId: rule.id, ruleName: rule.name, levels: rule.levels.map((l) => ({ ...l, approvals: [] })), current: 0 };
+      decision.checks.push({ rule: `Approval rule ${rule.name}`, pass: false, detail: rule.levels.map((l, n) => `level ${n + 1}: ${l.count} ${l.role.replace("_", " ")}`).join(", ") });
+      if (decision.outcome === "allow") { decision.outcome = "needs_approval"; decision.reasons = [`Approval rule ${rule.name} matched`]; }
+    } else if (decision.outcome === "needs_approval") approval = { ruleId: null, ruleName: "Mandate threshold", levels: [{ role: "approver", count: 1, approvals: [] }], current: 0 };
+  }
+  const po: PurchaseOrder = { id: nextId("po"), tenantId, buyerOrgId: agent.orgId, supplierId: sup.id, agentId, mandateId: mandate.id, erpRef: null, category: draft.category, lines: draft.lines, total, currency: "USD", justification: draft.justification,
+    status: decision.outcome === "allow" ? "approved" : decision.outcome === "needs_approval" ? "pending_approval" : "rejected", policy: decision, approval, createdAt: new Date().toISOString() };
   db.pos.push(po);
-  ev("po", po.id, "policy.evaluated", { outcome: decision.outcome, reasons: decision.reasons, total });
-  if (decision.outcome === "needs_approval") db.alerts.push({ at: po.createdAt, kind: "approval", detail: `${po.id}: ${decision.reasons.join(", ")}` });
+  ev("po", po.id, "policy.evaluated", { outcome: decision.outcome, reasons: decision.reasons, total, rule: approval?.ruleName ?? null });
+  if (decision.outcome === "needs_approval") db.alerts.push({ at: po.createdAt, kind: "approval", detail: `${po.id}: ${decision.reasons.join(", ")}`, tenantId });
+  if (po.status === "approved") publish(tenantId, "purchase_order.approved", { id: po.id, total });
   if (po.status === "approved") pushPoToErp(po, sup);
   save(); return po;
 }
 function pushPoToErp(po: PurchaseOrder, sup: Supplier) {
   const { ref, event } = erpCreatePo(po, sup, db.seq); po.erpRef = ref; erp(event); ev("po", po.id, "erp.po_created", { system: sup.erp, ref });
 }
-export function decideApproval(poId: string, approve: boolean, approver = "usr-controller-sam") {
+/** Can this user act on the PO's current approval level? */
+export function canApprove(po: PurchaseOrder, user: { id: string; role: string; tenantId: string | null }) {
+  if (po.status !== "pending_approval") return { ok: false, why: `PO is ${po.status}` };
+  if (user.tenantId && user.tenantId !== tenantOf(po)) return { ok: false, why: "Wrong tenant" };
+  const a = po.approval; if (!a) return { ok: ["approver", "client_admin", "operator_admin"].includes(user.role), why: "Needs an approver" };
+  const lvl = a.levels[a.current];
+  if (a.levels.some((l) => l.approvals.some((x) => x.userId === user.id))) return { ok: false, why: "You already approved this PO at an earlier level" };
+  if (user.role !== lvl.role) return { ok: false, why: `Level ${a.current + 1} needs ${lvl.role.replace("_", " ")}` };
+  return { ok: true, why: "" };
+}
+export function decideApproval(poId: string, approve: boolean, approver = "usr-controller-sam", comment = "") {
   const po = must(db.pos.find((p) => p.id === poId), "po");
   if (po.status !== "pending_approval") throw new HttpError(409, `PO is ${po.status}`);
-  po.status = approve ? "approved" : "rejected";
-  ev("po", po.id, approve ? "approval.granted" : "approval.rejected", { approver });
-  if (approve) pushPoToErp(po, supplier(po.supplierId));
+  const user = P.getUser(approver) ?? { id: approver, role: "approver", tenantId: null };
+  const can = canApprove(po, user);
+  if (!can.ok) throw new HttpError(403, can.why);
+  const at = new Date().toISOString(); const c = comment.trim().slice(0, 500);
+  if (!approve) { po.status = "rejected"; if (po.approval) po.approval.rejectedBy = { userId: user.id, at, comment: c }; }
+  else if (po.approval) {
+    const lvl = po.approval.levels[po.approval.current]; lvl.approvals.push({ userId: user.id, at, comment: c });
+    if (lvl.approvals.length >= lvl.count) po.approval.current += 1;
+    if (po.approval.current >= po.approval.levels.length) po.status = "approved";
+  } else po.status = "approved";
+  ev("po", po.id, approve ? (po.status === "approved" ? "approval.granted" : "approval.level_passed") : "approval.rejected", { approver: user.id, comment: c, level: po.approval ? po.approval.current : 0, rule: po.approval?.ruleName ?? null });
+  if (po.status === "approved") { pushPoToErp(po, supplier(po.supplierId)); publish(tenantOf(po), "purchase_order.approved", { id: po.id, total: po.total }); }
   save(); return po;
+}
+/** Approves every level with seeded users of the right role. Used by the scenario runner only. */
+export function autoApprove(po: PurchaseOrder) {
+  const users = P.listUsers().filter((u) => u.tenantId === tenantOf(po));
+  let guard = 0;
+  while (po.status === "pending_approval" && guard++ < 10) {
+    const u = users.find((x) => canApprove(po, x).ok); if (!u) break;
+    decideApproval(po.id, true, u.id, "Approved by the scenario runner");
+  }
+  return po;
 }
 export function receiveGoods(poId: string, shortBy = 0) {
   const po = must(db.pos.find((p) => p.id === poId), "po");
@@ -93,11 +165,11 @@ export async function submitInvoice(poId: string, text: string) {
   const sup = supplier(po.supplierId);
   const walletBefore = sup.walletAddress;
   const r = await readInvoice(text);
-  const inv = { id: nextId("inv"), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: "USD" as const, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: false, injection: r.injection };
+  const inv = { id: nextId("inv"), tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: "USD" as const, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: false, injection: r.injection };
   db.invoices.push(inv); po.status = po.status === "received" ? "invoiced" : po.status;
   ev("invoice", inv.id, "llm.invoice_extracted", { source: r.source, extract: r.value });
   if (r.injection.length) {
-    db.alerts.push({ at: new Date().toISOString(), kind: "injection", detail: `${inv.id}: invoice text contained payee or approval instructions, ignored` });
+    db.alerts.push({ at: new Date().toISOString(), kind: "injection", detail: `${inv.id}: invoice text contained payee or approval instructions, ignored`, tenantId: tenantOf(po) });
     ev("invoice", inv.id, "security.injection_ignored", { lines: r.injection, walletUnchanged: sup.walletAddress === walletBefore });
   }
   save(); return inv;
@@ -111,15 +183,14 @@ export function matchInvoice(invId: string) {
   inv.match = m; inv.matchStatus = m.status;
   if (m.status === "matched") {
     inv.erpApproval = "approved";
-    db.journals.push(makeJournal(nextId("jnl"), `Invoice ${inv.number} accrued`, inv.id, [{ account: po.category === "logistics" ? "5100 Freight expense" : "1300 Inventory", debit: inv.amount }, { account: "2000 Accounts payable", credit: inv.amount }]));
+    db.journals.push(tj(tenantOf(po), makeJournal(nextId("jnl"), `Invoice ${inv.number} accrued`, inv.id, [{ account: po.category === "logistics" ? "5100 Freight expense" : "1300 Inventory", debit: inv.amount }, { account: "2000 Accounts payable", credit: inv.amount }])));
     erp({ system: supplier(po.supplierId).erp, kind: "invoice.approved", at: new Date().toISOString(), payload: { invoice: inv.number, po: po.erpRef, amount: inv.amount } });
   }
   ev("invoice", inv.id, "match.three_way", { status: m.status, totals: m.totals });
   save(); return m;
 }
 
-const BUYER = { name: "Acme Manufacturing Inc", orgId: "org-acme", country: "US" };
-const TENANT = "tnt-acme";
+const tj = (tenantId: string, j: import("./modules/store.js").Journal) => ({ ...j, tenantId });
 const now = () => new Date().toISOString();
 const cashAccount = (rail: Rail) => (isUsdc(rail) ? "1010 USDC treasury" : "1000 Cash operating");
 function mark(intent: PaymentIntent, status: PaymentIntent["status"], source: TimelineEntry["source"], detail: string) {
@@ -145,6 +216,8 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
   if (open) throw new HttpError(409, `Payment ${open.id} for this invoice is already in flight`);
   const po = must(db.pos.find((p) => p.id === inv.poId), "po");
   const sup = supplier(inv.supplierId); const so = org(sup.orgId);
+  const TENANT = tenantOf(po); const bo = org(po.buyerOrgId); const BUYER = { name: bo.legalName, orgId: bo.id, country: bo.country };
+  if (sup.onboarding && sup.onboarding.status !== "verified") throw new HttpError(409, `Supplier onboarding is ${sup.onboarding.status}`);
   const mandate = must(db.mandates.find((m) => m.id === po.mandateId), "mandate");
   const agent = must(db.agents.find((a) => a.id === po.agentId), "agent");
   const intent: PaymentIntent = { id: nextId("pi"), invoiceId: inv.id, mandateId: mandate.id, amount: inv.amount, currency: "USD", status: "created", idempotencyKey, createdAt: now(), tenantId: TENANT, timeline: [] };
@@ -168,7 +241,7 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
   ev("payment", intent.id, "compliance.screened", { outcome: comp.outcome, checks: comp.checks.map((c) => `${c.kind}:${c.result}`) });
   if (comp.travelRule) ev("payment", intent.id, "travel_rule.record", comp.travelRule);
   if (comp.outcome === "blocked") {
-    db.alerts.push({ at: now(), kind: "compliance", detail: `${intent.id}: ${comp.checks.filter((c) => c.result === "fail").map((c) => c.detail).join(", ")}` });
+    db.alerts.push({ at: now(), tenantId: TENANT, kind: "compliance", detail: `${intent.id}: ${comp.checks.filter((c) => c.result === "fail").map((c) => c.detail).join(", ")}` });
     return stop("blocked", comp.checks.filter((c) => c.result === "fail").map((c) => c.detail).join(". "));
   }
   if (isUsdc(rail)) {
@@ -203,27 +276,36 @@ export function applyRailUpdate(intentId: string, u: { status: "pending" | "sett
   if (u.status === "failed") {
     mark(intent, "failed", u.source, u.detail ?? "Provider reported failure"); intent.blockedReason = u.detail;
     ev("payment", intent.id, "settlement.failed", { rail: intent.rail, providerRef: intent.providerRef, source: u.source });
+    publish(tenantOf(intent), "payment.failed", { id: intent.id, amount: intent.amount, rail: intent.rail, reason: u.detail ?? null });
     save(); return intent;
   }
   const inv = must(db.invoices.find((i) => i.id === intent.invoiceId), "invoice");
   const po = must(db.pos.find((p) => p.id === inv.poId), "po"); const sup = supplier(inv.supplierId);
   const rail = intent.rail!; const fee = intent.route?.options.find((o) => o.rail === rail)?.feeUsd ?? 0;
   const txHash = intent.explorerUrl?.match(/0x[0-9a-fA-F]{64}/)?.[0] ?? null;
-  const st: Settlement = { id: nextId("stl"), paymentIntentId: intent.id, rail, railRef: intent.providerRef!, txHash, chain: isUsdc(rail) ? (intent.env === "live" ? "base" : "base-sepolia") : null, feeUsd: fee, confirmedAt: now(), status: "confirmed", explorerUrl: intent.explorerUrl, dashboardUrl: intent.dashboardUrl };
-  db.settlements.push(st); intent.settlementId = st.id; inv.paid = true; po.status = "paid";
+  const bankFee = bankFeeFor(tenantOf(intent), rail, intent.amount);
+  const st: Settlement = { id: nextId("stl"), tenantId: tenantOf(intent), bankFeeUsd: bankFee, paymentIntentId: intent.id, rail, railRef: intent.providerRef!, txHash, chain: isUsdc(rail) ? (intent.env === "live" ? "base" : "base-sepolia") : null, feeUsd: fee, confirmedAt: now(), status: "confirmed", explorerUrl: intent.explorerUrl, dashboardUrl: intent.dashboardUrl };
+  db.settlements.push(st); intent.settlementId = st.id; intent.bankFeeUsd = bankFee; inv.paid = true; po.status = "paid";
   mark(intent, "settled", u.source, u.detail ?? "Provider confirmed settlement");
   const cash = cashAccount(rail);
-  db.journals.push(makeJournal(nextId("jnl"), `Payment ${inv.number} via ${rail}`, intent.id, [{ account: "2000 Accounts payable", debit: inv.amount }, { account: cash, credit: inv.amount }]));
-  if (fee) db.journals.push(makeJournal(nextId("jnl"), `Rail fee ${rail}`, intent.id, [{ account: "6100 Payment fees", debit: fee }, { account: cash, credit: fee }]));
+  db.journals.push(tj(tenantOf(intent), makeJournal(nextId("jnl"), `Payment ${inv.number} via ${rail}`, intent.id, [{ account: "2000 Accounts payable", debit: inv.amount }, { account: cash, credit: inv.amount }])));
+  if (fee) db.journals.push(tj(tenantOf(intent), makeJournal(nextId("jnl"), `Rail fee ${rail}`, intent.id, [{ account: "6100 Payment fees", debit: fee }, { account: cash, credit: fee }])));
   ev("payment", intent.id, "settlement.confirmed", { rail, railRef: st.railRef, txHash, source: u.source, env: intent.env });
   erp(erpPostPayment(sup, po.erpRef ?? po.id, inv.number, inv.amount, st.railRef, st.txHash));
   ev("payment", intent.id, "erp.payment_posted", { system: sup.erp, invoice: inv.number });
+  publish(tenantOf(intent), "payment.settled", { id: intent.id, amount: intent.amount, rail, providerRef: st.railRef, txHash });
   save(); return intent;
+}
+/** Bank pricing on top of the rail cost. Lives on the bank tenant's settings. */
+export function bankFeeFor(tenantId: string, rail: Rail, amount: number) {
+  const t = P.getTenant(tenantId); const bank = t?.parentId ? P.getTenant(t.parentId) : t;
+  const p = bank?.pricing?.[rail]; if (!p) return 0;
+  return Math.round((amount * p.pct / 100 + p.fixed) * 100) / 100;
 }
 
 /** The settlement watcher. Asks each adapter for the status of every pending intent. */
 export async function pollSettlements() {
-  const pending = db.intents.filter((i) => i.status === "pending" && i.rail && i.providerRef);
+  const pending = db.intents.filter((i) => i.status === "pending" && i.rail && i.providerRef && i.kind !== "refund");
   for (const i of pending) {
     try { const r = await adapter(i.rail!).status(i.providerRef!, i.env ?? "sandbox"); if (r.status !== "pending" || r.explorerUrl !== i.explorerUrl) applyRailUpdate(i.id, { status: r.status, source: "watcher", detail: r.detail, explorerUrl: r.explorerUrl }); }
     catch (e: any) { (i.timeline ??= []).push({ at: now(), status: i.status, source: "watcher", detail: `Status check failed: ${e.message}` }); }
@@ -242,10 +324,10 @@ export async function ingestWebhook(provider: "stripe" | "circle", raw: Buffer, 
   const events = await adapter(provider === "stripe" ? "stripe_card" : "circle_usdc").handleWebhook(raw, headers);
   const out: { eventId: string; type: string; intentId: string | null; applied: boolean }[] = [];
   for (const e of events) {
-    const intent = e.providerRef ? db.intents.find((i) => i.providerRef === e.providerRef) : undefined;
+    const intent = e.providerRef ? db.intents.find((i) => i.providerRef === e.providerRef && i.kind !== "refund") : undefined;
     const fresh = sql.prepare("INSERT OR IGNORE INTO provider_events (provider, event_id, type, intent_id, received_at) VALUES (?,?,?,?,?)").run(provider, e.eventId, e.type, intent?.id ?? null, now()).changes > 0;
     if (!fresh) { out.push({ eventId: e.eventId, type: e.type, intentId: intent?.id ?? null, applied: false }); continue; }
-    if (e.dispute) openCase({ kind: "dispute", intentId: intent?.id ?? null, title: `Card dispute ${e.dispute.reason}`, detail: { ...e.dispute, providerRef: e.providerRef, eventId: e.eventId } });
+    if (e.dispute) openCase({ tenantId: intent ? tenantOf(intent) : TENANT, kind: "dispute", intentId: intent?.id ?? null, title: `Card dispute ${e.dispute.reason}`, detail: { ...e.dispute, providerRef: e.providerRef, eventId: e.eventId } });
     if (intent && e.status) { (intent.timeline ??= []).push({ at: now(), status: intent.status, source: "webhook", detail: `${provider} ${e.type}` }); applyRailUpdate(intent.id, { status: e.status, source: "webhook", detail: e.detail, explorerUrl: e.explorerUrl }); }
     ev("webhook", e.eventId, `webhook.${provider}`, { type: e.type, intentId: intent?.id ?? null, providerRef: e.providerRef });
     out.push({ eventId: e.eventId, type: e.type, intentId: intent?.id ?? null, applied: true });
@@ -253,14 +335,17 @@ export async function ingestWebhook(provider: "stripe" | "circle", raw: Buffer, 
   save(); return { received: out };
 }
 
-export type Case = { id: string; kind: "dispute" | "sanctions"; status: "open" | "closed"; intentId: string | null; title: string; detail: unknown; openedAt: string };
+export type Case = { id: string; tenantId?: string; kind: "dispute" | "sanctions"; status: "open" | "closed"; intentId: string | null; title: string; detail: any; openedAt: string;
+  sar?: { status: "draft" | "filed-internally"; text: string; draftedBy: string; updatedBy: string; updatedAt: string; filedBy?: string; filedAt?: string }; closedBy?: string; closedAt?: string; resolution?: string };
 export function openCase(c: Omit<Case, "id" | "status" | "openedAt">) {
-  const x: Case = { id: `case-${crypto.randomUUID().slice(0, 8)}`, status: "open", openedAt: now(), ...c };
-  sql.prepare("INSERT INTO cases (id, tenant_id, status, data) VALUES (?,?,?,?)").run(x.id, TENANT, x.status, JSON.stringify(x));
-  db.alerts.push({ at: x.openedAt, kind: x.kind, detail: `${x.id}: ${x.title}` });
-  ev("case", x.id, "case.opened", x); return x;
+  const x: Case = { id: `case-${crypto.randomUUID().slice(0, 8)}`, status: "open", openedAt: now(), ...c, tenantId: c.tenantId ?? TENANT };
+  sql.prepare("INSERT INTO cases (id, tenant_id, status, data) VALUES (?,?,?,?)").run(x.id, x.tenantId, x.status, JSON.stringify(x));
+  db.alerts.push({ at: x.openedAt, kind: x.kind, detail: `${x.id}: ${x.title}`, tenantId: x.tenantId });
+  ev("case", x.id, "case.opened", x); publish(x.tenantId!, "case.opened", { id: x.id, kind: x.kind, title: x.title }); return x;
 }
-export const listCases = () => (sql.prepare("SELECT data FROM cases ORDER BY rowid DESC").all() as { data: string }[]).map((r) => JSON.parse(r.data) as Case);
+export function saveCase(x: Case) { sql.prepare("UPDATE cases SET status = ?, data = ? WHERE id = ?").run(x.status, JSON.stringify(x), x.id); return x; }
+export const getCase = (id: string) => { const r = sql.prepare("SELECT data FROM cases WHERE id = ?").get(id) as { data: string } | undefined; return r ? (JSON.parse(r.data) as Case) : null; };
+export const listCases = (tenantId?: string | null) => (sql.prepare(`SELECT data FROM cases ${tenantId ? "WHERE tenant_id = ?" : ""} ORDER BY rowid DESC`).all(...(tenantId ? [tenantId] : [])) as { data: string }[]).map((r) => JSON.parse(r.data) as Case);
 
 /** Rails with readiness, environment and fee quote for the Settings and Payments pages. */
 export function railsView(tenantId = TENANT) {
@@ -350,15 +435,15 @@ ${ntries.join("\n")}
 }
 
 /** Full flow used by the scenario buttons and the e2e script. */
-export async function runFlow(need: string, opts: { scenario?: "happy" | "sanctioned" | "poisoned"; autoApprove?: boolean } = {}) {
+export async function runFlow(need: string, opts: { scenario?: "happy" | "sanctioned" | "poisoned"; autoApprove?: boolean; tenantId?: string } = {}) {
   const steps: { step: string; ok: boolean; detail: unknown }[] = [];
   const log = (step: string, ok: boolean, detail: unknown) => steps.push({ step, ok, detail });
-  const d = await draftPo(need);
+  const d = await draftPo(need, opts.tenantId ?? TENANT);
   if (opts.scenario === "sanctioned") { d.value.supplierId = "sup-fabrikam"; d.value.category = "components"; d.value.lines = [{ sku: "FB-STL-304", description: "Stainless steel sheet 304 per ton", qty: 2, unitPrice: 3100 }]; d.value.justification = "Scenario: steel order to Fabrikam Metals whose wallet is on the simulated sanctions list"; }
   log("PO draft", true, { source: d.source, note: d.note, draft: d.value });
-  let po = createPo(d.value);
+  let po = createPo(d.value, buyerAgent(opts.tenantId ?? TENANT)?.id);
   log("Policy check", po.policy.outcome !== "deny", po.policy);
-  if (po.status === "pending_approval" && opts.autoApprove !== false) { po = decideApproval(po.id, true); log("Human approval", true, { approver: "usr-controller-sam" }); }
+  if (po.status === "pending_approval" && opts.autoApprove !== false) { po = autoApprove(po); log("Human approval", po.status === "approved", { rule: po.approval?.ruleName, approvals: po.approval?.levels.flatMap((l) => l.approvals.map((a) => a.userId)) }); }
   if (po.status !== "approved") return { steps, poId: po.id };
   receiveGoods(po.id); log("Goods receipt", true, {});
   const inv = await submitInvoice(po.id, invoiceText(po.id, { poison: opts.scenario === "poisoned" }));

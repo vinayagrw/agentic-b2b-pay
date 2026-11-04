@@ -1,9 +1,10 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { LogIn, UserPlus } from "lucide-react";
+import { LogIn } from "lucide-react";
 import { api, useGet } from "../lib/api";
-import { Badge, Card, EmptyState, ErrorNote, Muted } from "../components/ui";
+import { Badge, Card, ErrorNote, Muted } from "../components/ui";
+import { OnboardPortal } from "./workspace";
 
 const ROLE_LABEL: Record<string, string> = { operator_admin: "Operator admin", client_admin: "Client admin", approver: "Approver", ap_clerk: "AP clerk", auditor: "Auditor" };
 export function Login() {
@@ -22,7 +23,5 @@ export function Login() {
 }
 export function Onboard() {
   const { token } = useParams();
-  return <div className="grid min-h-screen place-items-center bg-bg p-4"><div className="w-full max-w-lg"><Card title="Supplier onboarding">
-    <EmptyState icon={UserPlus} title="This onboarding link is not active yet" body={`Link ${token}. The self serve KYB form, bank account and wallet proof steps ship in build step 4.`} />
-  </Card></div></div>;
+  return <div className="min-h-screen bg-bg p-4"><div className="mx-auto w-full max-w-2xl py-6"><OnboardPortal token={token ?? ""} /></div></div>;
 }

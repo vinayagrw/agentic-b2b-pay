@@ -6,11 +6,10 @@ import { RAIL_LABEL, type Rail } from "@b2b/shared";
 import { Badge, Button, Card, EmptyState, ErrorNote, Input, Json, Label, Mono, Muted, Select, Table, Textarea } from "../components/ui";
 
 const EMPTY = { pos: [], invoices: [], intents: [], settlements: [], refunds: [], receipts: [], agents: [], mandates: [], suppliers: [], payeeChanges: [], alerts: [], erp: [], evidence: [], journals: [], signers: [], killSwitch: false };
-/** Domain data belongs to the Acme demo tenant. Other client tenants start empty. */
+/** The BFF scopes /state to the active client tenant. */
 export function useScopedState() {
-  const { data: me } = useMe(); const q = useAppState();
-  const empty = !!me && me.tenant.kind === "client" && me.tenant.id !== "tnt-acme";
-  return { st: q.data ? (empty ? { ...q.data, ...EMPTY } : q.data) : null, loading: q.isLoading, error: q.error as Error | null, empty };
+  const q = useAppState();
+  return { st: q.data ? { ...EMPTY, ...q.data } : null, loading: q.isLoading, error: q.error as Error | null, empty: false };
 }
 export function Loading({ error }: { error?: Error | null }) {
   return error ? <ErrorNote msg={`Could not reach the BFF. ${error.message}`} /> : <div className="py-10 text-center text-xs text-muted">Loading</div>;
