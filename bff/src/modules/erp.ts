@@ -1,6 +1,6 @@
 import type { ErpEvent, PurchaseOrder, Supplier } from "./store.js";
 
-/** Simulated ERP adapters. Payload shapes loosely mirror SAP S/4HANA OData PO and Coupa REST. */
+/** Local ERP adapters, events are recorded in the DB, no SAP or Coupa connection. Payload shapes loosely mirror SAP S/4HANA OData PO and Coupa REST. */
 export function erpCreatePo(po: PurchaseOrder, sup: Supplier, n: number): { ref: string; event: Omit<ErpEvent, "id"> } {
   if (sup.erp === "SAP") {
     const ref = `45000${String(n).padStart(5, "0")}`;

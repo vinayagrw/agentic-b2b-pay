@@ -70,14 +70,14 @@ export function seed(): Db {
       validFrom: now.toISOString(), validTo: later.toISOString(), signature: "",
     }],
     suppliers: [
-      { id: "sup-northwind", orgId: "org-northwind", name: "Northwind Components LLC", bankDetailsRef: "bank-ref-001", walletAddress: "0x9a1C00000000000000000000000000000000C0DE", preferredRail: "onchain_usdc", acceptedRails: ["stripe_ach", "circle_usdc", "onchain_usdc"], screeningStatus: "clear", erp: "SAP" },
+      { id: "sup-northwind", orgId: "org-northwind", name: "Northwind Components LLC", bankDetailsRef: "bank-ref-001", walletAddress: "0x9a1C00000000000000000000000000000000C0DE", preferredRail: "onchain_usdc", acceptedRails: ["stripe_card", "stripe_ach", "circle_usdc", "onchain_usdc"], screeningStatus: "clear", erp: "SAP" },
       { id: "sup-contoso", orgId: "org-contoso", name: "Contoso Logistics Ltd", bankDetailsRef: "bank-ref-002", walletAddress: null, preferredRail: "stripe_ach", acceptedRails: ["stripe_card", "stripe_ach"], screeningStatus: "clear", erp: "Coupa" },
       { id: "sup-fabrikam", orgId: "org-fabrikam", name: "Fabrikam Metals SA", bankDetailsRef: "bank-ref-003", walletAddress: SANCTIONED_WALLETS[0], preferredRail: "circle_usdc", acceptedRails: ["stripe_ach", "circle_usdc"], screeningStatus: "clear", erp: "SAP" },
       { id: "sup-initech", tenantId: "tnt-globex", orgId: "org-initech", name: "Initech Packaging Co", bankDetailsRef: "bank-ref-101", walletAddress: null, preferredRail: "stripe_ach", acceptedRails: ["stripe_card", "stripe_ach"], screeningStatus: "clear", erp: "Coupa" },
       { id: "sup-hooli", tenantId: "tnt-globex", orgId: "org-hooli", name: "Hooli Store Fixtures Ltd", bankDetailsRef: "bank-ref-102", walletAddress: "0x7E5700000000000000000000000000000000F1E0", preferredRail: "onchain_usdc", acceptedRails: ["stripe_ach", "circle_usdc", "onchain_usdc"], screeningStatus: "clear", erp: "SAP" },
     ],
     catalog: [
-      { sku: "NW-BRG-6204", supplierId: "sup-northwind", description: "Ball bearing 6204 sealed", category: "components", unitPrice: 4.5, keywords: ["bearing", "bearings", "6204"] },
+      { sku: "NW-BRG-6204", supplierId: "sup-northwind", description: "Ball bearing 6204 sealed", category: "components", unitPrice: 4.25, keywords: ["bearing", "bearings", "6204"] },
       { sku: "NW-MTR-750", supplierId: "sup-northwind", description: "Servo motor 750W", category: "components", unitPrice: 420, keywords: ["motor", "servo", "motors"] },
       { sku: "NW-GLV-NIT", supplierId: "sup-northwind", description: "Nitrile gloves box of 100", category: "mro", unitPrice: 12, keywords: ["glove", "gloves", "nitrile"] },
       { sku: "CT-FRT-LTL", supplierId: "sup-contoso", description: "LTL freight lane Chicago to Dallas", category: "logistics", unitPrice: 850, keywords: ["freight", "shipping", "ltl", "truck"] },
@@ -100,16 +100,26 @@ const KV_KEYS = ["orgs", "catalog", "receipts", "erp", "payeeChanges", "refunds"
 
 const LEGACY_RAIL: Record<string, Rail> = { card: "stripe_card", ach: "stripe_ach", rtp: "stripe_ach", usdc: "onchain_usdc" };
 const railOf = (r: string) => (LEGACY_RAIL[r] ?? r) as Rail;
+export const isLegacyRail = (r: string | null | undefined) => !!r && r in LEGACY_RAIL;
+export const isSimulatedReceipt = (s: { chain?: string | null; railRef?: string | null }) => /sim/i.test(s.chain ?? "") || /^USDC-/.test(s.railRef ?? "");
 /** Databases written before the provider rails keep working: old rail names map to the new ones. */
 function upgrade(d: Db): Db {
   for (const s of d.suppliers) { s.preferredRail = railOf(s.preferredRail); s.acceptedRails = [...new Set(s.acceptedRails.map(railOf))]; }
   for (const m of d.mandates) m.allowedRails = [...new Set(m.allowedRails.map(railOf))];
-  for (const st of d.settlements) st.rail = railOf(st.rail);
-  for (const i of d.intents) if (i.rail) i.rail = railOf(i.rail);
+  // Payments from the pre-adapter build (old rail names, fake receipts) are never relabelled as real ones.
+  // Migration 006 deletes them from SQLite. This filter covers state loaded any other way.
+  const legacy = new Set(d.intents.filter((i) => isLegacyRail(i.rail) || isLegacyRail(i.route?.rail)).map((i) => i.id));
+  for (const st of d.settlements) if (isLegacyRail(st.rail) || isSimulatedReceipt(st)) legacy.add(st.paymentIntentId);
+  d.intents = d.intents.filter((i) => !legacy.has(i.id));
+  d.settlements = d.settlements.filter((st) => !legacy.has(st.paymentIntentId));
+  d.journals = d.journals.filter((j) => !legacy.has(j.ref));
   // Seed rows added by later build steps (the Globex tenant, small demo items) are topped up by id.
   const s = seed();
   for (const k of ["orgs", "agents", "mandates", "suppliers"] as const) for (const x of s[k] as { id: string }[]) if (!(d[k] as { id: string }[]).some((y) => y.id === x.id)) (d[k] as unknown[]).push(x);
   for (const c of s.catalog) if (!d.catalog.some((y) => y.sku === c.sku)) d.catalog.push(c);
+  // Seeded Northwind takes card and ACH too, so the happy path can route to Stripe when the wallet has no USDC.
+  const nw = d.suppliers.find((x) => x.id === "sup-northwind");
+  if (nw) for (const r of ["stripe_card", "stripe_ach"] as Rail[]) if (!nw.acceptedRails.includes(r)) nw.acceptedRails.unshift(r);
   return d;
 }
 /** Loads the domain state from SQLite. An empty database is seeded. */

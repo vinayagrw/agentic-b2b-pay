@@ -1,3 +1,4 @@
+import { railReadiness } from "./rails/index.js";
 import crypto from "node:crypto";
 import { z } from "zod";
 import { verifyMessage, isAddress, getAddress } from "viem";
@@ -172,7 +173,7 @@ export function onboardingView(token: string) {
     bank: s.onboarding.bank ? { last4: s.onboarding.bank.last4, bankName: s.onboarding.bank.bankName, holderName: s.onboarding.bank.holderName } : null, bankNote: s.onboarding.bankNote ?? null,
     wallet: s.onboarding.wallet ? { address: s.onboarding.wallet.address, verifiedAt: s.onboarding.wallet.verifiedAt } : null,
     reviewNote: s.onboarding.status === "rejected" ? s.onboarding.reviewNote ?? null : null,
-    stripeReady: !!config.STRIPE_SECRET_KEY && /^(sk|rk)_test_/.test(config.STRIPE_SECRET_KEY), messageTemplate: walletMessage(s, "0x0000000000000000000000000000000000000000") };
+    stripeReady: railReadiness("stripe_card", "sandbox").configured, messageTemplate: walletMessage(s, "0x0000000000000000000000000000000000000000") };
 }
 export const Kyb = z.object({
   legalName: z.string().min(2).max(120),

@@ -6,7 +6,7 @@ import { makeJournal, trialBalance } from "./modules/ledger.js";
 import { appendEvidence } from "./modules/evidence.js";
 import { TRAVEL_RULE_THRESHOLD_USD } from "./modules/compliance.js";
 import { screenName, screenWallet, sdnStatus } from "./modules/sdn.js";
-import { adapter, allAdapters } from "./rails/index.js";
+import { adapter, allAdapters, railReadiness } from "./rails/index.js";
 import { callClaude, cleanText } from "./llm.js";
 import * as P from "./platform.js";
 import * as S from "./service.js";
@@ -51,7 +51,7 @@ export async function sweep(user: P.User, tenantId: string, rail: Rail, amount: 
     sql.prepare("INSERT INTO sweeps (id, tenant_id, rail, status, data) VALUES (?,?,?,?,?)").run(id, tenantId, rail, rec.status, JSON.stringify(rec));
     P.audit(user.id, "treasury", id, "sweep.unsupported", rec); return rec;
   }
-  if (!a.readiness(env).configured) throw err(409, `${rail} is not configured`);
+  if (!railReadiness(rail, env).configured) throw err(409, `${rail} is not configured`);
   const r = await a.sweep(amount, env, id);
   const rec = { ...base, status: r.status, providerRef: r.providerRef, detail: r.detail ?? null };
   sql.prepare("INSERT INTO sweeps (id, tenant_id, rail, status, data) VALUES (?,?,?,?,?)").run(id, tenantId, rail, rec.status, JSON.stringify(rec));

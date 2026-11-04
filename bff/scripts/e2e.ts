@@ -7,7 +7,7 @@ store.reset(); S.bootstrap();
 const db = store.db;
 console.log(`LLM_MODE=${process.env.LLM_MODE}`);
 const t0 = Date.now();
-const r = await S.runFlow("We need 2000 sealed 6204 ball bearings for the line 3 maintenance window next week");
+const r = await S.runFlow("We need 2 sealed 6204 ball bearings for the line 3 maintenance window next week");
 for (const s of r.steps) console.log(`${s.ok ? "PASS" : "FAIL"}  ${s.step}  ${JSON.stringify(s.detail).slice(0, 220)}`);
 const sanc = await S.runFlow("Order 2 tons of 304 stainless sheet", { scenario: "sanctioned" });
 const blocked = db.intents.find((i) => i.id === sanc.intentId)?.status === "blocked";

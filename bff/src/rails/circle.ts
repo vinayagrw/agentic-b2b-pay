@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { config } from "../config.js";
+import { config, secret } from "../config.js";
 import { sql } from "../db.js";
 import { header, RailError, type RailAdapter, type RailEnv, type ProviderStatus } from "./types.js";
 
@@ -12,8 +12,8 @@ export const USDC = { "BASE-SEPOLIA": "0x036CbD53842c5426634e7929541eC2318f3dCF7
 const chain = (env: RailEnv) => (env === "live" ? "BASE" : "BASE-SEPOLIA");
 const explorer = (env: RailEnv, tx: string) => `https://${env === "live" ? "" : "sepolia."}basescan.org/tx/${tx}`;
 const creds = (env: RailEnv) => env === "live"
-  ? { key: config.CIRCLE_LIVE_API_KEY, secret: config.CIRCLE_LIVE_ENTITY_SECRET }
-  : { key: config.CIRCLE_API_KEY, secret: config.CIRCLE_ENTITY_SECRET };
+  ? { key: secret("CIRCLE_LIVE_API_KEY"), secret: secret("CIRCLE_LIVE_ENTITY_SECRET") }
+  : { key: secret("CIRCLE_API_KEY"), secret: secret("CIRCLE_ENTITY_SECRET") };
 
 /** Circle idempotency keys must be UUIDs. Derive a stable one from ours. */
 export function uuidFrom(s: string) {

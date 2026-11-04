@@ -53,18 +53,36 @@ describe("rail router", () => {
 });
 
 describe("compliance", () => {
-  const ben = { name: "Northwind Components LLC", orgId: "org-northwind", country: "US", wallet: "0x9a1C00000000000000000000000000000000C0DE", kybVerified: true };
+  const ben = { name: "Northwind Components LLC", orgId: "org-northwind", supplierId: "sup-northwind", country: "US", wallet: "0x9a1C00000000000000000000000000000000C0DE", kyb: { status: "verified", source: "onboarding review" as const } };
   const org = { name: "Acme", orgId: "org-acme", country: "US" };
+  const base = { intentId: "pi-1", mandate: { id: "mdt-1", perTxnMax: 40000 }, walletActivity: { txCount: 3, network: "base-sepolia", checkedAt: "x" } };
   it("clears good wallet and builds Travel Rule on every USDC transfer", () => {
-    const small = screen({ rail: "onchain_usdc", amount: 100, originator: org, beneficiary: ben });
+    const small = screen({ ...base, rail: "onchain_usdc", amount: 100, originator: org, beneficiary: ben });
     expect(small.outcome).toBe("clear"); expect(small.travelRule).toBeDefined();
     expect(small.checks.map((c) => c.kind)).toEqual(["kyb", "sanctions", "ofac_wallet", "kyt", "travel_rule"]);
   });
   it("blocks sanctioned wallet", () => {
-    const r = screen({ rail: "onchain_usdc", amount: 6200, originator: org, beneficiary: { ...ben, wallet: "0xBAD0000000000000000000000000000000000BAD" } });
+    const r = screen({ ...base, rail: "onchain_usdc", amount: 6200, originator: org, beneficiary: { ...ben, wallet: "0xBAD0000000000000000000000000000000000BAD" } });
     expect(r.outcome).toBe("blocked"); expect(r.checks.find((c) => c.kind === "ofac_wallet")!.result).toBe("fail");
   });
-  it("blocks sanctioned name on fiat", () => expect(screen({ rail: "stripe_ach", amount: 10, originator: org, beneficiary: { ...ben, name: "Rogue Metals Trading" } }).outcome).toBe("blocked"));
+  it("uses real refs and no simulated wording", () => {
+    const r = screen({ ...base, rail: "onchain_usdc", amount: 8.5, originator: org, beneficiary: ben });
+    const text = JSON.stringify(r);
+    expect(text).not.toMatch(/sim-|simulated/i);
+    expect(r.checks.find((c) => c.kind === "sanctions")!.providerRef).toMatch(/^ofac-sdn-fixture-[0-9a-f]{10}$/);
+    expect(r.checks.find((c) => c.kind === "ofac_wallet")!.providerRef).toMatch(/^ofac-sdn-/);
+    expect(r.checks.find((c) => c.kind === "travel_rule")!.providerRef).toBe("tr-pi-1");
+    expect(r.checks.find((c) => c.kind === "kyt")!.detail).toMatch(/^Rule based KYT: .*3 outgoing transactions on base-sepolia/);
+    expect((r.travelRule as any).beneficiary.beneficiaryPersons[0].legalPerson.name).toBe("Northwind Components LLC");
+  });
+  it("KYB passes only when the onboarding review is verified", () => {
+    for (const status of ["submitted", "rejected", "draft"]) expect(screen({ ...base, rail: "stripe_ach", amount: 8.5, originator: org, beneficiary: { ...ben, kyb: { status, source: "onboarding review" } } }).checks[0].result).toBe("fail");
+  });
+  it("rule based KYT fails above the mandate cap and for large sends to a new wallet", () => {
+    const k = (amount: number, txCount: number) => screen({ ...base, walletActivity: { txCount, network: "base-sepolia", checkedAt: "x" }, rail: "onchain_usdc", amount, originator: org, beneficiary: ben }).checks.find((c) => c.kind === "kyt")!.result;
+    expect(k(50000, 3)).toBe("fail"); expect(k(5000, 0)).toBe("fail"); expect(k(8.5, 0)).toBe("pass");
+  });
+  it("blocks sanctioned name on fiat", () => expect(screen({ ...base, rail: "stripe_ach", amount: 10, originator: org, beneficiary: { ...ben, name: "Rogue Metals Trading" } }).outcome).toBe("blocked"));
 });
 
 describe("ledger", () => {

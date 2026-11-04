@@ -8,7 +8,8 @@ import { routePayment } from "./modules/router.js";
 import { screen } from "./modules/compliance.js";
 import { makeJournal, trialBalance, reconcile } from "./modules/ledger.js";
 import { appendEvidence, verifyChain } from "./modules/evidence.js";
-import { adapter, allAdapters } from "./rails/index.js";
+import { adapter, allAdapters, railReadiness } from "./rails/index.js";
+import { walletActivity } from "./rails/onchain.js";
 import { sql } from "./db.js";
 import * as P from "./platform.js";
 import { erpCreatePo, erpPostPayment } from "./modules/erp.js";
@@ -200,7 +201,7 @@ function mark(intent: PaymentIntent, status: PaymentIntent["status"], source: Ti
 /** Rails the router may use for this tenant. Adapters without keys are listed as not configured and skipped. */
 export function railCandidates(tenantId = TENANT, amount = 0) {
   return allAdapters().map((a) => {
-    const env = P.railEnv(tenantId, a.id); const r = a.readiness(env);
+    const env = P.railEnv(tenantId, a.id); const r = railReadiness(a.id, env);
     return { ...a.quote(amount), configured: r.configured, notConfiguredReason: r.reason, env, address: r.address };
   });
 }
@@ -236,7 +237,13 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
   if (!route.rail) return stop("blocked", route.reason);
   const rail = route.rail as Rail;
 
-  const comp = screen({ rail, amount: inv.amount, originator: BUYER, beneficiary: { name: so.legalName, orgId: so.id, country: so.country, wallet: sup.walletAddress, kybVerified: so.kybStatus === "verified" } });
+  const railEnvNow = P.railEnv(TENANT, rail);
+  const kyb = sup.onboarding
+    ? { status: sup.onboarding.status, source: "onboarding review" as const, reviewedBy: sup.onboarding.reviewedBy ?? null, reviewedAt: sup.onboarding.reviewedAt ?? null }
+    : { status: so.kybStatus, source: "org record" as const };
+  const activity = isUsdc(rail) && sup.walletAddress ? await walletActivity(sup.walletAddress, railEnvNow) : null;
+  const originWallet = isUsdc(rail) ? railReadiness(rail, railEnvNow).address ?? null : null;
+  const comp = screen({ intentId: intent.id, rail, amount: inv.amount, mandate: { id: mandate.id, perTxnMax: mandate.perTxnMax }, originator: { ...BUYER, wallet: originWallet }, beneficiary: { name: so.legalName, orgId: so.id, supplierId: sup.id, country: so.country, wallet: sup.walletAddress, kyb }, walletActivity: activity });
   intent.compliance = comp;
   ev("payment", intent.id, "compliance.screened", { outcome: comp.outcome, checks: comp.checks.map((c) => `${c.kind}:${c.result}`) });
   if (comp.travelRule) ev("payment", intent.id, "travel_rule.record", comp.travelRule);
@@ -359,7 +366,7 @@ export function railsView(tenantId = TENANT) {
 export async function railBalances(tenantId = TENANT) {
   return Promise.all(allAdapters().map(async (a) => {
     const env = P.railEnv(tenantId, a.id);
-    if (!a.readiness(env).configured) return { rail: a.id, error: "Not configured" };
+    const rd = railReadiness(a.id, env); if (!rd.configured) return { rail: a.id, error: `Not configured: ${rd.reason}` };
     try { return await a.balance(env); } catch (e: any) { return { rail: a.id, error: e.message }; }
   }));
 }
@@ -452,7 +459,7 @@ export async function runFlow(need: string, opts: { scenario?: "happy" | "sancti
   const steps: { step: string; ok: boolean; detail: unknown }[] = [];
   const log = (step: string, ok: boolean, detail: unknown) => steps.push({ step, ok, detail });
   const d = await draftPo(need, opts.tenantId ?? TENANT);
-  if (opts.scenario === "sanctioned") { d.value.supplierId = "sup-fabrikam"; d.value.category = "components"; d.value.lines = [{ sku: "FB-STL-304", description: "Stainless steel sheet 304 per ton", qty: 2, unitPrice: 3100 }]; d.value.justification = "Scenario: steel order to Fabrikam Metals whose wallet is on the simulated sanctions list"; }
+  if (opts.scenario === "sanctioned") { d.value.supplierId = "sup-fabrikam"; d.value.category = "components"; d.value.lines = [{ sku: "FB-STL-304", description: "Stainless steel sheet 304 per ton", qty: 2, unitPrice: 3100 }]; d.value.justification = "Scenario: steel order to Fabrikam Metals whose wallet is on the demo watchlist"; }
   log("PO draft", true, { source: d.source, note: d.note, draft: d.value });
   let po = createPo(d.value, buyerAgent(opts.tenantId ?? TENANT)?.id);
   log("Policy check", po.policy.outcome !== "deny", po.policy);

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-/** Simulated MPC custody: 2 of 3 approver quorum must co-sign before a stablecoin send is released. */
+/** Local threshold signing (keys held in process, not an MPC vendor): 2 of 3 approver quorum must co-sign before a stablecoin send is released. */
 export const SIGNERS = [
   { id: "signer-treasury-ops", role: "Treasury ops" },
   { id: "signer-controller", role: "Controller" },

@@ -32,7 +32,6 @@ export function verifyAgent(agent: Agent, orgKybVerified: boolean): KyaResult {
     { name: "Key signature challenge", pass: sigOk },
     { name: "Bound to KYB verified org", pass: orgKybVerified },
     { name: "ERP role assigned", pass: !!agent.erpRole },
-    { name: "Network agent registry (simulated Visa TAP and Mastercard Agent Pay)", pass: true },
   ];
   const verified = checks.every((c) => c.pass);
   agent.kyaStatus = verified ? "verified" : "unverified";

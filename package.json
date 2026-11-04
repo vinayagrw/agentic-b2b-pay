@@ -2,7 +2,7 @@
   "name": "agentic-b2b-pay",
   "version": "0.1.0",
   "private": true,
-  "description": "Agentic B2B payments demo: mandates, policy, 3-way match, rail router, simulated USDC. No real funds.",
+  "description": "Agentic B2B payments demo: mandates, policy, 3-way match, rail router, Stripe test mode and USDC on Base Sepolia. No real funds.",
   "workspaces": ["shared", "bff", "web"],
   "scripts": {
     "dev:bff": "npm run dev --workspace bff",

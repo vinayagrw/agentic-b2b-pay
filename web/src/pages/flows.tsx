@@ -38,9 +38,9 @@ export function Scenarios({ onRun }: { onRun?: (r: any) => void }) {
   const go = async (scenario: string, need: string) => { const r = await run(() => api("/scenario/run", { need, scenario })); if (r) { setFlow(r); onRun?.(r); } };
   return <Card title="Scenarios" action={<Busy on={busy} />}>
     <div className="flex flex-wrap gap-2">
-      <Button variant="primary" disabled={busy} onClick={() => go("happy", "Need 2000 sealed 6204 bearings for line 3 maintenance")}><Play size={14} />Happy path to USDC</Button>
+      <Button variant="primary" disabled={busy} onClick={() => go("happy", "Need 2 sealed 6204 bearings for line 3 maintenance")}><Play size={14} />Happy path</Button>
       <Button variant="danger" disabled={busy} onClick={() => go("sanctioned", "Order 2 tons of 304 stainless sheet")}><Ban size={14} />Sanctioned wallet</Button>
-      <Button disabled={busy} onClick={() => go("poisoned", "Need 2000 sealed 6204 bearings for line 3 maintenance")}><ShieldAlert size={14} />Poisoned invoice</Button>
+      <Button disabled={busy} onClick={() => go("poisoned", "Need 2 sealed 6204 bearings for line 3 maintenance")}><ShieldAlert size={14} />Poisoned invoice</Button>
     </div>
     <ErrorNote msg={error} />
     {flow && <Table className="mt-3">{flow.steps.map((s: any, i: number) => <tr key={i}><td><Badge v={s.ok ? "pass" : "fail"} /></td><td className="whitespace-nowrap">{s.step}</td><td className="break-all"><Mono className="text-muted">{JSON.stringify(s.detail).slice(0, 240)}</Mono></td></tr>)}</Table>}
@@ -48,7 +48,7 @@ export function Scenarios({ onRun }: { onRun?: (r: any) => void }) {
 }
 
 export function BuyerDraft({ onPo }: { onPo?: (id: string) => void }) {
-  const [need, setNeed] = useState("We need 2000 sealed 6204 ball bearings for the line 3 maintenance window next week");
+  const [need, setNeed] = useState("We need 2 sealed 6204 ball bearings for the line 3 maintenance window next week");
   const [draft, setDraft] = useState<any>(null); const [po, setPo] = useState<any>(null);
   const { run, busy, error } = useAct();
   return <div className="grid gap-4 lg:grid-cols-2">

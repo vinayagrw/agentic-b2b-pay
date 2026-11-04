@@ -3,7 +3,7 @@ import path from "node:path";
 import { getAddress, createPublicClient, createWalletClient, erc20Abi, http, parseUnits, formatUnits, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { base, baseSepolia } from "viem/chains";
-import { config } from "../config.js";
+import { config, secret } from "../config.js";
 import { RailError, type RailAdapter, type RailEnv } from "./types.js";
 
 /** Direct USDC on Base with viem. Sandbox is Base Sepolia with a locally generated key in data/keys (gitignored). */
@@ -21,7 +21,7 @@ export function sandboxKey(file = config.ONCHAIN_KEY_FILE): Hex {
   fs.writeFileSync(file, JSON.stringify({ privateKey, address: privateKeyToAccount(privateKey).address, network: "base-sepolia", createdAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
   return privateKey;
 }
-const keyFor = (env: RailEnv): Hex | undefined => (env === "live" ? (config.ONCHAIN_LIVE_PRIVATE_KEY as Hex | undefined) : sandboxKey());
+const keyFor = (env: RailEnv): Hex | undefined => (env === "live" ? (secret("ONCHAIN_LIVE_PRIVATE_KEY") as Hex | undefined) : sandboxKey());
 export const onchainAddress = (env: RailEnv = "sandbox") => { const k = keyFor(env); return k ? privateKeyToAccount(k).address : null; };
 const pub = (env: RailEnv) => { const n = net(env); return createPublicClient({ chain: n.chain, transport: http(n.rpc) }); };
 const txUrl = (env: RailEnv, h: string) => `${net(env).scan}/tx/${h}`;
@@ -30,7 +30,7 @@ export const onchainUsdc: RailAdapter = {
   sweepUnsupported: "This is a self custody wallet on Base. It cannot pay out fiat. Send the USDC to a Circle Mint or exchange deposit address to off ramp.",
   id: "onchain_usdc",
   readiness: (env) => {
-    if (env === "live" && !config.ONCHAIN_LIVE_PRIVATE_KEY) return { configured: false, reason: "ONCHAIN_LIVE_PRIVATE_KEY missing" };
+    if (env === "live" && !secret("ONCHAIN_LIVE_PRIVATE_KEY")) return { configured: false, reason: "ONCHAIN_LIVE_PRIVATE_KEY missing" };
     return { configured: true, address: onchainAddress(env) ?? undefined };
   },
   quote: () => ({ rail: "onchain_usdc", label: "USDC on Base (direct)", feeUsd: 0.02, maxAmount: 1_000_000, settleMinutes: 1 }),
@@ -57,3 +57,16 @@ export const onchainUsdc: RailAdapter = {
     return { rail: "onchain_usdc", currency: "USDC", amount: Number(formatUnits(b, 6)), detail: `${a} on ${net(env).chain.name}` };
   },
 };
+
+/** Outgoing transaction count of a wallet on Base (Sepolia in sandbox), for rule based KYT. Null when the RPC fails. */
+export type WalletActivityFn = (address: string, env: RailEnv) => Promise<{ txCount: number; network: string; checkedAt: string } | null>;
+const rpcActivity: WalletActivityFn = async (address, env) => {
+  try {
+    const txCount = await Promise.race([pub(env).getTransactionCount({ address: getAddress(address) }), new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 5000))]);
+    return { txCount, network: env === "live" ? "base" : "base-sepolia", checkedAt: new Date().toISOString() };
+  } catch { return null; }
+};
+let activityFn = rpcActivity;
+export const walletActivity: WalletActivityFn = (a, e) => activityFn(a, e);
+/** Tests pass a fake so screening never reaches the network. Null restores the RPC reader. */
+export function setWalletActivity(fn: WalletActivityFn | null) { activityFn = fn ?? rpcActivity; }

@@ -13,3 +13,7 @@ export const adapter = (r: Rail) => adapters[r];
 export const allAdapters = () => RAIL_IDS.map((r) => adapters[r]);
 /** Tests swap in an in-process fake. Production code never calls this. */
 export function setAdapters(a: Partial<Record<Rail, RailAdapter>> | null) { adapters = a ? { ...real(), ...a } : real(); }
+
+/** The one source of truth for "is this rail configured" in an environment. Router, Rails table, balances, sweeps,
+ * live switch and supplier bank setup all call this. Keys are read at call time (see config.secret). */
+export const railReadiness = (r: Rail, env: import("./types.js").RailEnv) => adapters[r].readiness(env);

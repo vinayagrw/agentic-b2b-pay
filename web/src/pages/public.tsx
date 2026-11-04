@@ -2,14 +2,15 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { LogIn } from "lucide-react";
-import { api, useGet } from "../lib/api";
+import { api, useGet, type Me } from "../lib/api";
+import { afterLogin } from "../lib/session";
 import { Badge, Card, ErrorNote, Muted } from "../components/ui";
 import { OnboardPortal } from "./workspace";
 
 const ROLE_LABEL: Record<string, string> = { operator_admin: "Operator admin", client_admin: "Client admin", approver: "Approver", ap_clerk: "AP clerk", auditor: "Auditor" };
 export function Login() {
   const { data } = useGet<{ users: any[] }>("/auth/demo-users"); const qc = useQueryClient(); const nav = useNavigate(); const [err, setErr] = useState("");
-  const go = async (u: any) => { try { await api("/auth/login", { userId: u.id }); await qc.invalidateQueries(); nav(u.tenantId ? "/app" : "/operator"); } catch (e: any) { setErr(e.message); } };
+  const go = async (u: any) => { try { await api("/auth/login", { userId: u.id }); await afterLogin(qc, () => api<Me>("/me"), nav); } catch (e: any) { setErr(e.message); } };
   return <div className="grid min-h-screen place-items-center bg-bg p-4">
     <div className="w-full max-w-xl">
       <div className="mb-4 flex items-center gap-2"><LogIn size={18} className="text-primary" /><h1 className="text-lg font-semibold">Sign in</h1><Badge v="Demo login, no password" tone="warn" /></div>

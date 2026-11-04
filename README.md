@@ -27,11 +27,11 @@ State persists to `data/db.json`. Use Reset demo in the console to reseed.
 | PO, goods receipt, invoice, 3-way match with tolerance | modules/match.ts, service.ts |
 | Rail router over provider rails (stripe_card, stripe_ach, circle_usdc, onchain_usdc), skips rails without keys | modules/router.ts |
 | Compliance gate (KYB, sanctions, OFAC wallet, KYT, Travel Rule record on every USDC transfer) | modules/compliance.ts |
-| Simulated MPC custody, 2 of 3 quorum before a stablecoin send | modules/custody.ts |
+| Local threshold signing, 2 of 3 quorum before a stablecoin send | modules/custody.ts |
 | Double entry ledger, trial balance, reconciliation, camt.053 export | modules/ledger.ts, service.ts |
 | Hash chained evidence store | modules/evidence.ts |
 | Rail adapters (quote, send, status, handleWebhook, balance) | rails/stripe.ts, rails/circle.ts, rails/onchain.ts |
-| Simulated SAP and Coupa adapters | modules/erp.ts |
+| Local SAP and Coupa adapters (DB records, no live ERP) | modules/erp.ts |
 | Refunds as new forward payments | service.ts |
 | Payee changes only via ERP adapter, four eyes plus callback | service.ts |
 | LLM adapter (`claude -p ... --output-format json`, 60 s timeout, deterministic fallback) | llm.ts, agents.ts |
@@ -48,7 +48,7 @@ Buyer agent tab: type a need, draft, submit to policy, or click a scenario (happ
 
 ## Rails
 
-Each rail is a `RailAdapter` in `bff/src/rails`. A payment goes `submitted`, then `pending`, then `settled` or `failed`. The ledger posts and the invoice is marked paid only on `settled`, which comes from a verified webhook or the settlement watcher (polls every `RAIL_POLL_MS`, default 5 s). Idempotency keys live in the `idempotency_keys` table. A rail with missing keys shows Not configured and the router skips it. There is no simulated fallback. The in-process fake adapter lives only in `bff/test/fakeRail.ts`.
+Each rail is a `RailAdapter` in `bff/src/rails`. A payment goes `submitted`, then `pending`, then `settled` or `failed`. The ledger posts and the invoice is marked paid only on `settled`, which comes from a verified webhook or the settlement watcher (polls every `RAIL_POLL_MS`, default 5 s). Idempotency keys live in the `idempotency_keys` table. A rail with missing keys shows Not configured and the router skips it. There is no fallback adapter. The in-process fake adapter lives only in `bff/test/fakeRail.ts`.
 
 | Rail | What it does in sandbox | Settles from |
 |---|---|---|

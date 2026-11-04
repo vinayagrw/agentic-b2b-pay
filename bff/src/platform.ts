@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Rail } from "@b2b/shared";
 import { sql } from "./db.js";
-import { adapter, RAIL_IDS } from "./rails/index.js";
+import { adapter, RAIL_IDS, railReadiness } from "./rails/index.js";
 import { db, save, emit } from "./modules/store.js";
 import { appendEvidence } from "./modules/evidence.js";
 
@@ -110,7 +110,7 @@ const HANDLERS: Record<string, Handler> = {
       if (!RAIL_IDS.includes(p.rail)) throw new AuthError(422, `unknown rail ${p.rail}`);
       if (!["sandbox", "live"].includes(p.setting?.env)) throw new AuthError(422, "env must be sandbox or live");
       if (p.setting.env === "live") {
-        const r = adapter(p.rail).readiness("live");
+        const r = railReadiness(p.rail, "live");
         if (!r.configured) throw new AuthError(409, `Live mode needs live keys for ${p.rail} in .env (${r.reason})`);
       }
     },

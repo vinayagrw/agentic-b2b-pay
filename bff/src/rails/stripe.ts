@@ -1,5 +1,5 @@
 import Stripe from "stripe";
-import { config } from "../config.js";
+import { secret } from "../config.js";
 import { header, RailError, type RailAdapter, type RailEnv, type ProviderStatus, type RailWebhookEvent } from "./types.js";
 
 /**
@@ -10,7 +10,7 @@ import { header, RailError, type RailAdapter, type RailEnv, type ProviderStatus,
  * the supplier side is recorded in the ledger and ERP. See README "Rails".
  */
 const clients = new Map<string, Stripe>();
-const keyFor = (env: RailEnv) => (env === "live" ? config.STRIPE_LIVE_SECRET_KEY : config.STRIPE_SECRET_KEY);
+const keyFor = (env: RailEnv) => (env === "live" ? secret("STRIPE_LIVE_SECRET_KEY") : secret("STRIPE_SECRET_KEY"));
 function client(env: RailEnv) {
   const key = keyFor(env); if (!key) throw new RailError(503, `Stripe ${env} key is not configured`);
   if (env === "sandbox" && !key.startsWith("sk_test_") && !key.startsWith("rk_test_")) throw new RailError(409, "STRIPE_SECRET_KEY must be a test key (sk_test_)");
@@ -78,10 +78,11 @@ function make(kind: "card" | "ach"): RailAdapter {
 
 /** Shared by both Stripe rails: one webhook endpoint, signature checked on the raw body. */
 export async function verifyStripeWebhook(raw: Buffer, headers: Record<string, string | string[] | undefined>): Promise<RailWebhookEvent[]> {
-  if (!config.STRIPE_WEBHOOK_SECRET) throw new RailError(503, "STRIPE_WEBHOOK_SECRET is not configured");
+  const whsec = secret("STRIPE_WEBHOOK_SECRET");
+  if (!whsec) throw new RailError(503, "STRIPE_WEBHOOK_SECRET is not configured");
   const sig = header(headers, "stripe-signature"); if (!sig) throw new RailError(400, "Missing Stripe-Signature header");
   let e: Stripe.Event;
-  try { e = Stripe.webhooks.constructEvent(raw, sig, config.STRIPE_WEBHOOK_SECRET); } catch (err: any) { throw new RailError(400, `Stripe signature check failed: ${err.message}`); }
+  try { e = Stripe.webhooks.constructEvent(raw, sig, whsec); } catch (err: any) { throw new RailError(400, `Stripe signature check failed: ${err.message}`); }
   const o: any = e.data.object;
   switch (e.type) {
     case "payment_intent.succeeded": case "payment_intent.processing": case "payment_intent.payment_failed": case "payment_intent.canceled":
