@@ -255,8 +255,8 @@ Load `STRIPE_SECRET_KEY` from `.env` into your shell first. Do not paste keys in
 
 1. Sign in at [console.circle.com](https://console.circle.com) and switch to the sandbox.
 2. Open **API & Client Keys** and create an API key. It looks like `TEST_API_KEY:...`. Put it in `CIRCLE_API_KEY`.
-3. Make an entity secret with `openssl rand -hex 32` and register it in the **Configurator**. Put it in `CIRCLE_ENTITY_SECRET`.
-4. Save the recovery file Circle gives you somewhere safe and outside the repo.
+3. Make an entity secret with `openssl rand -hex 32` and put it in `CIRCLE_ENTITY_SECRET`.
+4. Register it once with `npm run circle:register`. The recovery file is saved to `data/keys/`, which is gitignored. Keep a copy somewhere safe. If Circle says the secret is already set, nothing more is needed.
 5. Start the BFF. It creates the wallet set and wallet on first use. Fund that wallet at [faucet.circle.com](https://faucet.circle.com) on Base Sepolia.
 
 > [!NOTE]

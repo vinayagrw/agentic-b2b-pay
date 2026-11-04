@@ -55,6 +55,8 @@ function make(kind: "card" | "ach"): RailAdapter {
           payment_method_options: { us_bank_account: { verification_method: "microdeposits" } },
           mandate_data: { customer_acceptance: { type: "online", online: { ip_address: "127.0.0.1", user_agent: "agentic-b2b-pay" } } },
         }, { idempotencyKey: `${i.idempotencyKey}-ach` });
+        // An idempotent replay returns the cached create response, so read the live status before verifying.
+        if (pi.status === "requires_action") pi = await s.paymentIntents.retrieve(pi.id);
         if (pi.status === "requires_action" && pi.next_action?.type === "verify_with_microdeposits") pi = await s.paymentIntents.verifyMicrodeposits(pi.id, { descriptor_code: "SM11AA" });
       }
       return { providerRef: pi.id, status: mapPi(pi.status), dashboardUrl: dash(i.env, pi.id), detail: `Stripe status ${pi.status}` };

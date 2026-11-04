@@ -11,10 +11,12 @@
     "e2e:live": "LLM_MODE=live tsx scripts/e2e.ts",
     "e2e:mock": "LLM_MODE=mock tsx scripts/e2e.ts",
     "oidc:check": "tsx scripts/oidc-live-check.ts",
-    "sdn:fetch": "tsx scripts/fetch-sdn.ts"
+    "sdn:fetch": "tsx scripts/fetch-sdn.ts",
+    "circle:register": "tsx scripts/circle-register.ts"
   },
   "dependencies": {
     "@b2b/shared": "*",
+    "@circle-fin/developer-controlled-wallets": "^10.8.1",
     "@fastify/cookie": "^11.1.5",
     "@fastify/cors": "^10.0.0",
     "better-sqlite3": "^13.0.3",

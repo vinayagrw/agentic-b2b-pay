@@ -12,7 +12,8 @@
     "typecheck": "npm run typecheck --workspace bff && npm run typecheck --workspace web",
     "e2e:live": "npm run e2e:live --workspace bff",
     "e2e:mock": "npm run e2e:mock --workspace bff",
-    "build": "npm run build --workspace web"
+    "build": "npm run build --workspace web",
+    "circle:register": "npm run circle:register --workspace bff"
   },
   "devDependencies": { "concurrently": "^9.1.0" },
   "engines": { "node": ">=20" }

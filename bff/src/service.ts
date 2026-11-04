@@ -274,7 +274,8 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
   intent.rail = rail; intent.env = env;
   mark(intent, "submitted", "platform", `Sent to ${rail} (${env})`); save();
   try {
-    const r = await adapter(rail).send({ intentId: intent.id, amount: inv.amount, currency: "USD", idempotencyKey, env, beneficiary: { name: so.legalName, wallet: sup.walletAddress, bankRef: sup.bankDetailsRef }, memo: `Invoice ${inv.number}` });
+    // Ids restart after a reset, so the provider key also carries the intent creation time. Retries of one intent keep it.
+    const r = await adapter(rail).send({ intentId: intent.id, amount: inv.amount, currency: "USD", idempotencyKey: `${idempotencyKey}:${intent.createdAt}`, env, beneficiary: { name: so.legalName, wallet: sup.walletAddress, bankRef: sup.bankDetailsRef }, memo: `Invoice ${inv.number}` });
     intent.providerRef = r.providerRef; intent.explorerUrl = r.explorerUrl; intent.dashboardUrl = r.dashboardUrl;
     mark(intent, "pending", "adapter", r.detail ?? `Accepted by ${rail}`);
     ev("payment", intent.id, "rail.submitted", { rail, env, providerRef: r.providerRef, providerStatus: r.status });
