@@ -16,6 +16,7 @@ const O = { OperatorHome: lz(operator, (m) => m.OperatorHome), Tenants: lz(opera
 const IAM = { IdentityPage: lz(iam, (m) => m.IdentityPage), RolesPage: lz(iam, (m) => m.RolesPage), SessionsPage: lz(iam, (m) => m.SessionsPage) };
 const FlowPage = lz(tx, (m) => m.FlowPage); const TransactionsPage = lz(tx, (m) => m.TransactionsPage);
 const EntityLedgerPage = lz(() => import("./pages/entities"), (m) => m.EntityLedgerPage);
+const SupplierPortal = lz(() => import("./pages/sparky"), (m) => m.SupplierPortal);
 const RiskInbox = lz(() => import("./pages/risk"), (m) => m.RiskInboxPage);
 export const PageSkeleton = () => <div className="flex flex-col gap-4" aria-busy="true" aria-label="Loading page"><Skeleton className="h-7 w-48" /><div className="rounded-xl border border-border bg-surface"><SkeletonTable rows={6} cols={5} /></div></div>;
 const S = (el: React.ReactNode) => <Suspense fallback={<PageSkeleton />}>{el}</Suspense>;
@@ -35,6 +36,7 @@ export function App() {
     <Route path="/" element={<Root />} />
     <Route path="/login" element={<Login />} />
     <Route path="/onboard/:token" element={<Onboard />} />
+    <Route path="/supplier/:token" element={<Suspense fallback={<PageSkeleton />}><SupplierPortal /></Suspense>} />
     <Route path="/operator" element={<Gate kind="operator" />}>
       <Route index element={S(<O.OperatorHome />)} /><Route path="tenants" element={S(<O.Tenants />)} /><Route path="payments" element={S(<O.OperatorPayments />)} /><Route path="payments/:id" element={S(<FlowPage />)} /><Route path="transactions" element={S(<TransactionsPage operator />)} />
       <Route path="risk" element={S(<RiskInbox />)} /><Route path="compliance" element={S(<O.Compliance />)} /><Route path="treasury" element={S(<O.Treasury />)} /><Route path="reconciliation" element={S(<O.Recon />)} />

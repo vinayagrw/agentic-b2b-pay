@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS snap_drafts (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS mcp_tokens (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, label TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL UNIQUE, tools TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, revoked_at TEXT, last_used_at TEXT, calls INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS supplier_portal_tokens (hash TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, supplier_id TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS payment_schedules (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tenant_offers (tenant_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, updated_by TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS copilot_outcomes (id TEXT PRIMARY KEY, answer_id TEXT NOT NULL, user_id TEXT NOT NULL, kind TEXT NOT NULL, ok INTEGER NOT NULL, answered_at TEXT NOT NULL, at TEXT NOT NULL);

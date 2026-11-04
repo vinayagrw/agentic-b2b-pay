@@ -5,7 +5,7 @@ export type LlmResult = { text: string | null; mode: "live" | "mock"; error?: st
 export const llmMode = () => (process.env.LLM_MODE === "live" ? "live" : "mock");
 
 /** Spawns the local claude CLI: claude -p <prompt> --output-format json, parses .result. Null text means use fallback. */
-export function callClaude(prompt: string, timeoutMs = 60_000): Promise<LlmResult> {
+export function callClaude(prompt: string, timeoutMs = 60_000, extraArgs: string[] = []): Promise<LlmResult> {
   const t0 = Date.now();
   if (llmMode() !== "live") return Promise.resolve({ text: null, mode: "mock", ms: 0 });
   return new Promise((resolve) => {
@@ -13,7 +13,7 @@ export function callClaude(prompt: string, timeoutMs = 60_000): Promise<LlmResul
     const finish = (r: Omit<LlmResult, "ms" | "mode">) => { if (done) return; done = true; resolve({ ...r, mode: "live", ms: Date.now() - t0 }); };
     let child;
     try {
-      child = spawn(process.env.CLAUDE_BIN ?? "claude", ["-p", prompt, "--output-format", "json", ...(process.env.CLAUDE_MODEL ? ["--model", process.env.CLAUDE_MODEL] : [])], { cwd: os.tmpdir(), stdio: ["ignore", "pipe", "pipe"] });
+      child = spawn(process.env.CLAUDE_BIN ?? "claude", ["-p", prompt, "--output-format", "json", ...extraArgs, ...(process.env.CLAUDE_MODEL ? ["--model", process.env.CLAUDE_MODEL] : [])], { cwd: os.tmpdir(), stdio: ["ignore", "pipe", "pipe"] });
     } catch (e) { return finish({ text: null, error: String(e) }); }
     const timer = setTimeout(() => { child.kill("SIGKILL"); finish({ text: null, error: "timeout" }); }, timeoutMs);
     child.stdout.on("data", (d) => (out += d));

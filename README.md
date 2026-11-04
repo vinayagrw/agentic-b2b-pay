@@ -382,6 +382,38 @@ A chat panel in the client workspace and the operator console. Open it with the 
 - Prompt injection. Supplier names, invoice memos and other record text go to the model inside a data block marked as untrusted. Proposals never come from record text or model output, so injected text cannot create an action.
 - Modes. With `LLM_MODE=mock` the plan and answer are deterministic rules, so tests need no model. With `LLM_MODE=live` the claude CLI adapter picks tools and writes the answer, and the panel falls back to the rules answer if the model fails. The full reply arrives from the CLI at once and is then streamed word by word.
 
+### Copilot plus
+
+Ideas taken from retail assistants such as Walmart Sparky, rebuilt for B2B payments. Code in `bff/src/sparky.ts`, `bff/src/mcp.ts` and `web/src/pages/sparky.tsx`. Tests in `bff/test/copilot-sparky.test.ts`.
+
+- Snap to draft. The camera button in the panel uploads a PNG, JPEG, WEBP or PDF of an invoice or remittance, up to 3 MB. The server checks the declared type, the real file signature and the size. In live mode the claude CLI reads the file and returns supplier, amount, currency, date and lines through a strict schema with no payee fields. In mock mode a deterministic fixture parse uses the tenant's own open order. The result is a draft (`snap_drafts`), never a payment. Send to invoices creates a normal invoice that is three way matched, and paying it still needs the normal approvals. A remittance draft is review only. API `POST /copilot/snap`, `POST /copilot/snap/:id/submit`.
+- Voice questions. The mic button uses the browser Web Speech API and is hidden when the browser has none. The words land in the box so you read them before sending. Voice questions are read-only: the server drops every proposal for them.
+- Smart alternatives. When the rail a payment used is down, degraded or not ready, or the payment failed or was blocked, the copilot proposes another healthy rail the supplier accepts, with the reason. When the payee is on hold, or no rail fits, it proposes a later date. Both are maker checker changes (`payment.reroute`, `payment.schedule`) that a second client admin approves. No money moves.
+- Recurring runs. Three or more payments to one supplier within 10 percent of the median amount count as recurring (`recurringPayments` tool, `GET /copilot/recurring`). Ask "Which payments are recurring? Schedule them" for a schedule proposal. It is saved as a draft change, and only after a second client admin approves does it become an active schedule. A run (`POST /copilot/schedules/:id/run`) only raises a purchase order through `createPo`, so policy, approval, match and payment all run as normal.
+- External agent access (MCP). An MCP server built on the official `@modelcontextprotocol/sdk` exposes the read-only client copilot tools, never write tools and never operator tools. Create a token on the Developers page (MCP server tokens): pick the tools it may call and an expiry of 1 to 90 days. The token shows once, only its hash is stored, and it can be revoked. Each call is checked against the token scope and tenant, limited to `MCP_RATE_MAX` calls per minute per token (default 30), and written to the evidence chain as `mcp.tool_call`. The token is not a REST credential.
+- Supplier agent. Portal link on a supplier row gives a 30 day link to `/supplier/:token`. The page and its agent see only that supplier's own invoices, payments and onboarding status, nothing about the buyer or other suppliers. Read-only, and questions outside that scope are refused.
+- Bank ops agent. The operator home shows queues (orders waiting, maker checker changes, open risk reviews, recon exceptions, SLA breaches), risk escalations and tasks (`GET /ops/agent-view`). Copilot tools `opsQueues` and `riskEscalations` are operator only.
+- Bank offers. Answers can carry an FX forward or a credit line card labelled Offer, only when the tenant's own data triggers it: open foreign currency payables of 1,000 or more, or a cash forecast week below zero. Offers are off for every tenant until an operator switches them on in Bank offers on the operator home (`POST /ops/offers/:tenantId`). An offer is never a proposal and never acts. Each one shown is written to the evidence chain.
+- Adoption metrics. The operator home shows questions, accepted proposals, thumbs up ratio, median time from answer to confirmed approval and straight through rate (`GET /ops/copilot-metrics`). The panel reports each confirmed proposal through `POST /copilot/outcome`.
+
+#### Connect the MCP server
+
+HTTP (streamable HTTP, stateless): `POST http://127.0.0.1:8790/mcp` with `Authorization: Bearer mcp_test_...`. Through the web dev server the same path is `/api/mcp`.
+
+Claude Code:
+
+```bash
+claude mcp add --transport http b2bpay http://127.0.0.1:8790/mcp --header "Authorization: Bearer mcp_test_..."
+```
+
+Claude Desktop (stdio, add to `claude_desktop_config.json`):
+
+```json
+{ "mcpServers": { "b2bpay": { "command": "npx", "args": ["tsx", "/path/to/agentic-b2b-pay/bff/scripts/mcp-stdio.ts"], "env": { "MCP_TOKEN": "mcp_test_..." } } } }
+```
+
+ChatGPT (developer mode connectors) and claude.ai custom connectors need a public HTTPS URL. Put the BFF behind a tunnel or reverse proxy, add a connector with the URL ending in `/mcp`, and send the token as the bearer header. Use a short expiry and revoke the token when you are done.
+
 ## Safety
 
 > [!IMPORTANT]
@@ -396,7 +428,7 @@ A chat panel in the client workspace and the operator console. Open it with the 
 ## Testing
 
 ```bash
-make test          # vitest with LLM_MODE=mock, 98 passed and 4 skipped
+make test          # vitest with LLM_MODE=mock, bff 197 passed and 4 skipped, web 24 passed
 make e2e           # full flow once with the real claude CLI
 cd bff && SANDBOX_TESTS=1 npx vitest run sandbox   # contract tests against real sandboxes
 ```

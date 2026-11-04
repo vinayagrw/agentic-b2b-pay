@@ -3,12 +3,13 @@ import type { SSEMessage } from "./stream";
 export type Source = { tool: string; ids: string[]; links: { id: string; href: string }[] };
 export type Proposal = { id: string; kind: string; label: string; method: "POST"; path: string; body: Record<string, unknown>; target: string; allowed: boolean; reason: string; detail?: string };
 export type Chart = { kind: "bar" | "donut" | "table"; title: string; series: { label: string; value: number }[]; columns: string[]; rows: (string | number)[][] };
-export type Answer = { id: string; threadId: string | null; question: string; answer: string; sources: Source[]; proposals: Proposal[]; chart: Chart | null; refused: string | null; mode: string; fallback?: string; vote?: "up" | "down" | null };
+export type Offer = { id: string; kind: string; label: "Offer"; title: string; body: string; trigger: string };
+export type Answer = { id: string; threadId: string | null; question: string; answer: string; sources: Source[]; proposals: Proposal[]; offers?: Offer[]; chart: Chart | null; refused: string | null; mode: string; fallback?: string; vote?: "up" | "down" | null };
 export type Thread = { id: string; title: string; createdAt: string; updatedAt: string; answers?: Answer[] };
 export type Folded = { text: string; tools: { tool: string; rows: number; error: string | null }[]; step: string; done: Answer | null; failed: string | null };
 
 export const TOOL_NAMES: Record<string, string> = { spendBySupplier: "Spend by supplier", paymentsByStatus: "Payments by status", pendingApprovals: "Pending approvals", entityBalances: "Entity balances", fxExposure: "FX exposure", openInvoices: "Open invoices", whyPayment: "Why this payment", riskInbox: "Risk inbox",
-  mandates: "Mandates", fxLocksAndRates: "FX locks and rates", railHealth: "Rail health", cashForecast: "Cash forecast", supplierProfile: "Supplier profile", auditSearch: "Audit search", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", dailyDigest: "What changed today", tenants: "Tenants", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA breaches" };
+  mandates: "Mandates", fxLocksAndRates: "FX locks and rates", railHealth: "Rail health", cashForecast: "Cash forecast", supplierProfile: "Supplier profile", auditSearch: "Audit search", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", dailyDigest: "What changed today", opsQueues: "Ops queues", riskEscalations: "Risk escalations", recurringPayments: "Recurring payments", tenants: "Tenants", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA breaches" };
 
 /** The record a page shows, taken from the last path segment, for example pi-12 from /app/payments/pi-12. */
 export function recordFromPath(path: string): string | undefined {
@@ -27,4 +28,16 @@ export function foldStream(ms: SSEMessage<any>[]): Folded {
     else if (m.event === "failed") { f.failed = String(m.data?.error ?? "failed"); f.step = "done"; }
   }
   return f;
+}
+
+/** Browser speech recognition, or null when the browser has none. */
+export const speechCtor = (): any => (typeof window === "undefined" ? null : (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition ?? null);
+export const SNAP_TYPES = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
+export const SNAP_MAX = 3 * 1024 * 1024;
+/** Client side check before upload. The server checks again, including the file signature. */
+export function snapProblem(f: { type: string; size: number }) {
+  if (!SNAP_TYPES.includes(f.type)) return "Upload a PNG, JPEG, WEBP image or a PDF";
+  if (!f.size) return "The file is empty";
+  if (f.size > SNAP_MAX) return "The file is over 3 MB";
+  return "";
 }

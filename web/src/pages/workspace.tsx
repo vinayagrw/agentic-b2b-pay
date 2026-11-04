@@ -213,7 +213,9 @@ function SupplierRow({ s, me }: { s: any; me: any }) {
     <div className="flex flex-wrap items-center gap-3"><div className="min-w-0 flex-1"><div className="font-medium">{s.name}</div><Muted>{s.id} . {s.acceptedRails.length ? s.acceptedRails.map((r: Rail) => RAIL_LABEL[r]).join(", ") : "No payout method yet"}</Muted></div>
       <Badge v={s.status} tone={s.status === "verified" ? "ok" : s.status === "rejected" ? "bad" : s.status === "submitted" ? "primary" : "warn"} />
       {s.pendingChanges.length > 0 && <Badge v={`${s.pendingChanges.length} payee change waiting`} tone="warn" />}
+      {["client_admin", "ap_clerk"].includes(role) && <Button size="sm" variant="ghost" disabled={busy} onClick={async () => { const r = await run(() => api(`/workspace/suppliers/${s.id}/portal-link`, {})); if (r) setLink(`${location.origin}${r.link}`); }}>Portal link</Button>}
       <Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>{open ? "Close" : "Details"}</Button></div>
+    {link && !open && <div className="mt-2"><Reveal secret={link} what="supplier portal link" onDone={() => setLink("")} /></div>}
     {open && <div className="mt-3 flex flex-col gap-3 rounded-lg bg-subtle p-3">
       {o ? <Table>
         <tr><td className="text-muted">Invited</td><td>{o.email} on {o.invitedAt.slice(0, 10)}</td></tr>

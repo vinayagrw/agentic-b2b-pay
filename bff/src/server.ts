@@ -34,6 +34,9 @@ import * as Risk from "./risk.js";
 import * as TB from "./tables.js";
 import * as LV from "./live.js";
 import rateLimit from "@fastify/rate-limit";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import * as SP from "./sparky.js";
+import { buildMcpServer } from "./mcp.js";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 
@@ -116,7 +119,7 @@ export async function buildApp() {
   });
   const b = (req: any) => (req.body ?? {}) as any;
   // Every route needs a signed-in user unless listed as public. Each route maps to one permission, checked here by requirePermission.
-  const PUBLIC = new Set(["/health", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle"]);
+  const PUBLIC = new Set(["/health", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle", "/mcp"]);
   const ROUTE_PERMS: Record<string, I.Permission> = {
     "POST /reset": "platform.reset", "POST /kill-switch": "agents.manage", "POST /agents": "agents.manage", "POST /agents/:id/verify": "agents.manage", "POST /agents/:id/suspend": "agents.manage", "POST /agents/:id/resume": "agents.manage",
     "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /refunds": "payments.refund",
@@ -133,12 +136,13 @@ export async function buildApp() {
     "GET /cases/:id/evidence-pack": "audit.read", "GET /payments/:id/why/export.json": "audit.read", "GET /payments/:id/why/export.md": "audit.read",
     "GET /identity/configs": "identity.manage", "POST /identity/configs": "identity.manage", "GET /iam/users": "roles.manage", "GET /iam/roles": "roles.manage", "POST /iam/roles": "roles.manage", "PUT /iam/roles/:id": "roles.manage", "DELETE /iam/roles/:id": "roles.manage", "POST /iam/users/:id/role": "roles.manage",
     "POST /sessions/:id/revoke": "workspace.read", "POST /risk/:paymentId/decide": "risk.review", "POST /views": "workspace.read", "DELETE /views/:id": "workspace.read", "GET /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens/:id/revoke": "developers.keys",
+    "POST /copilot/outcome": "workspace.read", "POST /workspace/suppliers/:id/portal-link": "suppliers.invite", "GET /ops/agent-view": "treasury.read", "GET /ops/copilot-metrics": "treasury.read", "GET /ops/offers": "treasury.read", "POST /ops/offers/:tenantId": "settings.live_toggle",
   };
   /** The permission a route needs. Developer routes need developers.keys, other reads need workspace.read, other writes need flow.operate. */
   const permFor = (method: string, url: string): I.Permission => ROUTE_PERMS[`${method} ${url}`] ?? (url.startsWith("/dev/") ? "developers.keys" : method === "GET" ? "workspace.read" : "flow.operate");
   app.addHook("preHandler", async (req: any) => {
     const url = req.routeOptions?.url as string | undefined;
-    if (!url || PUBLIC.has(url) || url.startsWith("/uploads/") || url.startsWith("/onboard/") || url.startsWith("/scim/") || url.startsWith("/docs") || req.method === "HEAD" || req.method === "OPTIONS") return;
+    if (!url || PUBLIC.has(url) || url.startsWith("/uploads/") || url.startsWith("/onboard/") || url.startsWith("/supplier-portal/") || url.startsWith("/scim/") || url.startsWith("/docs") || req.method === "HEAD" || req.method === "OPTIONS") return;
     can(req, permFor(req.method, url));
   });
 
@@ -373,7 +377,7 @@ export async function buildApp() {
   app.get("/ops/revenue", async (req) => { who(req); return A.revenue(); });
   app.get("/payments/:id/mandates", async (req: any) => { const i = scoped(scopeOf(req)).intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); return S.mandatesView(i.id); });
   // Copilot. Read-only tools scoped like every other read view. Proposals are returned, never executed.
-  const cpCtx = (req: any): CP.Ctx => { const u = who(req); const x = { ...(req.query ?? {}), ...b(req) }; return { user: u, scope: scopeOf(req), prefix: P.isOperator(u) ? "/operator" : "/app", route: x.route ? String(x.route).slice(0, 200) : undefined, recordId: x.recordId ? String(x.recordId).slice(0, 60) : undefined }; };
+  const cpCtx = (req: any): CP.Ctx => { const u = who(req); const x = { ...(req.query ?? {}), ...b(req) }; return { user: u, scope: scopeOf(req), prefix: P.isOperator(u) ? "/operator" : "/app", route: x.route ? String(x.route).slice(0, 200) : undefined, recordId: x.recordId ? String(x.recordId).slice(0, 60) : undefined, voice: x.voice === true || x.voice === "1" }; };
   app.post("/copilot/answer", async (req) => CP.ask(cpCtx(req), String(b(req).question ?? ""), undefined, { threadId: b(req).threadId ?? null }));
   app.post("/copilot/ask", async (req) => CP.enqueue(cpCtx(req), String(b(req).question ?? ""), b(req).threadId ? String(b(req).threadId) : null));
   app.get("/copilot/suggest", async (req: any) => ({ questions: CP.suggestFor(cpCtx(req), String(req.query?.route ?? ""), String(req.query?.recordId ?? "")) }));
@@ -434,6 +438,32 @@ export async function buildApp() {
   app.post("/dev/webhooks/:id/test", async (req: any) => { const { t } = ctx(req); if (!D.listEndpoints(t).some((e: any) => e.id === req.params.id)) throw new S.HttpError(404, "endpoint not found"); const id = D.recordEvent(t, "ping", { message: "Test event from the developer page" }, req.params.id); await D.deliverDue(); return { eventId: id }; });
   app.post("/dev/deliveries/:id/retry", async (req: any) => { const { t } = ctx(req); D.retryDelivery(t, req.params.id); await D.deliverDue(); return { ok: true }; });
   app.get("/dev/events", async (req) => D.eventLog(ctx(req).t));
+  // Copilot plus: snap to draft, schedules, MCP tokens, supplier agent, bank ops agent, offers and metrics.
+  app.post("/copilot/snap", async (req) => { const { u, t } = ctx(req); return SP.snap(u, t, b(req)); });
+  app.get("/copilot/snap/:id", async (req: any) => SP.getSnap(ctx(req).t, req.params.id));
+  app.post("/copilot/snap/:id/submit", async (req: any) => { const { u, t } = ctx(req); return SP.submitSnap(u, t, req.params.id); });
+  app.get("/copilot/recurring", async (req) => ({ detected: SP.detectRecurring(scopeOf(req)), schedules: SP.listSchedules(scopeOf(req)) }));
+  app.post("/copilot/schedules/:id/run", async (req: any) => { const { u, t } = ctx(req); return SP.runSchedule(u, t, req.params.id, !!b(req).force); });
+  app.post("/copilot/outcome", async (req) => SP.recordOutcome(who(req), String(b(req).answerId ?? ""), String(b(req).kind ?? ""), !!b(req).ok));
+  app.get("/dev/mcp-tokens", async (req) => ({ tokens: SP.listMcpTokens(ctx(req).t), tools: SP.MCP_TOOLS() }));
+  app.post("/dev/mcp-tokens", async (req) => { const { u, t } = ctx(req); return SP.createMcpToken(u, t, b(req)); });
+  app.post("/dev/mcp-tokens/:id/revoke", async (req: any) => { const { u, t } = ctx(req); return SP.revokeMcpToken(u, t, req.params.id); });
+  app.post("/workspace/suppliers/:id/portal-link", async (req: any) => { const { u, t } = ctx(req); return SP.createPortalLink(u, t, req.params.id); });
+  app.get("/ops/agent-view", async (req) => { if (!P.isOperator(who(req))) throw new P.AuthError(403, "Operators only"); return SP.opsView(); });
+  app.get("/ops/copilot-metrics", async (req) => { if (!P.isOperator(who(req))) throw new P.AuthError(403, "Operators only"); return SP.adoptionMetrics(); });
+  app.get("/ops/offers", async (req) => { if (!P.isOperator(who(req))) throw new P.AuthError(403, "Operators only"); return SP.offerSettings(); });
+  app.post("/ops/offers/:tenantId", async (req: any) => SP.setOffers(who(req), req.params.tenantId, !!b(req).enabled));
+  app.get("/supplier-portal/:token", async (req: any) => ({ ...SP.supplierData(req.params.token), suggest: SP.SUPPLIER_SUGGEST }));
+  app.post("/supplier-portal/:token/ask", async (req: any) => SP.supplierAsk(req.params.token, String(b(req).question ?? "")));
+  // MCP over streamable HTTP, stateless. Bearer mcp_test_... token only. Session cookies and API keys do not work here.
+  app.all("/mcp", async (req: any, reply) => {
+    const a = SP.mcpAuth(bearerOf(req) ?? "");
+    if ("error" in a) return reply.status(401).send({ jsonrpc: "2.0", error: { code: -32001, message: a.error }, id: null });
+    if (req.method !== "POST") return reply.status(405).send({ jsonrpc: "2.0", error: { code: -32000, message: "Use POST, this server is stateless" }, id: null });
+    const server = buildMcpServer(a.token, a.user); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    reply.hijack(); reply.raw.on("close", () => { transport.close(); server.close(); });
+    await server.connect(transport); await transport.handleRequest(req.raw, reply.raw, req.body);
+  });
   // Public supplier portal. The token in the path is the only credential.
   app.get("/onboard/:token", async (req: any) => W.onboardingView(req.params.token));
   app.post("/onboard/:token/kyb", async (req: any) => W.saveKyb(req.params.token, b(req)));

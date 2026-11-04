@@ -19,11 +19,12 @@ import * as T from "./tables.js";
 
 export type Source = { tool: string; ids: string[]; links: { id: string; href: string }[] };
 export type ToolResult = { tool: string; args: Record<string, string>; summary: string; rows: unknown[]; source: Source; error?: string };
-export type ProposalKind = "approve_po" | "reject_po" | "suspend_agent" | "resume_agent" | "supplier_hold" | "supplier_release" | "lock_fx" | "start_sweep" | "draft_policy";
+export type ProposalKind = "reroute_payment" | "schedule_payment" | "approve_po" | "reject_po" | "suspend_agent" | "resume_agent" | "supplier_hold" | "supplier_release" | "lock_fx" | "start_sweep" | "draft_policy";
 export type Proposal = { id: string; kind: ProposalKind; label: string; method: "POST"; path: string; body: Record<string, unknown>; target: string; allowed: boolean; reason: string; detail?: string };
 export type Chart = { kind: "bar" | "donut" | "table"; title: string; series: { label: string; value: number }[]; columns: string[]; rows: (string | number)[][] };
-export type CopilotAnswer = { id: string; threadId: string | null; question: string; answer: string; tools: ToolResult[]; sources: Source[]; proposals: Proposal[]; chart: Chart | null; refused: string | null; mode: "live" | "mock"; fallback?: string; at: string };
-export type Ctx = { user: P.User; scope: string | null; prefix: "/app" | "/operator"; route?: string; recordId?: string };
+export type Offer = { id: string; kind: "fx_forward" | "credit_line"; label: "Offer"; title: string; body: string; trigger: string };
+export type CopilotAnswer = { id: string; threadId: string | null; question: string; answer: string; tools: ToolResult[]; sources: Source[]; proposals: Proposal[]; offers?: Offer[]; chart: Chart | null; refused: string | null; mode: "live" | "mock"; fallback?: string; at: string };
+export type Ctx = { user: P.User; scope: string | null; prefix: "/app" | "/operator"; route?: string; recordId?: string; voice?: boolean };
 
 const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const ID = /^[a-z]{2,4}-[\w-]{1,40}$/;
@@ -204,7 +205,7 @@ export const TOOLS: Tool[] = [
 ];
 
 /** SLA: payments in flight over 24 hours, orders waiting for approval over 48 hours, open recon exceptions. */
-function slaRows() {
+export function slaRows() {
   const hrs = (x?: string | null) => (x ? Math.floor((Date.now() - Date.parse(x)) / 36e5) : 0);
   const out: { id: string; tenantId: string; kind: string; hours: number }[] = [];
   for (const i of db.intents) if (["submitted", "pending"].includes(i.status) && hrs(i.createdAt) >= 24) out.push({ id: i.id, tenantId: tenantOf(i), kind: "payment in flight", hours: hrs(i.createdAt) });
@@ -253,6 +254,9 @@ export function mockPlan(q: string, c: Partial<Ctx> = {}): { name: string; args:
   if (op && /kill|switch|paused agent/.test(s)) add("killSwitchState");
   if (op && /\bsla\b|breach|overdue|late|stuck/.test(s)) add("slaBreaches");
   if (/audit|evidence|history|who (changed|did|approved)/.test(s)) add("auditSearch", { ...(idIn(q, "(?:pi|po|sup|agt|inv|chg|rule)", c) ? { subjectId: idIn(q, "(?:pi|po|sup|agt|inv|chg|rule)", c)! } : {}) });
+  if (op && /queue|escalat|ops overview|tasks|bank ops/.test(s)) { add("opsQueues"); add("riskEscalations"); }
+  if (/recurring|repeat|schedule|subscription/.test(s)) add("recurringPayments");
+  if (/alternative|another rail|other rail|instead|later date|reroute/.test(s)) { add("railHealth"); if (pi) add("whyPayment", { paymentId: pi }); if (sup) add("supplierProfile", { supplierId: sup }); }
   if (/supplier|vendor|spend|spent|top/.test(s) && !plan.some((p) => p.name === "supplierProfile")) add("spendBySupplier");
   if (/approv|pending|waiting|queue/.test(s)) add("pendingApprovals");
   if (/invoice|memo|unpaid|owe/.test(s)) add("openInvoices");
@@ -335,7 +339,7 @@ export function proposalsFor(c: Ctx, q: string): Proposal[] {
 }
 
 const LABEL: Record<string, string> = { spendBySupplier: "Spend by supplier", paymentsByStatus: "Payments by status", pendingApprovals: "Waiting for approval", entityBalances: "Entity balances", fxExposure: "FX", openInvoices: "Open invoices", whyPayment: "Why", riskInbox: "Risk inbox",
-  mandates: "Mandates", fxLocksAndRates: "FX locks", railHealth: "Rail health", cashForecast: "Cash forecast", supplierProfile: "Supplier", auditSearch: "Evidence", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", dailyDigest: "Today", tenants: "Clients", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA" };
+  mandates: "Mandates", fxLocksAndRates: "FX locks", railHealth: "Rail health", cashForecast: "Cash forecast", supplierProfile: "Supplier", auditSearch: "Evidence", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", dailyDigest: "Today", opsQueues: "Ops queues", riskEscalations: "Risk escalations", recurringPayments: "Recurring payments", tenants: "Clients", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA" };
 const mockAnswer = (q: string, results: ToolResult[]) => {
   const base = results.map((r) => `${LABEL[r.tool] ?? r.tool}: ${r.summary}.`).join(" ");
   return /\bdraft\b.*\b(rule|policy)\b|\b(rule|policy)\b.*\bdraft\b/i.test(q) ? `Draft rule in plain words: ${parseRuleDraft(q).words} ${base}` : base;
@@ -384,9 +388,13 @@ function evidence(c: Ctx, a: CopilotAnswer) {
   const base = { actor: c.user.id, tenantId: c.scope, threadId: a.threadId };
   appendEvidence(db.evidence, "copilot", a.id, "copilot.question", { ...base, question: a.question, route: c.route ?? null, recordId: c.recordId ?? null, mode: a.mode, refused: a.refused });
   for (const t of a.tools) appendEvidence(db.evidence, "copilot", a.id, "copilot.tool", { ...base, tool: t.tool, args: t.args, rows: t.rows.length, error: t.error ?? null });
+  for (const o of a.offers ?? []) appendEvidence(db.evidence, "copilot", a.id, "copilot.offer", { ...base, kind: o.kind, trigger: o.trigger });
   for (const p of a.proposals) appendEvidence(db.evidence, "copilot", a.id, "copilot.proposal", { ...base, kind: p.kind, target: p.target, path: p.path, allowed: p.allowed });
   save();
 }
+
+/** Extra proposals and offers from other modules (alternatives, recurring runs, bank offers). Each gets the question, page and grounded results. */
+export const extras: ((c: Ctx, q: string, results: ToolResult[]) => { proposals?: Proposal[]; offers?: Offer[] })[] = [];
 
 export type Step = { event: "status" | "tool" | "token"; data: unknown };
 /** Answers one question. onStep gets progress for the SSE stream. */
@@ -408,6 +416,8 @@ export async function ask(c: Ctx, question: string, onStep: (s: Step) => void = 
   if (mode === "live" && !refused) { const a = await liveAnswer(q, results); if (a.text) answer = a.text; else fallback = [fallback, `answer: ${a.error}`].filter(Boolean).join(", "); }
   answer = cleanText(answer.replace(/\*\*|__|^#+\s*/gm, ""));
   const out: CopilotAnswer = { id: `ans-${crypto.randomUUID().slice(0, 12)}`, threadId, question: q, answer, tools: results, sources: grounded.map((r) => r.source), proposals: proposalsFor(c, q), chart: refused ? null : chartFor(results), refused, mode, fallback, at: new Date().toISOString() };
+  for (const x of extras) { const r = x(c, q, refused ? [] : grounded); out.proposals.push(...(r.proposals ?? [])); if (r.offers?.length) out.offers = [...(out.offers ?? []), ...r.offers]; }
+  out.proposals = c.voice ? [] : out.proposals.slice(0, 6);
   out.threadId = storeAnswer(c, out);
   evidence(c, out);
   return out;

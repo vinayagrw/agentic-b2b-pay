@@ -1,3 +1,4 @@
+import { McpTokens, OpsAgentPanel } from "./sparky";
 import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Activity, ArrowLeftRight, BadgeDollarSign, Bot, Copy, KeyRound, Scale, ShieldAlert, Webhook } from "lucide-react";
@@ -36,6 +37,7 @@ export function OperatorHome() {
       <Stat icon={Bot} label="Active agents" value={k.activeAgents} hint={k.killSwitch ? "Kill switch is on" : undefined} />
     </div>
     <HomeStrip />
+    <OpsAgentPanel />
     {st && <HomeMixCharts st={st} />}
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]"><MoneyFlowMap /><ActivityFeed prefix="/operator" /></div>
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -89,6 +91,7 @@ export function DevelopersPage() {
     </Card>
     <Card title="Event log" pad={false}>{events.data?.length ? <Table head={["Event", "Type", "When", "Deliveries"]}>{events.data.map((e) => <tr key={e.id}><td><Mono>{e.id}</Mono></td><td>{e.type}</td><td><Muted>{e.createdAt.slice(0, 19).replace("T", " ")}</Muted></td>
       <td>{e.deliveries.length ? e.deliveries.map((d: any) => <div key={d.id} className="flex flex-wrap items-center gap-1"><Badge v={d.status} tone={d.status === "failed" ? "bad" : d.status === "pending" ? "warn" : "ok"} /><Muted>{d.attempts} tries{d.lastStatus ? `, last HTTP ${d.lastStatus}` : ""}{d.lastError ? `, ${d.lastError}` : ""}{d.status === "pending" ? `, next ${d.nextAt.slice(11, 19)}` : ""}</Muted>{d.status === "failed" && <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(() => api(`/dev/deliveries/${d.id}/retry`, body({})))}>Retry</Button>}</div>) : <Muted>No endpoint subscribed</Muted>}</td></tr>)}</Table> : <EmptyState title="No events yet" body="Settled and failed payments, approved POs, verified suppliers and new cases all post events here." />}</Card>
+    {tenantId && <McpTokens tenantId={operator ? tenantId : undefined} />}
     <Card title="Agent gateway tools (MCP)" pad={false}><Table>{(tools.data?.tools ?? []).map((x) => <tr key={x.name}><td><Mono>{x.name}</Mono></td><td><Muted>{x.description}</Muted></td></tr>)}</Table></Card>
   </Section>;
 }
