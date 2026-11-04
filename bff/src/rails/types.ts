@@ -28,6 +28,9 @@ export interface RailAdapter {
   handleWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): Promise<RailWebhookEvent[]>;
   balance(env: RailEnv): Promise<RailBalance>;
   refund?(providerRef: string, amount: number, env: RailEnv): Promise<SendResult>;
+  /** Stablecoin to fiat off ramp. Adapters without one explain why in sweepUnsupported. */
+  sweep?(amount: number, env: RailEnv, idempotencyKey: string): Promise<SendResult>;
+  sweepUnsupported?: string;
 }
 
 export class RailError extends Error { constructor(public status: number, msg: string) { super(msg); } }

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { isUsdc, type ComplianceResult, type Rail } from "@b2b/shared";
-import { SANCTIONED_NAMES, SANCTIONED_WALLETS } from "./store.js";
+import { screenName, screenWallet, sdnStatus } from "./sdn.js";
 
 /** Large transfer marker. A Travel Rule record is built for every stablecoin send regardless of amount. */
 export const TRAVEL_RULE_THRESHOLD_USD = 3000;
@@ -17,13 +17,14 @@ export function screen(i: ComplianceInput): ComplianceResult {
   const ref = (k: string) => `sim-${k}-${crypto.createHash("sha256").update(k + i.beneficiary.orgId + i.amount).digest("hex").slice(0, 10)}`;
   const checks: ComplianceResult["checks"] = [];
   checks.push({ kind: "kyb", result: i.beneficiary.kybVerified ? "pass" : "fail", detail: i.beneficiary.kybVerified ? "Beneficiary KYB verified" : "Beneficiary KYB not verified", providerRef: ref("kyb") });
-  const nameHit = SANCTIONED_NAMES.some((n) => n.toLowerCase() === i.beneficiary.name.toLowerCase());
-  checks.push({ kind: "sanctions", result: nameHit ? "fail" : "pass", detail: nameHit ? "Name match on simulated OFAC SDN list" : "No name match on sanctions lists", providerRef: ref("sanctions") });
+  const list = sdnStatus();
+  const nameHits = screenName(i.beneficiary.name); const hits: NonNullable<ComplianceResult["hits"]> = [...nameHits];
+  checks.push({ kind: "sanctions", result: nameHits.length ? "fail" : "pass", detail: nameHits.length ? `Name match on ${nameHits.map((h) => `${h.source} ${h.sdnName}`).join(", ")}` : `No name match on ${list.loaded ? `the OFAC SDN list (${list.entries} entries)` : "the demo watchlist. OFAC list not downloaded"}`, providerRef: ref("sanctions") });
   let travelRule: Record<string, unknown> | undefined;
   if (isUsdc(i.rail)) {
     const w = (i.beneficiary.wallet ?? "").toLowerCase();
-    const ofacHit = SANCTIONED_WALLETS.some((s) => s.toLowerCase() === w);
-    checks.push({ kind: "ofac_wallet", result: !w || ofacHit ? "fail" : "pass", detail: !w ? "No wallet on file" : ofacHit ? `Wallet ${i.beneficiary.wallet} is on the simulated OFAC SDN digital currency address list` : "Wallet not on OFAC list", providerRef: ref("ofac") });
+    const wHits = screenWallet(w); hits.push(...wHits); const ofacHit = wHits.length > 0;
+    checks.push({ kind: "ofac_wallet", result: !w || ofacHit ? "fail" : "pass", detail: !w ? "No wallet on file" : ofacHit ? `Wallet ${i.beneficiary.wallet} is on the ${wHits.map((h) => h.source).join(" and ")} digital currency address list` : `Wallet not on ${list.loaded ? `the OFAC list (${list.addresses} addresses)` : "the demo watchlist"}`, providerRef: ref("ofac") });
     const kytHit = HIGH_RISK_KYT.some((s) => s.toLowerCase() === w);
     const kytScore = ofacHit || kytHit ? 92 : 8;
     checks.push({ kind: "kyt", result: kytScore >= 75 ? "fail" : "pass", detail: `KYT risk score ${kytScore} of 100 (simulated chain analytics)`, providerRef: ref("kyt") });
@@ -36,5 +37,5 @@ export function screen(i: ComplianceInput): ComplianceResult {
     checks.push({ kind: "travel_rule", result: "pass", detail: "Travel Rule record built for this stablecoin transfer", providerRef: ref("tr") });
   }
   const outcome = checks.some((c) => c.result === "fail") ? "blocked" : "clear";
-  return { outcome, checks, travelRule };
+  return { outcome, checks, travelRule, hits };
 }

@@ -9,7 +9,8 @@
     "test": "LLM_MODE=mock DB_PERSIST=0 RAIL_POLL_MS=0 vitest run",
     "typecheck": "tsc -p . --noEmit",
     "e2e:live": "LLM_MODE=live tsx scripts/e2e.ts",
-    "e2e:mock": "LLM_MODE=mock tsx scripts/e2e.ts"
+    "e2e:mock": "LLM_MODE=mock tsx scripts/e2e.ts",
+    "sdn:fetch": "tsx scripts/fetch-sdn.ts"
   },
   "dependencies": {
     "@b2b/shared": "*",

@@ -31,6 +31,7 @@ function make(kind: "card" | "ach"): RailAdapter {
   const id = kind === "card" ? "stripe_card" : "stripe_ach";
   return {
     id,
+    sweepUnsupported: "Stripe balances are already in USD. Payouts to the bank account run on the Stripe payout schedule.",
     readiness: (env) => {
       const k = keyFor(env);
       if (!k) return { configured: false, reason: env === "live" ? "STRIPE_LIVE_SECRET_KEY missing" : "STRIPE_SECRET_KEY missing" };

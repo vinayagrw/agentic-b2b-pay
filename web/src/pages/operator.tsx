@@ -7,6 +7,7 @@ import { usd } from "../lib/utils";
 import { Badge, Button, Card, DataTable, EmptyState, ErrorNote, Input, Label, Mono, Muted, PageHeader, Select, Stat, Table } from "../components/ui";
 import { Logo, Section } from "../components/Shell";
 import * as F from "./flows";
+import * as Ops from "./ops";
 import { PaymentsTable, RailStatus, type RailRow } from "./payments";
 
 export function OperatorHome() {
@@ -43,9 +44,9 @@ export function Tenants() {
   return <Section><PageHeader title="Tenants" sub="Banks you white label for and their business clients" /><Card pad={false}><DataTable data={data ?? []} columns={cols} /></Card></Section>;
 }
 
-export function Compliance() { const { data: st, error } = useAppState(); return <Section><PageHeader title="Compliance" sub="Screening outcomes, alerts and the audit chain" />{st ? <><F.Alerts st={st} /><Card><EmptyState title="No compliance cases yet" body="Sanctions hits open a case with a drafted SAR for review. Case management ships in build step 5." /></Card><F.EvidenceLog /></> : <F.Loading error={error as Error} />}</Section>; }
-export function Treasury() { return <Section><PageHeader title="Treasury" sub="Ledger positions. Live balances per rail arrive with the rail adapters." /><F.Ledger /></Section>; }
-export function Recon() { return <Section><PageHeader title="Reconciliation" sub="Settlements matched to ledger journals, with camt.053 export" /><F.Reconciliation /></Section>; }
+export const Compliance = Ops.CompliancePage;
+export const Treasury = Ops.TreasuryPage;
+export const Recon = Ops.ReconPage;
 export function Revenue() { return <Section><PageHeader title="Revenue" /><Card><EmptyState icon={BadgeDollarSign} title="No revenue analytics yet" body="Bank fee and revenue analytics ship in build step 6." /></Card></Section>; }
 export function Developers() { return <Section><PageHeader title="Developers" sub="Agent gateway tools and, soon, API keys and webhooks" /><F.McpTools /><Card><EmptyState icon={Code2} title="No API keys or webhook endpoints" body="API keys, webhook endpoints and event logs ship in build step 6." /></Card></Section>; }
 

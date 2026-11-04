@@ -27,6 +27,7 @@ const pub = (env: RailEnv) => { const n = net(env); return createPublicClient({ 
 const txUrl = (env: RailEnv, h: string) => `${net(env).scan}/tx/${h}`;
 
 export const onchainUsdc: RailAdapter = {
+  sweepUnsupported: "This is a self custody wallet on Base. It cannot pay out fiat. Send the USDC to a Circle Mint or exchange deposit address to off ramp.",
   id: "onchain_usdc",
   readiness: (env) => {
     if (env === "live" && !config.ONCHAIN_LIVE_PRIVATE_KEY) return { configured: false, reason: "ONCHAIN_LIVE_PRIVATE_KEY missing" };

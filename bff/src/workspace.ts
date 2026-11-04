@@ -221,6 +221,7 @@ export async function saveWallet(token: string, input: { address: string; signat
   ev("supplier", s.id, "onboarding.wallet_proven", { address: s.onboarding.wallet.address }); save(); return onboardingView(token);
 }
 /** Name screening on submit. The compliance module fills this in. */
+export const submitHooks: ((supplierId: string) => void)[] = [];
 let supplierScreen: (name: string, wallet: string | null) => { hits: any[] } = () => ({ hits: [] });
 export function setSupplierScreen(fn: typeof supplierScreen) { supplierScreen = fn; }
 export function submitOnboarding(token: string) {
@@ -229,7 +230,9 @@ export function submitOnboarding(token: string) {
   if (!s.onboarding.bank && !s.onboarding.wallet) throw err(422, "Add a bank account or prove a wallet so you can be paid");
   s.onboarding.screening = { at: now(), ...supplierScreen(s.onboarding.kyb.legalName, s.onboarding.wallet?.address ?? null) };
   s.onboarding.status = "submitted"; s.onboarding.submittedAt = now();
-  ev("supplier", s.id, "onboarding.submitted", { screeningHits: s.onboarding.screening.hits.length }); save(); return onboardingView(token);
+  ev("supplier", s.id, "onboarding.submitted", { screeningHits: s.onboarding.screening.hits.length });
+  for (const h of submitHooks) h(s.id);
+  save(); return onboardingView(token);
 }
 export function reviewSupplier(user: P.User, tenantId: string, supplierId: string, verify: boolean, note = "") {
   const s = inTenant(db.suppliers.find((x) => x.id === supplierId), tenantId, "supplier");

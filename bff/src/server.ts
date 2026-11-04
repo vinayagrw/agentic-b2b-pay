@@ -17,6 +17,7 @@ import { onchainAddress } from "./rails/onchain.js";
 import { llmMode } from "./llm.js";
 import { fileURLToPath } from "node:url";
 import * as W from "./workspace.js";
+import * as O from "./ops.js";
 import { scoped } from "./modules/store.js";
 
 /** MCP style tool registry. Same names as REST operations. */
@@ -187,7 +188,7 @@ export async function buildApp() {
   app.post("/erp/vendor-master/changes/:id/callback", async (req: any) => S.callbackPayeeChange(req.params.id, !!b(req).confirmed));
   app.get("/settlements/:id", async (req: any) => db.settlements.find((s) => s.id === req.params.id) ?? { error: "not found" });
   app.get("/ledger/journals", async () => S.ledgerView());
-  app.get("/statements/camt053", async (_req, reply) => reply.type("application/xml").send(S.camt053()));
+  app.get("/statements/camt053", async (req: any, reply) => { const t = req.query?.tenantId ? clientOf(req, guard(req, P.ROLES)) : scopeOf(req); return reply.type("application/xml").header("content-disposition", `attachment; filename="camt053-${t ?? "all"}.xml"`).send(S.camt053(undefined, t)); });
   app.get("/evidence", async () => S.evidenceView());
   app.get("/evidence/:subjectId", async (req: any) => S.evidenceView(req.params.subjectId));
   app.post("/scenario/run", async (req) => { const { t } = ctx(req, PAYERS); return S.runFlow(String(b(req).need ?? "Need 2000 sealed 6204 bearings for line 3 maintenance"), { scenario: b(req).scenario ?? "happy", tenantId: t }); });
@@ -219,6 +220,20 @@ export async function buildApp() {
   app.post("/workspace/suppliers/:id/review", async (req: any) => { const { u, t } = ctx(req, ["client_admin"]); return W.reviewSupplier(u, t, req.params.id, !!b(req).verify, String(b(req).note ?? "")); });
   app.post("/workspace/suppliers/:id/payee-change", async (req: any) => { const { u, t } = ctx(req, ["client_admin", "ap_clerk"]); return W.requestPayeeChange(u, t, req.params.id, b(req)); });
   app.post("/workspace/suppliers/:id/wallet-message", async (req: any) => { const { t } = ctx(req); return W.walletMessageFor(t, req.params.id, String(b(req).address ?? "")); });
+  // Step 5: treasury, reconciliation, compliance cases. Operator console, per tenant.
+  const OPS = ["operator_admin", "auditor"] as const; const OPA = ["operator_admin"] as const;
+  const opCtx = (req: any, roles: readonly P.Role[] = OPS) => { const u = guard(req, roles); const id = String(req.query?.tenantId ?? b(req).tenantId ?? ""); const t = P.getTenant(id); if (!t || t.kind !== "client") throw new P.AuthError(422, "Pass tenantId of a business client"); return { u, t: t.id }; };
+  app.get("/ops/treasury", async (req) => O.treasury(opCtx(req).t));
+  app.post("/ops/treasury/sweep", async (req) => { const { u, t } = opCtx(req, OPA); const x = b(req); return O.sweep(u, t, x.rail, Number(x.amount)); });
+  app.post("/ops/recon/run", async (req) => O.runRecon(opCtx(req, OPA).t));
+  app.get("/ops/recon", async (req) => O.runRecon(opCtx(req).t));
+  app.post("/ops/recon/exceptions/:id/resolve", async (req: any) => { const { u, t } = opCtx(req, OPA); return O.resolveException(u, t, decodeURIComponent(req.params.id), b(req).action, String(b(req).note ?? "")); });
+  app.get("/ops/recon/export.csv", async (req: any, reply) => { const { t } = opCtx(req); return reply.type("text/csv").header("content-disposition", `attachment; filename="recon-${t}.csv"`).send(O.reconCsv(t)); });
+  app.get("/ops/compliance", async (req) => { guard(req, OPS); return { ...O.complianceStatus(), cases: S.listCases(null), travelRule: O.travelRuleRecords(null) }; });
+  app.post("/ops/cases/:id/sar/draft", async (req: any) => O.draftSar(guard(req, OPA), req.params.id));
+  app.put("/ops/cases/:id/sar", async (req: any) => O.editSar(guard(req, OPA), req.params.id, String(b(req).text ?? "")));
+  app.post("/ops/cases/:id/sar/file", async (req: any) => O.fileSar(guard(req, OPA), req.params.id));
+  app.post("/ops/cases/:id/close", async (req: any) => O.closeCase(guard(req, OPA), req.params.id, String(b(req).resolution ?? "")));
   // Public supplier portal. The token in the path is the only credential.
   app.get("/onboard/:token", async (req: any) => W.onboardingView(req.params.token));
   app.post("/onboard/:token/kyb", async (req: any) => W.saveKyb(req.params.token, b(req)));

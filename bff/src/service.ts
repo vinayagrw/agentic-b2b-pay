@@ -242,7 +242,9 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
   if (comp.travelRule) ev("payment", intent.id, "travel_rule.record", comp.travelRule);
   if (comp.outcome === "blocked") {
     db.alerts.push({ at: now(), tenantId: TENANT, kind: "compliance", detail: `${intent.id}: ${comp.checks.filter((c) => c.result === "fail").map((c) => c.detail).join(", ")}` });
-    return stop("blocked", comp.checks.filter((c) => c.result === "fail").map((c) => c.detail).join(". "));
+    const out = stop("blocked", comp.checks.filter((c) => c.result === "fail").map((c) => c.detail).join(". "));
+    for (const h of blockHooks) h(intent.id);
+    save(); return out;
   }
   if (isUsdc(rail)) {
     const digest = crypto.createHash("sha256").update(`${intent.id}|${sup.walletAddress}|${inv.amount}|${idempotencyKey}`).digest("hex");
@@ -266,6 +268,9 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
   }
   save(); return { intent, replay: false };
 }
+
+/** Called after a payment is blocked by screening. The compliance module opens a case. */
+export const blockHooks: ((intentId: string) => void)[] = [];
 
 /** Moves a pending intent to settled or failed. Ledger, invoice and ERP change only on settled. Idempotent. */
 export function applyRailUpdate(intentId: string, u: { status: "pending" | "settled" | "failed"; source: TimelineEntry["source"]; detail?: string; explorerUrl?: string }) {
@@ -413,10 +418,10 @@ export function evidenceView(subjectId?: string) {
 }
 
 /** ISO 20022 camt.053 style bank to customer statement from the ledger cash accounts. Tx hash in end to end id. */
-export function camt053(date = new Date().toISOString().slice(0, 10)) {
+export function camt053(date = new Date().toISOString().slice(0, 10), tenantId: string | null = null) {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
   const cashAccts = ["1000 Cash operating", "1010 USDC treasury"];
-  const ntries = db.journals.flatMap((j) => j.entries.filter((e) => cashAccts.includes(e.account)).map((e) => {
+  const ntries = db.journals.filter((j) => !tenantId || tenantOf(j) === tenantId).flatMap((j) => j.entries.filter((e) => cashAccts.includes(e.account)).map((e) => {
     const st = db.settlements.find((s) => s.paymentIntentId === j.ref);
     const amt = e.debit || e.credit;
     return `      <Ntry><Amt Ccy="USD">${amt.toFixed(2)}</Amt><CdtDbtInd>${e.credit ? "DBIT" : "CRDT"}</CdtDbtInd><Sts><Cd>BOOK</Cd></Sts><BookgDt><Dt>${j.createdAt.slice(0, 10)}</Dt></BookgDt><AcctSvcrRef>${esc(st?.railRef ?? j.id)}</AcctSvcrRef><NtryDtls><TxDtls><Refs><EndToEndId>${esc(st?.txHash ?? j.ref)}</EndToEndId></Refs><AddtlTxInf>${esc(j.memo)} | ${esc(e.account)}</AddtlTxInf></TxDtls></NtryDtls></Ntry>`;
@@ -426,7 +431,7 @@ export function camt053(date = new Date().toISOString().slice(0, 10)) {
   <BkToCstmrStmt>
     <GrpHdr><MsgId>STMT-${date}-${db.seq}</MsgId><CreDtTm>${new Date().toISOString()}</CreDtTm></GrpHdr>
     <Stmt>
-      <Id>ACME-${date}</Id><Acct><Id><Othr><Id>ACME-OPERATING-AND-USDC</Id></Othr></Id><Ccy>USD</Ccy></Acct>
+      <Id>${(tenantId ?? "ALL").toUpperCase()}-${date}</Id><Acct><Id><Othr><Id>${(tenantId ?? "ALL").toUpperCase()}-OPERATING-AND-USDC</Id></Othr></Id><Ccy>USD</Ccy></Acct>
       <TxsSummry><TtlNtries><NbOfNtries>${ntries.length}</NbOfNtries></TtlNtries></TxsSummry>
 ${ntries.join("\n")}
     </Stmt>

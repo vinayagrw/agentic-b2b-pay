@@ -66,4 +66,6 @@ export type ComplianceResult = {
   outcome: "clear" | "blocked";
   checks: { kind: "kyb" | "sanctions" | "ofac_wallet" | "kyt" | "travel_rule"; result: "pass" | "fail" | "n/a"; detail: string; providerRef: string }[];
   travelRule?: Record<string, unknown>;
+  /** Sanctions list hits behind any failed sanctions or wallet check. */
+  hits?: { source: string; uid: string; sdnName: string; program: string; matchedOn: string; value: string; score: number; asset?: string }[];
 };

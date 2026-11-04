@@ -66,6 +66,7 @@ export async function verifyCircleSignature(raw: Buffer, headers: Record<string,
 }
 
 export const circleUsdc: RailAdapter = {
+  sweepUnsupported: "Circle Wallets has no fiat payout. A USDC to USD sweep needs a Circle Mint account and its payouts API, which this platform does not have keys for.",
   id: "circle_usdc",
   readiness: (env) => {
     const c = creds(env);
