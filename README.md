@@ -187,6 +187,58 @@ Open http://localhost:5180, pick a demo user and run a scenario from the client 
 
 ---
 
+## SSO setup
+
+Sign in uses OpenID Connect with the authorization code flow, PKCE, state and nonce (openid-client 6). The login page shows "Sign in with SSO" first. The demo user list only shows when `DEMO_LOGIN=1`.
+
+1. Generate the local Keycloak realm. This writes random passwords and a client secret into gitignored files and adds the `OIDC_*` lines to `.env`.
+   ```bash
+   node infra/keycloak/gen-realm.mjs
+   ```
+2. Start Keycloak 26.4.2 on port 8180 with Podman.
+   ```bash
+   podman compose -f infra/keycloak/compose.yml up -d
+   curl -s http://localhost:8180/realms/b2bpay/.well-known/openid-configuration | head -c 120
+   ```
+3. Start the app with `npm run dev`. On first start the bff stores the provider from `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` in the database, with the secret encrypted.
+4. Sign in with any user from `infra/keycloak/test-users.local.md`. Realm `b2bpay`, client `b2bpay-web`, redirect `http://localhost:5180/api/auth/oidc/callback`.
+5. Check the whole flow without a browser: `npm run oidc:check -w bff` (set `EMAIL=` to try another user).
+
+Keycloak sends two extra claims in the ID token. `tenant` is `operator` or a business client id such as `tnt-acme`. `groups` holds group names. The provider's group to role map turns groups into a role. Users are created or updated on each sign in (just in time provisioning) and matched by subject, then by email.
+
+Providers live in the operator Identity page, one per scope (`platform` or a bank id). A bank provider can only sign in clients of that bank. Every change goes through maker checker, so a second operator admin must approve it. SAML is not built yet and the Identity page says so.
+
+Sessions are server side rows behind a signed httpOnly cookie with sameSite lax. They end after `SESSION_IDLE_MINUTES` (default 30) without activity and always after `SESSION_ABSOLUTE_HOURS` (default 12). The Sessions page lists open sessions and lets you revoke them. Sign in, sign out, failed sign in, expiry and revoke events land in the evidence chain. Sign out also ends the Keycloak session through its end session URL.
+
+## Roles and permissions
+
+Every route needs one permission, checked by `requirePermission`. Built-in roles are permission sets.
+
+| Role | Main permissions |
+|---|---|
+| Operator admin | Everything except supplier review and payee change, including identity.manage, treasury.sweep, compliance.case.file, settings.live_toggle, platform.reset |
+| Client admin | payments.pay, payments.approve, agents.manage, rules.edit, suppliers.review, developers.keys, roles.manage, sessions.manage, audit.read |
+| Approver | payments.approve, payments.pay, payments.refund, flow.operate |
+| AP clerk | payments.pay, flow.operate, suppliers.invite, suppliers.payee_change |
+| Auditor | audit.read, compliance.read, treasury.read, users.read, rails.balances |
+
+Custom roles are made on the Roles page. Client admins make roles for their company from client permissions only. Operator admins make roles for operator staff and can limit them to some business clients (entity scope). A role can carry an approval amount limit, so `payments.approve` is denied above it. Each custom role is based on a built-in role, which sets its approval level in the rules.
+
+Separation of duties. The maker of a change cannot approve it. A person who approved an order cannot release its payment. The Permission check panel on the Roles page shows each step of a decision, so you can see why an action is allowed or denied.
+
+## SCIM
+
+The bff serves SCIM 2.0 at `/api/scim/v2` for one business client per token.
+
+* `Users`: list (with `filter=userName eq "x"`), get, create, PATCH `active`, delete.
+* `Groups`: list, get, create, PATCH members, delete. Built-in groups are client_admin, approver and ap_clerk. New groups become custom roles.
+
+Make a token on the Developers page while a business client is active. It shows once and only its hash is stored. Turning a user off ends their sessions at once.
+
+```bash
+curl -s http://localhost:5180/api/scim/v2/Users -H "Authorization: Bearer $SCIM_TOKEN"
+```
+
 ## Sandbox setup
 
 ### Stripe CLI

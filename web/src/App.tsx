@@ -6,6 +6,7 @@ import * as C from "./pages/client";
 import * as O from "./pages/operator";
 import { Login, Onboard } from "./pages/public";
 import { Loading } from "./pages/flows";
+import * as IAM from "./pages/iam";
 import { FlowPage, TransactionsPage } from "./pages/txflow";
 
 function Gate({ kind }: { kind: "operator" | "client" }) {
@@ -26,12 +27,12 @@ export function App() {
     <Route path="/operator" element={<Gate kind="operator" />}>
       <Route index element={<O.OperatorHome />} /><Route path="tenants" element={<O.Tenants />} /><Route path="payments" element={<O.OperatorPayments />} /><Route path="payments/:id" element={<FlowPage />} /><Route path="transactions" element={<TransactionsPage operator />} />
       <Route path="compliance" element={<O.Compliance />} /><Route path="treasury" element={<O.Treasury />} /><Route path="reconciliation" element={<O.Recon />} />
-      <Route path="revenue" element={<O.Revenue />} /><Route path="developers" element={<O.Developers />} /><Route path="branding" element={<O.BrandingPage />} /><Route path="settings" element={<O.SettingsPage />} />
+      <Route path="revenue" element={<O.Revenue />} /><Route path="developers" element={<O.Developers />} /><Route path="branding" element={<O.BrandingPage />} /><Route path="settings" element={<O.SettingsPage />} /><Route path="identity" element={<IAM.IdentityPage />} /><Route path="roles" element={<IAM.RolesPage />} /><Route path="sessions" element={<IAM.SessionsPage />} />
     </Route>
     <Route path="/app" element={<Gate kind="client" />}>
       <Route index element={<C.ClientHome />} /><Route path="purchase-orders" element={<C.PurchaseOrders />} /><Route path="invoices" element={<C.Invoices />} />
       <Route path="approvals" element={<C.Approvals />} /><Route path="agents" element={<C.Agents />} /><Route path="suppliers" element={<C.Suppliers />} />
-      <Route path="payments" element={<C.Payments />} /><Route path="payments/:id" element={<FlowPage />} /><Route path="transactions" element={<TransactionsPage operator={false} />} /><Route path="rules" element={<C.Rules />} /><Route path="developers" element={<O.Developers />} />
+      <Route path="payments" element={<C.Payments />} /><Route path="payments/:id" element={<FlowPage />} /><Route path="transactions" element={<TransactionsPage operator={false} />} /><Route path="rules" element={<C.Rules />} /><Route path="developers" element={<O.Developers />} /><Route path="roles" element={<IAM.RolesPage />} /><Route path="sessions" element={<IAM.SessionsPage />} />
     </Route>
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes></BrowserRouter></QueryClientProvider>;

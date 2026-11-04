@@ -9,6 +9,7 @@ import { Logo, Section } from "../components/Shell";
 import * as F from "./flows";
 import * as Ops from "./ops";
 import * as In from "./insights";
+import { ScimTokens } from "./iam";
 import { PaymentsTable, RailStatus, type RailRow } from "./payments";
 
 export const OperatorHome = In.OperatorHome;
@@ -31,7 +32,7 @@ export const Compliance = Ops.CompliancePage;
 export const Treasury = Ops.TreasuryPage;
 export const Recon = Ops.ReconPage;
 export const Revenue = In.RevenuePage;
-export const Developers = In.DevelopersPage;
+export const Developers = () => <Section><In.DevelopersPage /><ScimTokens /></Section>;
 
 export function BrandingPage() {
   const { data: me } = useMe(); const { data: tenants } = useGet<Tenant[]>("/tenants");

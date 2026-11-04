@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
-    "test": "LLM_MODE=mock DB_PERSIST=0 RAIL_POLL_MS=0 vitest run",
+    "test": "DEMO_LOGIN=1 LLM_MODE=mock DB_PERSIST=0 RAIL_POLL_MS=0 vitest run",
     "typecheck": "tsc -p . --noEmit",
     "e2e:live": "LLM_MODE=live tsx scripts/e2e.ts",
     "e2e:mock": "LLM_MODE=mock tsx scripts/e2e.ts",
+    "oidc:check": "tsx scripts/oidc-live-check.ts",
     "sdn:fetch": "tsx scripts/fetch-sdn.ts"
   },
   "dependencies": {
@@ -19,6 +20,7 @@
     "better-sqlite3": "^13.0.3",
     "dotenv": "^18.0.9",
     "fastify": "^5.1.0",
+    "openid-client": "^6.8.9",
     "stripe": "^23.1.0",
     "viem": "^2.57.16",
     "zod": "3.25.76"

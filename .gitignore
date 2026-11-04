@@ -159,3 +159,8 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Local IdP secrets
+infra/keycloak/import/
+infra/keycloak/*.local.md
+infra/keycloak/.env.local

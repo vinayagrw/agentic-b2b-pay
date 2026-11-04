@@ -12,7 +12,7 @@ export async function api<T = any>(path: string, body?: unknown, opts: { method?
 }
 export const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 5_000, retry: false, refetchOnWindowFocus: false } } });
 
-export type Me = { user: { id: string; name: string; role: string; tenantId: string | null; email: string }; operator: boolean; tenant: Tenant; theme: Branding; tenants: Tenant[]; llmMode: string };
+export type Me = { user: { id: string; name: string; role: string; tenantId: string | null; email: string; customRoleId?: string | null }; operator: boolean; tenant: Tenant; theme: Branding; tenants: Tenant[]; llmMode: string; permissions?: string[]; roleName?: string; approveLimit?: number | null };
 export type Branding = { name: string; logo: string | null; primary: string; accent: string };
 export type Tenant = { id: string; kind: "bank" | "client"; parentId: string | null; name: string; branding: Branding; railSettings: Record<string, { provider: string; env: "sandbox" | "live" }>; createdAt: string };
 

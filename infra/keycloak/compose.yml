@@ -1,0 +1,13 @@
+# Local IdP for SSO development. Run `node infra/keycloak/gen-realm.mjs` once first, it writes import/b2bpay.local.json,
+# .env.local and test-users.local.md with generated secrets (all gitignored).
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.2
+    container_name: b2bpay-keycloak
+    command: ["start-dev", "--import-realm", "--http-port=8180"]
+    env_file: [.env.local]
+    environment:
+      KC_HEALTH_ENABLED: "true"
+    ports: ["8180:8180"]
+    volumes:
+      - ./import:/opt/keycloak/data/import:ro,Z

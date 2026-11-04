@@ -9,7 +9,7 @@ import { appendEvidence } from "./modules/evidence.js";
 
 export const ROLES = ["operator_admin", "client_admin", "approver", "ap_clerk", "auditor"] as const;
 export type Role = (typeof ROLES)[number];
-export type User = { id: string; tenantId: string | null; name: string; email: string; role: Role };
+export type User = { id: string; tenantId: string | null; name: string; email: string; role: Role; customRoleId?: string | null; active?: boolean; source?: string };
 export type Branding = { name: string; logo: string | null; primary: string; accent: string };
 export type RailSetting = { env: "sandbox" | "live" };
 export type Pricing = Partial<Record<Rail, { pct: number; fixed: number }>>;
@@ -66,7 +66,8 @@ export function topUpSeed() {
 }
 
 const toTenant = (r: any): Tenant => ({ id: r.id, kind: r.kind, parentId: r.parent_id, name: r.name, branding: JSON.parse(r.branding), railSettings: JSON.parse(r.rail_settings), createdAt: r.created_at, pricing: r.pricing ? JSON.parse(r.pricing) : {} });
-const toUser = (r: any): User => ({ id: r.id, tenantId: r.tenant_id, name: r.name, email: r.email, role: r.role });
+const toUser = (r: any): User => ({ id: r.id, tenantId: r.tenant_id, name: r.name, email: r.email, role: r.role, customRoleId: r.custom_role_id ?? null, active: r.active === undefined ? true : !!r.active, source: r.source ?? "seed" });
+export const getUserByEmail = (email: string) => { const r = sql.prepare("SELECT * FROM users WHERE lower(email) = lower(?)").get(email); return r ? toUser(r) : null; };
 export const listTenants = () => (sql.prepare("SELECT * FROM tenants ORDER BY kind, name").all() as any[]).map(toTenant);
 export const getTenant = (id: string) => { const r = sql.prepare("SELECT * FROM tenants WHERE id = ?").get(id); return r ? toTenant(r) : null; };
 export const listUsers = () => (sql.prepare("SELECT * FROM users ORDER BY tenant_id IS NOT NULL, tenant_id, role").all() as any[]).map(toUser);

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowLeftRight, Banknote, Bot, Building2, Check, ChevronsUpDown, Code2, FileText, Gauge, Home, Inbox, Landmark, LogOut, Moon, Palette, Scale, Settings, ShieldCheck, ShoppingCart, Sun, Truck, Users, Workflow, type LucideIcon } from "lucide-react";
+import { Activity, ArrowLeftRight, Banknote, Bot, Building2, Check, ChevronsUpDown, Code2, FileText, Gauge, Home, Inbox, KeyRound, Landmark, MonitorSmartphone, UserCog, LogOut, Moon, Palette, Scale, Settings, ShieldCheck, ShoppingCart, Sun, Truck, Users, Workflow, type LucideIcon } from "lucide-react";
 import { api, useLiveEvents, useMe, type Me } from "../lib/api";
 import { applyTheme } from "../lib/theme";
 import { cn } from "../lib/utils";
@@ -14,12 +14,14 @@ export const OPERATOR_NAV: Item[] = [
   { to: "/operator/treasury", label: "Treasury", icon: Landmark }, { to: "/operator/reconciliation", label: "Reconciliation", icon: Scale },
   { to: "/operator/revenue", label: "Revenue", icon: Gauge }, { to: "/operator/developers", label: "Developers", icon: Code2 },
   { to: "/operator/branding", label: "Branding", icon: Palette }, { to: "/operator/settings", label: "Settings", icon: Settings },
+  { to: "/operator/identity", label: "Identity", icon: KeyRound }, { to: "/operator/roles", label: "Roles", icon: UserCog }, { to: "/operator/sessions", label: "Sessions", icon: MonitorSmartphone },
 ];
 export const CLIENT_NAV: Item[] = [
   { to: "/app", label: "Home", icon: Home }, { to: "/app/purchase-orders", label: "Purchase orders", icon: ShoppingCart },
   { to: "/app/invoices", label: "Invoices", icon: FileText }, { to: "/app/approvals", label: "Approvals", icon: Inbox },
   { to: "/app/agents", label: "Agents", icon: Bot }, { to: "/app/suppliers", label: "Suppliers", icon: Truck },
   { to: "/app/payments", label: "Payments", icon: Banknote }, { to: "/app/transactions", label: "Transactions", icon: Activity }, { to: "/app/rules", label: "Rules", icon: Workflow }, { to: "/app/developers", label: "Developers", icon: Code2 },
+  { to: "/app/roles", label: "Roles", icon: UserCog }, { to: "/app/sessions", label: "Sessions", icon: MonitorSmartphone },
 ];
 
 export function Logo({ name, logo, size = 28 }: { name: string; logo: string | null; size?: number }) {
@@ -57,7 +59,7 @@ function TopBar({ me, kind }: { me: Me; kind: "operator" | "client" }) {
   const [mode, setMode] = useColorMode();
   const live = Object.values(me.tenant.railSettings ?? {}).some((r) => r.env === "live");
   const pick = async (id: string, k: string) => { await api("/me/tenant", { tenantId: id }); await qc.invalidateQueries(); nav(k === "client" ? "/app" : "/operator"); };
-  const logout = async () => { await api("/auth/logout", {}); qc.clear(); nav("/login"); };
+  const logout = async () => { const r = await api<{ redirect?: string | null }>("/auth/logout", {}); qc.clear(); if (r?.redirect) location.href = r.redirect; else nav("/login"); };
   return <header className="sticky top-0 z-20 flex h-12 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur">
     <Menu><MenuTrigger asChild><button className="flex items-center gap-2 rounded-md px-2 py-1 text-[13px] hover:bg-subtle" aria-label="Switch tenant"><Building2 size={14} className="text-muted" /><span className="font-medium">{me.tenant.name}</span><ChevronsUpDown size={13} className="text-muted" /></button></MenuTrigger>
       <MenuContent align="start">
@@ -69,11 +71,11 @@ function TopBar({ me, kind }: { me: Me; kind: "operator" | "client" }) {
     <span className="ml-auto" />
     <Badge v={`LLM ${me.llmMode}`} tone="neutral" />
     <button className="grid h-8 w-8 place-items-center rounded-md hover:bg-subtle" aria-label="Toggle colour mode" onClick={() => setMode(mode === "dark" ? "light" : "dark")}>{mode === "dark" ? <Sun size={15} /> : <Moon size={15} />}</button>
-    <Menu><MenuTrigger asChild><button className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-subtle" aria-label="User menu"><span className="grid h-7 w-7 place-items-center rounded-full bg-accent text-[11px] font-semibold text-white">{me.user.name.split(" ").map((w) => w[0]).join("")}</span><span className="hidden text-left sm:block"><span className="block text-[12px] font-medium leading-tight">{me.user.name}</span><span className="block text-[11px] leading-tight text-muted">{me.user.role.replace("_", " ")}</span></span></button></MenuTrigger>
+    <Menu><MenuTrigger asChild><button className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-subtle" aria-label="User menu"><span className="grid h-7 w-7 place-items-center rounded-full bg-accent text-[11px] font-semibold text-white">{me.user.name.split(" ").map((w) => w[0]).join("")}</span><span className="hidden text-left sm:block"><span className="block text-[12px] font-medium leading-tight">{me.user.name}</span><span className="block text-[11px] leading-tight text-muted">{(me.roleName ?? me.user.role).replace("_", " ")}</span></span></button></MenuTrigger>
       <MenuContent>
         <MenuLabel>{me.user.email}</MenuLabel>
         {me.operator && <MenuItem onSelect={() => { const t = me.tenants.find((x) => x.kind === (kind === "operator" ? "client" : "bank")); if (t) pick(t.id, t.kind); }}><Users size={14} />{kind === "operator" ? "Open client workspace" : "Back to operator console"}</MenuItem>}
-        <MenuSep /><MenuItem onSelect={logout}><LogOut size={14} />Switch demo user</MenuItem>
+        <MenuSep /><MenuItem onSelect={logout}><LogOut size={14} />Sign out</MenuItem>
       </MenuContent></Menu>
   </header>;
 }
