@@ -6,7 +6,8 @@ import { evaluatePolicy } from "./modules/policy.js";
 import { threeWayMatch, round } from "./modules/match.js";
 import { routePayment } from "./modules/router.js";
 import { screen } from "./modules/compliance.js";
-import { makeJournal, trialBalance, reconcile } from "./modules/ledger.js";
+import { makeJournal, trialBalance, reconcile, entityBooks } from "./modules/ledger.js";
+import * as FX from "./modules/fx.js";
 import { appendEvidence, verifyChain } from "./modules/evidence.js";
 import { adapter, allAdapters, railReadiness } from "./rails/index.js";
 import type { RailEnv } from "./rails/types.js";
@@ -32,6 +33,7 @@ export function bootstrap() {
   for (const a of db.agents) { issueKey(a); const r = verifyAgent(a, org(a.orgId).kybStatus === "verified"); ev("agent", a.id, "kya.verified", r); }
   for (const m of db.mandates) signMandate(m);
   seedRules();
+  FX.seedEntities();
   backfillMandates();
   save();
 }
@@ -107,7 +109,16 @@ export function createPo(draft: PoDraft, agentId?: string) {
   if (tenantOf(agent) !== tenantId) throw new HttpError(403, "Agent and supplier belong to different tenants");
   if (sup.onboarding && sup.onboarding.status !== "verified") throw new HttpError(409, `Supplier onboarding is ${sup.onboarding.status}. A client admin must verify it first.`);
   const total = round(draft.lines.reduce((a, l) => a + l.qty * l.unitPrice, 0));
-  const { mandate, decision } = policyFor(agentId, sup.id, draft.category, total);
+  const ent = draft.entityId ? FX.getEntity(draft.entityId, tenantId) : FX.defaultEntity(tenantId);
+  if (!ent) throw new HttpError(404, "entity not found");
+  // Mandate limits are in USD. A EUR or GBP order is checked on its USD value at the cached rate. No cached rate means no order.
+  let usd = total;
+  if (draft.currency !== "USD") {
+    const fx = FX.cachedRate(draft.currency, "USD");
+    if (!fx) throw new HttpError(409, `No ${draft.currency} to USD rate is cached. Get an FX quote first.`);
+    usd = FX.convert(total, fx.rate);
+  }
+  const { mandate, decision } = policyFor(agentId, sup.id, draft.category, usd);
   // Approval rules: the first matching rule decides who approves. Hard denies stay denies.
   let approval: PurchaseOrder["approval"];
   if (decision.outcome !== "deny") {
@@ -118,7 +129,7 @@ export function createPo(draft: PoDraft, agentId?: string) {
       if (decision.outcome === "allow") { decision.outcome = "needs_approval"; decision.reasons = [`Approval rule ${rule.name} matched`]; }
     } else if (decision.outcome === "needs_approval") approval = { ruleId: null, ruleName: "Mandate threshold", levels: [{ role: "approver", count: 1, approvals: [] }], current: 0 };
   }
-  const po: PurchaseOrder = { id: nextId("po"), tenantId, buyerOrgId: agent.orgId, supplierId: sup.id, agentId, mandateId: mandate.id, erpRef: null, category: draft.category, lines: draft.lines, total, currency: "USD", justification: draft.justification,
+  const po: PurchaseOrder = { id: nextId("po"), tenantId, buyerOrgId: agent.orgId, supplierId: sup.id, agentId, mandateId: mandate.id, erpRef: null, category: draft.category, lines: draft.lines, total, currency: draft.currency, entityId: ent.id, usdEquivalent: usd, justification: draft.justification,
     status: decision.outcome === "allow" ? "approved" : decision.outcome === "needs_approval" ? "pending_approval" : "rejected", policy: decision, approval, createdAt: new Date().toISOString() };
   db.pos.push(po);
   ev("po", po.id, "policy.evaluated", { outcome: decision.outcome, reasons: decision.reasons, total, rule: approval?.ruleName ?? null });
@@ -131,12 +142,12 @@ export function createPo(draft: PoDraft, agentId?: string) {
 /** AP2: the authorising user signs the Intent, the buyer agent signs the Cart. Keys stay server side. */
 function issueMandates(po: PurchaseOrder, mandate: import("./modules/store.js").Mandate, sup: Supplier) {
   const exp = Math.min(Date.now() + 30 * 864e5, new Date(mandate.validTo).getTime());
-  const intent = AP2.signIntent({ poId: po.id, tenantId: tenantOf(po), principalUserId: mandate.principalUserId, agentId: po.agentId, maxAmount: round(po.total * 1.02), currency: "USD", supplierId: sup.id, category: po.category, expiresAt: new Date(exp).toISOString(), constraints: { allowedRails: mandate.allowedRails, category: po.category } });
+  const intent = AP2.signIntent({ poId: po.id, tenantId: tenantOf(po), principalUserId: mandate.principalUserId, agentId: po.agentId, maxAmount: round(po.total * 1.02), currency: po.currency ?? "USD", supplierId: sup.id, category: po.category, expiresAt: new Date(exp).toISOString(), constraints: { allowedRails: mandate.allowedRails, category: po.category } });
   ev("po", po.id, "ap2.intent_signed", { mandate: intent.id, signer: intent.signerId, maxAmount: intent.body.maxAmount, expiresAt: intent.body.expiresAt, hash: intent.hash });
   signCartFor(po, intent, AP2.normLines(po.lines), po.total, sup);
 }
 function signCartFor(po: PurchaseOrder, intent: AP2.SignedMandate<AP2.IntentBody>, lines: AP2.MandateLine[], amount: number, sup: Supplier) {
-  const cart = AP2.signCart({ poId: po.id, tenantId: tenantOf(po), agentId: po.agentId, intentHash: intent.hash, supplierId: sup.id, currency: "USD", amount: round(amount), lines, railHint: sup.preferredRail ?? null });
+  const cart = AP2.signCart({ poId: po.id, tenantId: tenantOf(po), agentId: po.agentId, intentHash: intent.hash, supplierId: sup.id, currency: po.currency ?? "USD", amount: round(amount), lines, railHint: sup.preferredRail ?? null });
   ev("po", po.id, "ap2.cart_signed", { mandate: cart.id, signer: cart.signerId, amount: cart.body.amount, lines: lines.length, hash: cart.hash });
   return cart;
 }
@@ -203,7 +214,7 @@ export async function submitInvoice(poId: string, text: string) {
   const sup = supplier(po.supplierId);
   const walletBefore = sup.walletAddress;
   const r = await readInvoice(text);
-  const inv = { id: nextId("inv"), tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: "USD" as const, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: false, injection: r.injection };
+  const inv = { id: nextId("inv"), tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: false, injection: r.injection };
   db.invoices.push(inv); po.status = po.status === "received" ? "invoiced" : po.status;
   ev("invoice", inv.id, "llm.invoice_extracted", { source: r.source, extract: r.value });
   if (r.injection.length) {
@@ -212,9 +223,19 @@ export async function submitInvoice(poId: string, text: string) {
   }
   save(); return inv;
 }
+/** Fetches (or reuses) the rates a PO or invoice needs, so the sync steps never run without a real rate. */
+export async function ensureRates(input: { currency?: string; entityId?: string; tenantId: string }) {
+  const ent = input.entityId ? FX.getEntity(input.entityId, input.tenantId) : FX.defaultEntity(input.tenantId);
+  const c = input.currency ?? "USD";
+  if (c !== "USD") await FX.getRate(c, "USD");
+  if (ent && c !== ent.currency) await FX.getRate(c, ent.currency);
+}
 export function matchInvoice(invId: string) {
   const inv = must(db.invoices.find((i) => i.id === invId), "invoice");
   const po = must(db.pos.find((p) => p.id === inv.poId), "po");
+  const ent = entityFor(inv, tenantOf(po));
+  const ar = FX.cachedRate(inv.currency ?? "USD", ent.currency);
+  if (!ar) throw new HttpError(409, `No ${inv.currency} to ${ent.currency} rate is cached. Get an FX quote first.`);
   const grLines = db.receipts.filter((g) => g.poId === po.id).flatMap((g) => g.lines);
   const m = threeWayMatch(po.lines, grLines, inv.extract.lines);
   if (Math.abs(inv.extract.total - m.totals.invoice) > 0.01) { m.status = "exception"; m.lines.push({ sku: "TOTAL", poQty: 0, grQty: 0, invQty: 0, poPrice: m.totals.invoice, invPrice: inv.extract.total, ok: false, note: "Stated total does not equal sum of lines" }); }
@@ -223,7 +244,10 @@ export function matchInvoice(invId: string) {
     inv.erpApproval = "approved";
     const pair = AP2.currentPair(po.id);
     if (pair.intent) signCartFor(po, pair.intent, AP2.normLines(inv.extract.lines), inv.amount, supplier(po.supplierId));
-    db.journals.push(tj(tenantOf(po), makeJournal(nextId("jnl"), `Invoice ${inv.number} accrued`, inv.id, [{ account: po.category === "logistics" ? "5100 Freight expense" : "1300 Inventory", debit: inv.amount }, { account: "2000 Accounts payable", credit: inv.amount }])));
+    const fn = FX.convert(inv.amount, ar.rate);
+    inv.accrual = { functionalCurrency: ent.currency, rate: ar.rate, amount: fn, source: ar.source, stale: ar.stale, at: now() };
+    const o = (inv.currency ?? "USD") !== ent.currency ? { origCurrency: inv.currency, origAmount: inv.amount } : {};
+    db.journals.push(ej(tenantOf(po), ent.id, makeJournal(nextId("jnl"), `Invoice ${inv.number} accrued`, inv.id, [{ account: po.category === "logistics" ? "5100 Freight expense" : "1300 Inventory", debit: fn, ...o }, { account: "2000 Accounts payable", credit: fn, ...o }], ent.currency)));
     erp({ system: supplier(po.supplierId).erp, kind: "invoice.approved", at: new Date().toISOString(), payload: { invoice: inv.number, po: po.erpRef, amount: inv.amount } });
   }
   ev("invoice", inv.id, "match.three_way", { status: m.status, totals: m.totals });
@@ -231,6 +255,13 @@ export function matchInvoice(invId: string) {
 }
 
 const tj = (tenantId: string, j: import("./modules/store.js").Journal) => ({ ...j, tenantId });
+const ej = (tenantId: string, entityId: string, j: import("./modules/store.js").Journal) => ({ ...j, tenantId, entityId });
+/** The legal entity that owns an invoice or payment. Rows from before entities existed belong to the default entity. */
+export function entityFor(x: { entityId?: string }, tenantId: string) {
+  const e = (x.entityId && FX.getEntity(x.entityId, tenantId)) || FX.defaultEntity(tenantId);
+  if (!e) throw new HttpError(409, `Tenant ${tenantId} has no legal entity`);
+  return e;
+}
 const now = () => new Date().toISOString();
 const cashAccount = (rail: Rail) => (isUsdc(rail) ? "1010 USDC treasury" : "1000 Cash operating");
 function mark(intent: PaymentIntent, status: PaymentIntent["status"], source: TimelineEntry["source"], detail: string) {
@@ -253,7 +284,7 @@ async function withBalances<T extends { rail: Rail; configured: boolean; env: Ra
   }));
 }
 
-export async function payInvoice(invId: string, idempotencyKey: string, opts: { urgency?: "standard" | "urgent"; approvers?: string[] } = {}) {
+export async function payInvoice(invId: string, idempotencyKey: string, opts: { urgency?: "standard" | "urgent"; approvers?: string[]; fxLockId?: string } = {}) {
   const key = sql.prepare("SELECT intent_id FROM idempotency_keys WHERE key = ?").get(idempotencyKey) as { intent_id: string } | undefined;
   const prior = key && db.intents.find((p) => p.id === key.intent_id);
   if (prior) return { intent: prior, replay: true };
@@ -268,21 +299,34 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
   if (sup.onboarding && sup.onboarding.status !== "verified") throw new HttpError(409, `Supplier onboarding is ${sup.onboarding.status}`);
   const mandate = must(db.mandates.find((m) => m.id === po.mandateId), "mandate");
   const agent = must(db.agents.find((a) => a.id === po.agentId), "agent");
-  const intent: PaymentIntent = { id: nextId("pi"), invoiceId: inv.id, mandateId: mandate.id, amount: inv.amount, currency: "USD", status: "created", idempotencyKey, createdAt: now(), tenantId: TENANT, timeline: [] };
+  // FX: rails settle in USD. A EUR or GBP invoice, or a non USD entity, gets a locked quote before any money moves.
+  const ent = entityFor(inv, TENANT); const invCcy = inv.currency ?? "USD";
+  let lock: FX.FxLock | null = null;
+  if (invCcy !== "USD" || ent.currency !== "USD") {
+    if (opts.fxLockId) { const l = FX.getLock(opts.fxLockId, TENANT); if (!l) throw new HttpError(404, "FX lock not found"); if (FX.isExpired(l)) throw new HttpError(409, `FX lock ${l.id} expired at ${l.expiresAt}. Get a new quote.`); lock = l; }
+    else lock = await FX.lockQuote({ tenantId: TENANT, entityId: ent.id, from: invCcy, to: "USD" });
+  }
+  const usdAmount = lock ? FX.convert(inv.amount, lock.rate) : inv.amount;
+  const intent: PaymentIntent = { id: nextId("pi"), invoiceId: inv.id, mandateId: mandate.id, amount: usdAmount, currency: "USD", entityId: ent.id, status: "created", idempotencyKey, createdAt: now(), tenantId: TENANT, timeline: [] };
+  if (lock) {
+    lock = FX.useLock(lock.id, TENANT, intent.id, { from: invCcy, to: "USD", entityId: ent.id });
+    intent.fx = { lockId: lock.id, invoiceCurrency: invCcy, invoiceAmount: inv.amount, settlementCurrency: "USD", settlementAmount: usdAmount, rate: lock.rate, functionalCurrency: lock.functionalCurrency, functionalRate: lock.functionalRate, source: lock.source, rateDate: lock.rateDate, fetchedAt: lock.fetchedAt, stale: lock.stale, lockedAt: lock.lockedAt, expiresAt: lock.expiresAt };
+  }
   db.intents.push(intent);
   sql.prepare("INSERT INTO idempotency_keys (key, intent_id, created_at) VALUES (?, ?, ?)").run(idempotencyKey, intent.id, now());
   mark(intent, "created", "platform", "Payment intent created");
   ev("payment", intent.id, "intent.created", { invoice: inv.id, amount: inv.amount, idempotencyKey });
+  if (intent.fx) ev("payment", intent.id, "fx.quote_locked", { lockId: intent.fx.lockId, from: intent.fx.invoiceCurrency, to: "USD", rate: intent.fx.rate, functionalRate: intent.fx.functionalRate, stale: intent.fx.stale, source: intent.fx.source, expiresAt: intent.fx.expiresAt });
   const stop = (status: "denied" | "blocked", why: string) => { mark(intent, status, "platform", why); intent.blockedReason = why; ev("payment", intent.id, `payment.${status}`, { reason: why }); save(); return { intent, replay: false }; };
   if (db.killSwitch || agent.status !== "active") return stop("denied", db.killSwitch ? "Kill switch on" : "Agent suspended");
   const pair = AP2.currentPair(po.id);
-  const mv = evaluateMandates(pair.intent, pair.cart, { poId: po.id, supplierId: sup.id, currency: intent.currency, amount: inv.amount, lines: inv.extract.lines });
+  const mv = evaluateMandates(pair.intent, pair.cart, { poId: po.id, supplierId: sup.id, currency: invCcy, amount: inv.amount, lines: inv.extract.lines });
   ev("payment", intent.id, "ap2.mandates_verified", { ok: mv.ok, intent: pair.intent?.hash ?? null, cart: pair.cart?.hash ?? null, failed: mv.checks.filter((c) => !c.pass).map((c) => c.rule) });
   if (!mv.ok) return stop("blocked", mv.reason);
 
-  const route = routePayment({ amount: inv.amount, urgency: opts.urgency ?? "standard", mandateRails: mandate.allowedRails, supplierRails: sup.acceptedRails, supplierPreferred: sup.preferredRail, supplierHasWallet: !!sup.walletAddress, supplierScreening: sup.screeningStatus, supplierCountry: so.country, candidates: await withBalances(railCandidates(TENANT, inv.amount)) });
+  const route = routePayment({ amount: usdAmount, urgency: opts.urgency ?? "standard", mandateRails: mandate.allowedRails, supplierRails: sup.acceptedRails, supplierPreferred: sup.preferredRail, supplierHasWallet: !!sup.walletAddress, supplierScreening: sup.screeningStatus, supplierCountry: so.country, candidates: await withBalances(railCandidates(TENANT, usdAmount)) });
   intent.route = route; mark(intent, "routed", "platform", route.reason);
-  const ex = await explainRoute(route, inv.amount, sup.name);
+  const ex = await explainRoute(route, usdAmount, sup.name);
   intent.explanation = ex.value; intent.explainedBy = ex.source;
   ev("payment", intent.id, "route.decided", { rail: route.rail, reason: route.reason, explainedBy: ex.source });
   if (!route.rail) return stop("blocked", route.reason);
@@ -294,7 +338,7 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
     : { status: so.kybStatus, source: "org record" as const };
   const activity = isUsdc(rail) && sup.walletAddress ? await walletActivity(sup.walletAddress, railEnvNow) : null;
   const originWallet = isUsdc(rail) ? railReadiness(rail, railEnvNow).address ?? null : null;
-  const comp = screen({ intentId: intent.id, rail, amount: inv.amount, mandate: { id: mandate.id, perTxnMax: mandate.perTxnMax }, originator: { ...BUYER, wallet: originWallet }, beneficiary: { name: so.legalName, orgId: so.id, supplierId: sup.id, country: so.country, wallet: sup.walletAddress, kyb }, walletActivity: activity });
+  const comp = screen({ intentId: intent.id, rail, amount: usdAmount, mandate: { id: mandate.id, perTxnMax: mandate.perTxnMax }, originator: { ...BUYER, wallet: originWallet }, beneficiary: { name: so.legalName, orgId: so.id, supplierId: sup.id, country: so.country, wallet: sup.walletAddress, kyb }, walletActivity: activity });
   intent.compliance = comp;
   ev("payment", intent.id, "compliance.screened", { outcome: comp.outcome, checks: comp.checks.map((c) => `${c.kind}:${c.result}`) });
   if (comp.travelRule) ev("payment", intent.id, "travel_rule.record", comp.travelRule);
@@ -305,7 +349,7 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
     save(); return out;
   }
   if (isUsdc(rail)) {
-    const digest = crypto.createHash("sha256").update(`${intent.id}|${sup.walletAddress}|${inv.amount}|${idempotencyKey}`).digest("hex");
+    const digest = crypto.createHash("sha256").update(`${intent.id}|${sup.walletAddress}|${usdAmount}|${idempotencyKey}`).digest("hex");
     const cust = mpcSign(digest, opts.approvers ?? ["signer-treasury-ops", "signer-policy-engine"]);
     intent.custody = { digest, ...cust };
     ev("payment", intent.id, "custody.mpc_sign", { approved: cust.approved, signers: cust.shares.map((s) => s.signer), aggregateSig: cust.aggregateSig });
@@ -317,7 +361,7 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
   mark(intent, "submitted", "platform", `Sent to ${rail} (${env})`); save();
   try {
     // Ids restart after a reset, so the provider key also carries the intent creation time. Retries of one intent keep it.
-    const r = await adapter(rail).send({ intentId: intent.id, amount: inv.amount, currency: "USD", idempotencyKey: `${idempotencyKey}:${intent.createdAt}`, env, beneficiary: { name: so.legalName, wallet: sup.walletAddress, bankRef: sup.bankDetailsRef }, memo: `Invoice ${inv.number}` });
+    const r = await adapter(rail).send({ intentId: intent.id, amount: usdAmount, currency: "USD", idempotencyKey: `${idempotencyKey}:${intent.createdAt}`, env, beneficiary: { name: so.legalName, wallet: sup.walletAddress, bankRef: sup.bankDetailsRef }, memo: `Invoice ${inv.number}` });
     intent.providerRef = r.providerRef; intent.explorerUrl = r.explorerUrl; intent.dashboardUrl = r.dashboardUrl;
     mark(intent, "pending", "adapter", r.detail ?? `Accepted by ${rail}`);
     ev("payment", intent.id, "rail.submitted", { rail, env, providerRef: r.providerRef, providerStatus: r.status });
@@ -352,13 +396,45 @@ export function applyRailUpdate(intentId: string, u: { status: "pending" | "sett
   db.settlements.push(st); intent.settlementId = st.id; intent.bankFeeUsd = bankFee; inv.paid = true; po.status = "paid";
   mark(intent, "settled", u.source, u.detail ?? "Provider confirmed settlement");
   const cash = cashAccount(rail);
-  db.journals.push(tj(tenantOf(intent), makeJournal(nextId("jnl"), `Payment ${inv.number} via ${rail}`, intent.id, [{ account: "2000 Accounts payable", debit: inv.amount }, { account: cash, credit: inv.amount }])));
-  if (fee) db.journals.push(tj(tenantOf(intent), makeJournal(nextId("jnl"), `Rail fee ${rail}`, intent.id, [{ account: "6100 Payment fees", debit: fee }, { account: cash, credit: fee }])));
+  bookSettlement(intent, inv, rail, cash, fee);
   ev("payment", intent.id, "settlement.confirmed", { rail, railRef: st.railRef, txHash, source: u.source, env: intent.env });
   erp(erpPostPayment(sup, po.erpRef ?? po.id, inv.number, inv.amount, st.railRef, st.txHash));
   ev("payment", intent.id, "erp.payment_posted", { system: sup.erp, invoice: inv.number });
   publish(tenantOf(intent), "payment.settled", { id: intent.id, amount: intent.amount, rail, providerRef: st.railRef, txHash });
   save(); return intent;
+}
+/** Books the payment in the entity ledger at the locked rate. A difference to the accrual is a realised FX gain or loss line. */
+function bookSettlement(intent: PaymentIntent, inv: import("./modules/store.js").Invoice, rail: Rail, cash: string, fee: number) {
+  const t = tenantOf(intent); const ent = entityFor(intent, t); const fx = intent.fx;
+  const ap = inv.accrual?.amount ?? inv.amount;
+  const cashFn = fx ? FX.convert(inv.amount, fx.functionalRate) : intent.amount;
+  const diff = round(cashFn - ap);
+  const cashO = fx && ent.currency !== "USD" ? { origCurrency: "USD", origAmount: intent.amount } : {};
+  const apO = (inv.currency ?? "USD") !== ent.currency ? { origCurrency: inv.currency, origAmount: inv.amount } : {};
+  const lines = [{ account: "2000 Accounts payable", debit: ap, ...apO }, { account: cash, credit: cashFn, ...cashO }];
+  if (diff > 0) lines.push({ account: "7200 Realised FX loss", debit: diff } as any);
+  if (diff < 0) lines.push({ account: "7100 Realised FX gain", credit: -diff } as any);
+  const j = ej(t, ent.id, makeJournal(nextId("jnl"), `Payment ${inv.number} via ${rail}`, intent.id, lines, ent.currency));
+  db.journals.push(j);
+  if (fx) {
+    fx.realised = { apFunctional: ap, cashFunctional: cashFn, gainLoss: diff === 0 ? 0 : -diff, kind: diff < 0 ? "gain" : diff > 0 ? "loss" : "none", journalId: diff === 0 ? null : j.id };
+    ev("payment", intent.id, "fx.realised", { lockId: fx.lockId, rate: fx.rate, functionalRate: fx.functionalRate, accrualRate: inv.accrual?.rate ?? null, ...fx.realised });
+  }
+  if (fee) {
+    const feeFn = fx && ent.currency !== "USD" ? FX.convert(fee, fx.functionalRate / fx.rate) : fee;
+    db.journals.push(ej(t, ent.id, makeJournal(nextId("jnl"), `Rail fee ${rail}`, intent.id, [{ account: "6100 Payment fees", debit: feeFn }, { account: cash, credit: feeFn }], ent.currency)));
+  }
+}
+/** One entity's ledger for a tenant, plus FX locks and gains. Other tenants' entities are not found. */
+export function entityLedgerView(entityId: string, tenantId: string | null) {
+  const ent = FX.getEntity(entityId, tenantId);
+  if (!ent) throw new HttpError(404, "entity not found");
+  const books = entityBooks(db.journals.filter((j) => tenantOf(j) === ent.tenantId), ent.id, ent.currency, ent.isDefault);
+  const payments = db.intents.filter((i) => tenantOf(i) === ent.tenantId && entityFor(i, ent.tenantId).id === ent.id).map((i) => ({ id: i.id, status: i.status, amount: i.amount, currency: i.currency, fx: i.fx ?? null }));
+  return { entity: ent, ...books, payments };
+}
+export function entitiesView(tenantId: string | null) {
+  return FX.listEntities(tenantId).map((e) => { const b = entityBooks(db.journals.filter((j) => tenantOf(j) === e.tenantId), e.id, e.currency, e.isDefault); return { ...e, journals: b.journals.length, balanced: b.balanced, cash: round(Object.entries(b.trialBalance.accounts).filter(([k]) => k.startsWith("10")).reduce((a, [, v]) => a + v.balance, 0)) }; });
 }
 /** Bank pricing on top of the rail cost. Lives on the bank tenant's settings. */
 export function bankFeeFor(tenantId: string, rail: Rail, amount: number) {
@@ -477,7 +553,7 @@ function tryApply(c: import("./modules/store.js").PayeeChange) {
 }
 
 export function ledgerView() {
-  const settlements = db.settlements.map((s) => ({ id: s.id, paymentIntentId: s.paymentIntentId, amount: db.intents.find((i) => i.id === s.paymentIntentId)!.amount }));
+  const settlements = db.settlements.map((s) => ({ id: s.id, paymentIntentId: s.paymentIntentId, amount: (() => { const i = db.intents.find((x) => x.id === s.paymentIntentId)!; return i.fx?.realised?.apFunctional ?? i.amount; })() }));
   return { journals: db.journals, trialBalance: trialBalance(db.journals), reconciliation: reconcile(settlements, db.journals) };
 }
 /** Ids of every row a client tenant owns, so evidence never crosses tenants. */
@@ -515,11 +591,14 @@ ${ntries.join("\n")}
 }
 
 /** Full flow used by the scenario buttons and the e2e script. */
-export async function runFlow(need: string, opts: { scenario?: "happy" | "sanctioned" | "poisoned"; autoApprove?: boolean; tenantId?: string } = {}) {
+export async function runFlow(need: string, opts: { scenario?: "happy" | "sanctioned" | "poisoned"; autoApprove?: boolean; tenantId?: string; entityId?: string; currency?: "USD" | "EUR" | "GBP" } = {}) {
   const steps: { step: string; ok: boolean; detail: unknown }[] = [];
   const log = (step: string, ok: boolean, detail: unknown) => steps.push({ step, ok, detail });
   const d = await draftPo(need, opts.tenantId ?? TENANT);
   if (opts.scenario === "sanctioned") { d.value.supplierId = "sup-fabrikam"; d.value.category = "components"; d.value.lines = [{ sku: "FB-STL-304", description: "Stainless steel sheet 304 per ton", qty: 2, unitPrice: 3100 }]; d.value.justification = "Scenario: steel order to Fabrikam Metals whose wallet is on the demo watchlist"; }
+  if (opts.entityId) d.value.entityId = opts.entityId;
+  if (opts.currency) d.value.currency = opts.currency;
+  await ensureRates({ currency: d.value.currency, entityId: d.value.entityId, tenantId: opts.tenantId ?? TENANT });
   log("PO draft", true, { source: d.source, note: d.note, draft: d.value });
   let po = createPo(d.value, buyerAgent(opts.tenantId ?? TENANT)?.id);
   log("Policy check", po.policy.outcome !== "deny", po.policy);

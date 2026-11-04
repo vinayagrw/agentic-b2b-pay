@@ -1,10 +1,10 @@
 import type { Journal, LedgerEntry } from "./store.js";
 
-export type Line = { account: string; debit?: number; credit?: number };
+export type Line = { account: string; debit?: number; credit?: number; origCurrency?: string; origAmount?: number };
 let n = 0;
 /** Double entry. Rejects any journal where debits do not equal credits. */
 export function makeJournal(id: string, memo: string, ref: string, lines: Line[], currency = "USD"): Journal {
-  const entries: LedgerEntry[] = lines.map((l) => ({ id: `${id}-L${++n}`, journalId: id, account: l.account, debit: r(l.debit ?? 0), credit: r(l.credit ?? 0), currency, ref }));
+  const entries: LedgerEntry[] = lines.map((l) => ({ id: `${id}-L${++n}`, journalId: id, account: l.account, debit: r(l.debit ?? 0), credit: r(l.credit ?? 0), currency, ref, ...(l.origCurrency ? { origCurrency: l.origCurrency, origAmount: r(l.origAmount ?? 0) } : {}) }));
   const d = r(entries.reduce((a, e) => a + e.debit, 0)), c = r(entries.reduce((a, e) => a + e.credit, 0));
   if (d !== c) throw new Error(`Unbalanced journal ${id}: debit ${d} credit ${c}`);
   if (d === 0) throw new Error(`Empty journal ${id}`);
@@ -29,3 +29,17 @@ export function reconcile(settlements: { id: string; paymentIntentId: string; am
   });
 }
 const r = (x: number) => Math.round(x * 100) / 100;
+
+/** One entity's books. Every journal is in the entity's functional currency and must balance on its own. */
+export function entityBooks(journals: Journal[], entityId: string, functionalCurrency: string, isDefault: boolean) {
+  const mine = journals.filter((j) => (j.entityId ?? (isDefault ? entityId : null)) === entityId);
+  const wrongCcy = mine.flatMap((j) => j.entries).filter((e) => e.currency !== functionalCurrency).length;
+  const tb = trialBalance(mine);
+  // Balances per transaction currency: what each account holds in the currency the money was really in.
+  const byCurrency: Record<string, Record<string, number>> = {};
+  for (const j of mine) for (const e of j.entries) {
+    const c = e.origCurrency ?? e.currency; const amt = e.origCurrency ? (e.debit > 0 ? e.origAmount ?? 0 : -(e.origAmount ?? 0)) : e.debit - e.credit;
+    const row = (byCurrency[c] ??= {}); row[e.account] = r((row[e.account] ?? 0) + amt);
+  }
+  return { journals: mine, trialBalance: tb, functionalCurrency, balanced: tb.balanced && wrongCcy === 0, byCurrency };
+}

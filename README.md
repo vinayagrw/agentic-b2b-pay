@@ -346,6 +346,19 @@ All three are tenant scoped. A user from another tenant gets 404.
 
 Purchase orders created before signed mandates existed have no Intent or Cart, so their payments are blocked. The Why panel says so clearly. Demo reset and seed sign mandates for every open purchase order, so fresh demo data is never blocked.
 
+## Multi entity ledger and FX
+
+Each client tenant has several legal entities, each with a functional currency and its own ledger. Acme is seeded with Acme US Inc (USD), Acme Europe BV (EUR) and Acme UK Ltd (GBP). Globex has a US and a UK entity. Purchase orders, invoices and payments belong to one entity. Rows from before entities existed belong to the tenant default entity.
+
+- Orders and invoices can be in USD, EUR or GBP. Mandate limits stay in USD, so a EUR order is checked on its USD value.
+- Rates come from [Frankfurter](https://www.frankfurter.app) (ECB reference rates, no key). Rates are cached in `fx_rates` for an hour. If the source is offline the last cached rate is used and labelled stale rate. With no cached rate the step fails. A rate is never invented.
+- When a payment is approved the rate is locked as an FX quote with an id and an expiry (`fx_locks`, 15 minutes by default, `FX_LOCK_MS`). An expired or used lock is refused. Rails settle in USD at the locked rate.
+- The invoice is accrued at the rate on the match date. Settlement is booked at the locked rate. Any difference is a realised FX gain (`7100`) or loss (`7200`) line in the entity ledger.
+- Every journal is in the entity functional currency and balances inside the entity. Lines keep the original currency and amount, so the ledger view shows balances per currency too.
+- UI: the entity switcher sits in the client top bar. Entity ledger is under `/app/ledger`. The payment detail page shows the FX quote and lock, and the Why panel has a Currency and FX rate decision.
+- API: `GET /entities`, `GET /entities/:id/ledger`, `GET /fx/rate?from=EUR&to=USD`, `POST /fx/quotes`, `GET /fx/locks/:id`. `POST /invoices/:id/pay` takes an optional `fxLockId`.
+- Tests mock the rate fetch (`bff/test/fx.test.ts`): conversion, stale fallback, lock expiry, realised FX lines, per entity balance and tenant isolation.
+
 ## Safety
 
 > [!IMPORTANT]

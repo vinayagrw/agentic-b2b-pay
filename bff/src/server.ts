@@ -12,6 +12,7 @@ import { z } from "zod";
 import { PoDraft, RegisterAgent } from "@b2b/shared";
 import { db, reset, save } from "./modules/store.js";
 import * as X from "./explain.js";
+import * as FX from "./modules/fx.js";
 import * as S from "./service.js";
 import { RailError } from "./rails/index.js";
 import { onchainAddress } from "./rails/onchain.js";
@@ -88,7 +89,7 @@ export async function buildApp() {
     return payload;
   });
   app.setErrorHandler((err: any, _req, reply) => {
-    const status = err instanceof P.AuthError ? err.status : err instanceof S.HttpError ? err.status : err instanceof RailError ? err.status : err instanceof z.ZodError ? 422 : err.statusCode ?? 500;
+    const status = err instanceof P.AuthError ? err.status : err instanceof S.HttpError ? err.status : err instanceof FX.FxError ? err.status : err instanceof RailError ? err.status : err instanceof z.ZodError ? 422 : err.statusCode ?? 500;
     reply.status(status).send({ error: err instanceof z.ZodError ? "validation" : err.message, issues: err instanceof z.ZodError ? err.issues : undefined });
   });
   const b = (req: any) => (req.body ?? {}) as any;
@@ -244,17 +245,17 @@ export async function buildApp() {
   app.post("/policy/evaluate", async (req) => { const x = b(req); return S.policyFor(x.agentId ?? "agt-buyer-1", x.supplierId, x.category, Number(x.amount)).decision; });
 
   app.post("/buyer/draft", async (req) => { const { t } = ctx(req); return S.draftPo(z.object({ need: z.string().min(3) }).parse(b(req)).need, t); });
-  app.post("/purchase-orders", async (req) => S.createPo(PoDraft.parse(b(req).draft), b(req).agentId));
+  app.post("/purchase-orders", async (req) => { const d = PoDraft.parse(b(req).draft); const sup = db.suppliers.find((x) => x.id === d.supplierId); if (sup) await S.ensureRates({ currency: d.currency, entityId: d.entityId, tenantId: sup.tenantId ?? "tnt-acme" }); return S.createPo(d, b(req).agentId); });
   app.post("/approvals/:poId", async (req: any) => { const { u, t } = ctx(req); const po = db.pos.find((p) => p.id === req.params.poId); if (!po || (po.tenantId ?? "tnt-acme") !== t) throw new S.HttpError(404, "po not found"); if (b(req).approve) I.requirePermission(u, "payments.approve", { amount: po.total, tenantId: t }); return S.decideApproval(po.id, !!b(req).approve, u.id, String(b(req).comment ?? "")); });
   app.post("/goods-receipts", async (req) => S.receiveGoods(b(req).poId, Number(b(req).shortBy ?? 0)));
   app.post("/invoices/render", async (req) => ({ text: S.invoiceText(b(req).poId, { priceBumpPct: Number(b(req).priceBumpPct ?? 0), poison: !!b(req).poison }) }));
   app.post("/invoices", async (req) => S.submitInvoice(b(req).poId, String(b(req).text)));
-  app.post("/invoices/:id/match", async (req: any) => S.matchInvoice(req.params.id));
+  app.post("/invoices/:id/match", async (req: any) => { const inv = db.invoices.find((i) => i.id === req.params.id); if (inv) await S.ensureRates({ currency: inv.currency, entityId: inv.entityId, tenantId: inv.tenantId ?? "tnt-acme" }); return S.matchInvoice(req.params.id); });
   app.post("/invoices/:id/pay", async (req: any) => {
     const key = req.headers["idempotency-key"]; if (!key) throw new S.HttpError(400, "Idempotency-Key header required");
     const u = who(req); const inv = db.invoices.find((i) => i.id === req.params.id); const po = inv && db.pos.find((p) => p.id === inv.poId);
     if (po) { if (!P.canAccessTenant(u, po.tenantId ?? "tnt-acme") || !I.inEntityScope(u, po.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "invoice not found"); I.sodPay(u, po as any); }
-    return S.payInvoice(req.params.id, String(key), { urgency: b(req).urgency, approvers: b(req).approvers });
+    return S.payInvoice(req.params.id, String(key), { urgency: b(req).urgency, approvers: b(req).approvers, fxLockId: b(req).fxLockId ? String(b(req).fxLockId) : undefined });
   });
   app.post("/refunds", async (req) => { const u = who(req); const pi = db.intents.find((i) => i.id === b(req).paymentIntentId); if (!pi || !P.canAccessTenant(u, pi.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "payment not found"); const r = await S.refund(pi.id, Number(b(req).amount), String(b(req).reason ?? "refund")); P.audit(u.id, "refund", r.id, "refund.requested_by", { amount: r.amount }); return r; });
   app.post("/erp/vendor-master/changes", async (req) => S.requestPayeeChange({ ...b(req), source: b(req).source ?? "erp" }));
@@ -262,10 +263,16 @@ export async function buildApp() {
   app.post("/erp/vendor-master/changes/:id/callback", async (req: any) => S.callbackPayeeChange(req.params.id, !!b(req).confirmed));
   app.get("/settlements/:id", async (req: any) => db.settlements.find((s) => s.id === req.params.id) ?? { error: "not found" });
   app.get("/ledger/journals", async () => S.ledgerView());
+  // Legal entities and FX. A client sees only its own entities, locks and books.
+  app.get("/entities", async (req) => S.entitiesView(scopeOf(req)));
+  app.get("/entities/:id/ledger", async (req: any) => S.entityLedgerView(req.params.id, scopeOf(req)));
+  app.get("/fx/rate", async (req: any) => FX.getRate(String(req.query?.from ?? "EUR"), String(req.query?.to ?? "USD")));
+  app.post("/fx/quotes", async (req) => { const { t } = ctx(req); const x = b(req); return FX.lockQuote({ tenantId: t, entityId: String(x.entityId), from: String(x.from), to: String(x.to ?? "USD") }); });
+  app.get("/fx/locks/:id", async (req: any) => { const l = FX.getLock(req.params.id, scopeOf(req)); if (!l) throw new S.HttpError(404, "FX lock not found"); return { ...l, expired: FX.isExpired(l) }; });
   app.get("/statements/camt053", async (req: any, reply) => { const t = req.query?.tenantId ? clientOf(req, who(req)) : scopeOf(req); return reply.type("application/xml").header("content-disposition", `attachment; filename="camt053-${t ?? "all"}.xml"`).send(S.camt053(undefined, t)); });
   app.get("/evidence", async (req) => S.evidenceView(undefined, scopeOf(req)));
   app.get("/evidence/:subjectId", async (req: any) => S.evidenceView(req.params.subjectId, scopeOf(req)));
-  app.post("/scenario/run", async (req) => { const { t } = ctx(req); return S.runFlow(String(b(req).need ?? "Need 2000 sealed 6204 bearings for line 3 maintenance"), { scenario: b(req).scenario ?? "happy", tenantId: t }); });
+  app.post("/scenario/run", async (req) => { const { t } = ctx(req); return S.runFlow(String(b(req).need ?? "Need 2000 sealed 6204 bearings for line 3 maintenance"), { scenario: b(req).scenario ?? "happy", tenantId: t, entityId: b(req).entityId ? String(b(req).entityId) : undefined, currency: ["USD", "EUR", "GBP"].includes(b(req).currency) ? b(req).currency : undefined }); });
   // Rails, payments, webhooks
   app.get("/rails", async () => S.railsView());
   app.get("/rails/balances", async () => S.railBalances());

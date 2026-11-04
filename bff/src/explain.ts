@@ -3,12 +3,12 @@ import type { EvidenceRecord } from "./modules/store.js";
 import { verifyChain } from "./modules/evidence.js";
 import * as AP2 from "./modules/ap2.js";
 import * as P from "./platform.js";
-import { HttpError } from "./service.js";
+import { HttpError, entityFor } from "./service.js";
 
 /** Plain words "why" for every decision on a payment. Built only from stored records. Deterministic, no model. */
 export type Actor = { kind: "agent" | "system" | "person"; id: string; name: string };
 export type WhyItem = {
-  key: "mandates" | "policy" | "approval" | "compliance" | "route" | "settlement";
+  key: "mandates" | "policy" | "approval" | "fx" | "compliance" | "route" | "settlement";
   decision: string;
   outcome: "passed" | "failed" | "waiting" | "not reached";
   why: string;
@@ -83,6 +83,20 @@ export function explainPayment(paymentId: string, tenantId: string | null): WhyV
     drivers: mv ? (mp.ok ? ["All mandate checks passed"] : (mp.failed ?? [])) : [], decidedBy: SYSTEM, at: mv?.createdAt ?? null, evidence: ref(mv ?? signed),
   });
 
+  // FX quote and lock
+  const fxe = last(pi.id, "fx.realised", "fx.quote_locked");
+  const fx = pi.fx;
+  const ent = entityFor(pi, tenantOf(pi));
+  const nums = (n: number, c: string) => `${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${c}`;
+  items.push({
+    key: "fx", decision: "Currency and FX rate", outcome: fx ? "passed" : (inv.currency ?? "USD") === "USD" && ent.currency === "USD" ? "passed" : "not reached",
+    why: !fx ? ((inv.currency ?? "USD") === "USD" && ent.currency === "USD" ? `The invoice is in USD and ${ent.name} keeps its books in USD, so no conversion was needed.` : "No FX quote was locked because the payment stopped earlier.")
+      : `${ent.name} keeps its books in ${ent.currency}. The ${fx.invoiceCurrency} invoice of ${nums(fx.invoiceAmount, fx.invoiceCurrency)} settles in USD, so the rate ${fx.rate} was locked as quote ${fx.lockId} until ${fx.expiresAt}, giving ${nums(fx.settlementAmount, "USD")}.${fx.stale ? " The rate source was offline, so this is the last cached rate and is marked stale." : ""}`
+        + (fx.realised ? (fx.realised.kind === "none" ? " Settlement matched the accrual, so there is no FX gain or loss." : ` Settlement differed from the accrual, so a realised FX ${fx.realised.kind} of ${nums(Math.abs(fx.realised.gainLoss), ent.currency)} was booked.`) : ""),
+    drivers: fx ? [`Rate source: ${fx.source}${fx.rateDate ? `, rate date ${fx.rateDate}` : ""}`, `Rate fetched at ${fx.fetchedAt}${fx.stale ? " (stale rate)" : ""}`, `Locked ${fx.lockedAt}, expires ${fx.expiresAt}`, `Functional rate ${fx.invoiceCurrency} to ${fx.functionalCurrency}: ${fx.functionalRate}`, ...(inv.accrual ? [`Accrual rate ${inv.accrual.rate} at ${inv.accrual.at}`] : [])] : [`Entity ${ent.name} (${ent.currency})`],
+    decidedBy: SYSTEM, at: fxe?.createdAt ?? null, evidence: ref(fxe),
+  });
+
   // 4. Compliance
   const ce = last(pi.id, "compliance.screened");
   const tr = last(pi.id, "travel_rule.record");
@@ -119,7 +133,7 @@ export function explainPayment(paymentId: string, tenantId: string | null): WhyV
     at: se?.createdAt ?? null, evidence: ref(se),
   });
 
-  const order: WhyItem["key"][] = ["policy", "approval", "mandates", "compliance", "route", "settlement"];
+  const order: WhyItem["key"][] = ["policy", "approval", "mandates", "fx", "compliance", "route", "settlement"];
   items.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
   const stop = items.find((i) => i.outcome === "failed");
   const headline = st === "settled" ? `Paid ${money(pi.amount)}. Every check passed.` : stop ? `Stopped at ${stop.decision.toLowerCase()}. ${stop.why}` : `Payment is ${st}.`;

@@ -9,8 +9,8 @@ import { canonical } from "./evidence.js";
 /** AP2 style mandates. Private keys live on disk under data/keys/mandates (gitignored), never in the model context or the API. */
 export type SignerKind = "user" | "agent";
 export type MandateLine = { sku: string; qty: number; unitPrice: number };
-export type IntentBody = { type: "intent"; id: string; poId: string; tenantId: string; principalUserId: string; agentId: string; maxAmount: number; currency: "USD"; supplierId: string; category: string; expiresAt: string; constraints: { allowedRails: string[]; category: string }; createdAt: string };
-export type CartBody = { type: "cart"; id: string; poId: string; tenantId: string; agentId: string; intentHash: string; supplierId: string; currency: "USD"; amount: number; lines: MandateLine[]; railHint: string | null; createdAt: string };
+export type IntentBody = { type: "intent"; id: string; poId: string; tenantId: string; principalUserId: string; agentId: string; maxAmount: number; currency: string; supplierId: string; category: string; expiresAt: string; constraints: { allowedRails: string[]; category: string }; createdAt: string };
+export type CartBody = { type: "cart"; id: string; poId: string; tenantId: string; agentId: string; intentHash: string; supplierId: string; currency: string; amount: number; lines: MandateLine[]; railHint: string | null; createdAt: string };
 export type SignedMandate<B = IntentBody | CartBody> = { id: string; kind: "intent" | "cart"; poId: string; tenantId: string; signerId: string; signerKind: SignerKind; body: B; hash: string; signature: string; createdAt: string; supersededAt: string | null };
 export type PaymentBinding = { poId: string; supplierId: string; currency: string; amount: number; lines: MandateLine[] };
 export type MandateCheck = { rule: string; pass: boolean; detail: string };

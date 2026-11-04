@@ -18,7 +18,7 @@ describe("explainable decisions (no model)", () => {
   it("explains an approved payment with evidence ids and hashes", async () => {
     const r = await S.runFlow("Need 50 sealed 6204 bearings");
     const w = X.explainPayment(r.intentId!, null);
-    expect(w.items.map((i) => i.key)).toEqual(["policy", "approval", "mandates", "compliance", "route", "settlement"]);
+    expect(w.items.map((i) => i.key)).toEqual(["policy", "approval", "mandates", "fx", "compliance", "route", "settlement"]);
     for (const k of ["policy", "mandates", "compliance", "route"]) expect(w.items.find((i) => i.key === k)!.outcome).toBe("passed");
     const m = w.items.find((i) => i.key === "mandates")!;
     expect(m.evidence?.hash).toMatch(/^[0-9a-f]{64}$/);

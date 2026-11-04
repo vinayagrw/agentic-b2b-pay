@@ -16,6 +16,7 @@ import { TraceTimeline } from "../components/TraceTimeline";
 import { RouteGraph } from "../components/RouteGraph";
 import { MandatesCard } from "../components/Mandates";
 import { WhyPanel } from "../components/WhyPanel";
+import { FxCard } from "./entities";
 
 type Step = { key: string; label: string; status: "done" | "failed" | "blocked" | "running" | "waiting" | "skipped" | "not_reached"; actor: { kind: "agent" | "person" | "system"; name: string } | null; at: string | null; durationMs: number | null; reason: string | null; details: any };
 type Flow = { intent: any; steps: Step[]; decision: { deterministic: { rail: string | null; reason: string; options: any[] } | null; explanation: string | null; explainedBy: string | null; decidedBy: "router" } };
@@ -127,6 +128,7 @@ export function FlowPage() {
         <Muted>Select a step to see its details. Use the arrow keys to move between steps.</Muted>
       </Card>
       {cur && <Card title="Step details"><StepDetails s={cur} /></Card>}
+      <FxCard id={data.intent.id} />
       <WhyPanel id={data.intent.id} />
       <MandatesCard id={data.intent.id} />
       <TraceTimeline id={data.intent.id} />

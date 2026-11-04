@@ -6,6 +6,7 @@ import { api, useLiveEvents, useMe, type Me } from "../lib/api";
 import { applyTheme } from "../lib/theme";
 import { cn } from "../lib/utils";
 import { CommandPalette, ShortcutsOverlay, useShortcuts } from "./CommandPalette";
+import { EntitySwitcher } from "../pages/entities";
 import { Badge, Menu, MenuContent, MenuItem, MenuLabel, MenuSep, MenuTrigger } from "./ui";
 
 type Item = { to: string; label: string; icon: LucideIcon };
@@ -21,7 +22,7 @@ export const CLIENT_NAV: Item[] = [
   { to: "/app", label: "Home", icon: Home }, { to: "/app/purchase-orders", label: "Purchase orders", icon: ShoppingCart },
   { to: "/app/invoices", label: "Invoices", icon: FileText }, { to: "/app/approvals", label: "Approvals", icon: Inbox },
   { to: "/app/agents", label: "Agents", icon: Bot }, { to: "/app/suppliers", label: "Suppliers", icon: Truck },
-  { to: "/app/payments", label: "Payments", icon: Banknote }, { to: "/app/transactions", label: "Transactions", icon: Activity }, { to: "/app/rules", label: "Rules", icon: Workflow }, { to: "/app/developers", label: "Developers", icon: Code2 },
+  { to: "/app/payments", label: "Payments", icon: Banknote }, { to: "/app/transactions", label: "Transactions", icon: Activity }, { to: "/app/ledger", label: "Entity ledger", icon: Scale }, { to: "/app/rules", label: "Rules", icon: Workflow }, { to: "/app/developers", label: "Developers", icon: Code2 },
   { to: "/app/roles", label: "Roles", icon: UserCog }, { to: "/app/sessions", label: "Sessions", icon: MonitorSmartphone },
 ];
 
@@ -72,6 +73,7 @@ function TopBar({ me, kind, onSearch }: { me: Me; kind: "operator" | "client"; o
       </MenuContent></Menu>
     <Badge v={live ? "LIVE" : "TEST"} tone={live ? "bad" : "warn"} className="tracking-wide" />
     {me.operator && kind === "client" && <Badge v="Viewing as operator" tone="primary" />}
+    {kind === "client" && <EntitySwitcher />}
     <span className="ml-auto" />
     <button className="hidden h-8 items-center gap-2 rounded-md border border-border px-2.5 text-xs text-muted hover:bg-subtle sm:flex" onClick={onSearch} aria-label="Open command palette"><Search size={13} aria-hidden />Search<kbd className="rounded border border-border bg-subtle px-1 font-mono text-[10px]">Ctrl K</kbd></button>
     <Badge v={`LLM ${me.llmMode}`} tone="neutral" />

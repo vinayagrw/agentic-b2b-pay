@@ -21,9 +21,10 @@ export type PoLine = z.infer<typeof PoLine>;
 export const PoDraft = z.object({
   supplierId: z.string().min(1),
   category: Category,
-  currency: z.literal("USD"),
+  currency: z.enum(["USD", "EUR", "GBP"]),
   lines: z.array(PoLine).min(1),
   justification: z.string().min(1),
+  entityId: z.string().min(1).optional(),
 }).strict();
 export type PoDraft = z.infer<typeof PoDraft>;
 
@@ -32,7 +33,7 @@ export const InvoiceExtract = z.object({
   invoiceNumber: z.string().min(1),
   poNumber: z.string().min(1),
   supplierName: z.string().min(1),
-  currency: z.literal("USD"),
+  currency: z.enum(["USD", "EUR", "GBP"]),
   lines: z.array(z.object({ sku: z.string(), qty: z.number(), unitPrice: z.number() })).min(1),
   total: z.number().nonnegative(),
   dueDate: z.string(),
