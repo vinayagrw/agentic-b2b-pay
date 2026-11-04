@@ -11,7 +11,7 @@
 ![Stripe test mode](https://img.shields.io/badge/Stripe-test%20mode-635BFF?logo=stripe&logoColor=white)
 ![Base Sepolia](https://img.shields.io/badge/Base-Sepolia-0052FF?logo=coinbase&logoColor=white)
 ![Claude CLI](https://img.shields.io/badge/Claude-CLI-D97757?logo=anthropic&logoColor=white)
-![License](https://img.shields.io/badge/license-private%20demo-lightgrey)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![Tests](https://img.shields.io/badge/tests-98%20passed-brightgreen)
 
 [Screenshots](#screenshots) · [How a payment flows](#how-a-payment-flows) · [Quick start](#quick-start) · [Sandbox setup](#sandbox-setup) · [Architecture](#architecture) · [Safety](#safety)
