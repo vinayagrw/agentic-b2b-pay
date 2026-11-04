@@ -21,7 +21,7 @@ export function PaymentsTable({ title = "Payments" }: { title?: string }) {
   const [open, setOpen] = useState<string | null>(null);
   const { run, busy, error: e2 } = useAct();
   const cols = useMemo<ColumnDef<any>[]>(() => [
-    { header: "Payment", accessorKey: "id", cell: (c) => <Mono>{c.getValue<any>()}</Mono> },
+    { header: "Payment", accessorKey: "id", cell: (c) => <span className="flex flex-col"><Mono>{c.getValue<any>()}</Mono>{c.row.original.kind === "refund" && <Muted>Refund of {c.row.original.linkedIntentId}</Muted>}</span> },
     { header: "Amount", accessorKey: "amount", cell: (c) => <span className="tabular-nums">{usd(c.getValue<any>())}</span> },
     { header: "Status", accessorKey: "status", cell: (c) => <Badge v={c.getValue<any>()} tone={c.getValue<any>() === "pending" || c.getValue<any>() === "submitted" ? "warn" : undefined} /> },
     { header: "Rail", id: "rail", accessorFn: (r) => r.rail ?? r.route?.rail ?? "", cell: (c) => <span className="flex items-center gap-1">{railName(c.getValue<any>())}{c.row.original.env && <Badge v={c.row.original.env === "live" ? "LIVE" : "TEST"} tone={c.row.original.env === "live" ? "bad" : "neutral"} />}</span> },
@@ -57,6 +57,9 @@ export function PaymentDrawer({ id, onClose }: { id: string | null; onClose: () 
             <tr><td className="text-muted">Idempotency key</td><td><Mono className="break-all">{pi.idempotencyKey}</Mono></td></tr>
           </Table>
           {pi.blockedReason && <ErrorNote msg={pi.blockedReason} />}
+          {pi.kind === "refund" && <Muted>Refund linked to payment {pi.linkedIntentId}</Muted>}
+          {!!pi.refundIds?.length && <Muted>Refunds: {pi.refundIds.join(", ")}</Muted>}
+          {pi.status === "settled" && pi.kind !== "refund" && <RefundBox pi={pi} />}
           <div className="text-xs font-semibold uppercase tracking-wide text-muted">Timeline</div>
           <ol className="relative ml-2 border-l border-border">
             {(pi.timeline ?? []).map((t: any, n: number) => <li key={n} className="mb-3 ml-4">
@@ -80,4 +83,13 @@ export function RailStatus() {
     <td className="font-medium">{r.label}</td><td><Badge v={r.env === "live" ? "LIVE" : "TEST"} tone={r.env === "live" ? "bad" : "neutral"} /></td>
     <td>{r.configured ? <Badge v="Ready" tone="ok" /> : <span className="flex items-center gap-1"><Badge v="Not configured" tone="bad" /><Muted>{r.notConfiguredReason}</Muted></span>}{r.address && <div><Mono className="text-muted">{r.address}</Mono></div>}</td>
     <td className="tabular-nums">{usd(r.feeUsd)}</td></tr>)}</Table> : <Muted className="p-4">Loading</Muted>}</Card>;
+}
+
+/** Refunds go back on the same rail when the provider supports it. Stablecoin sends are final. */
+function RefundBox({ pi }: { pi: any }) {
+  const { run, busy, error } = useAct(); const [amount, setAmount] = useState(""); const [reason, setReason] = useState("");
+  return <div className="flex flex-col gap-2 rounded-lg bg-subtle p-3"><div className="text-xs font-medium">Refund</div>
+    <div className="flex gap-2"><input className="h-8 w-24 rounded-md border border-border bg-surface px-2 text-[13px]" type="number" min={0} aria-label="Refund amount" placeholder="Amount" value={amount} onChange={(e) => setAmount(e.target.value)} /><input className="h-8 flex-1 rounded-md border border-border bg-surface px-2 text-[13px]" aria-label="Refund reason" placeholder="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
+      <Button size="sm" disabled={busy || !Number(amount) || !reason} onClick={() => run(() => api("/refunds", { paymentIntentId: pi.id, amount: Number(amount), reason }))}>Refund</Button></div>
+    <ErrorNote msg={error} /></div>;
 }

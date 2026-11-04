@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type { Rail } from "@b2b/shared";
 import { sql } from "./db.js";
 import { adapter, RAIL_IDS } from "./rails/index.js";
@@ -19,8 +21,10 @@ export class AuthError extends Error { constructor(public status: number, msg: s
 const rails = (): Tenant["railSettings"] => Object.fromEntries(RAIL_IDS.map((r) => [r, { env: "sandbox" }]));
 export const railEnv = (tenantId: string, rail: Rail): RailSetting["env"] => getTenant(tenantId)?.railSettings[rail]?.env ?? "sandbox";
 export const SEED_TENANTS: Omit<Tenant, "createdAt">[] = [
-  { id: "bank-northstar", kind: "bank", parentId: null, name: "Northstar Bank", branding: { name: "Northstar Bank", logo: null, primary: "#1d4ed8", accent: "#f59e0b" }, railSettings: rails() },
-  { id: "bank-harbor", kind: "bank", parentId: null, name: "Harbor Trust", branding: { name: "Harbor Trust", logo: null, primary: "#0f766e", accent: "#e11d48" }, railSettings: rails() },
+  { id: "bank-northstar", kind: "bank", parentId: null, name: "Northstar Bank", branding: { name: "Northstar Bank", logo: "/api/uploads/seed-northstar.svg", primary: "#1d4ed8", accent: "#f59e0b" }, railSettings: rails(),
+    pricing: { stripe_card: { pct: 0.4, fixed: 0.1 }, stripe_ach: { pct: 0.1, fixed: 0.25 }, circle_usdc: { pct: 0.15, fixed: 0 }, onchain_usdc: { pct: 0.1, fixed: 0 } } },
+  { id: "bank-harbor", kind: "bank", parentId: null, name: "Harbor Trust", branding: { name: "Harbor Trust", logo: "/api/uploads/seed-harbor.svg", primary: "#0f766e", accent: "#e11d48" }, railSettings: rails(),
+    pricing: { stripe_card: { pct: 0.5, fixed: 0 }, stripe_ach: { pct: 0.08, fixed: 0.3 }, circle_usdc: { pct: 0.2, fixed: 0 }, onchain_usdc: { pct: 0.12, fixed: 0 } } },
   { id: "tnt-acme", kind: "client", parentId: "bank-northstar", name: "Acme Manufacturing Inc", branding: { name: "Acme Manufacturing", logo: null, primary: "#1d4ed8", accent: "#f59e0b" }, railSettings: rails() },
   { id: "tnt-globex", kind: "client", parentId: "bank-harbor", name: "Globex Retail Group", branding: { name: "Globex Retail", logo: null, primary: "#0f766e", accent: "#e11d48" }, railSettings: rails() },
 ];
@@ -37,12 +41,20 @@ export const SEED_USERS: User[] = [
   { id: "usr-globex-gwen", tenantId: "tnt-globex", name: "Gwen Ito", email: "gwen@globex.demo", role: "ap_clerk" },
 ];
 
+/** Seeded bank logos, written once into the upload folder. Simple marks in each bank's colours. */
+export const SEED_LOGOS: Record<string, string> = {
+  "seed-northstar.svg": `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1d4ed8"/><path d="M32 10l5.5 16.5H54L40.5 36.5 46 54 32 43 18 54l5.5-17.5L10 26.5h16.5z" fill="#f59e0b"/></svg>`,
+  "seed-harbor.svg": `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0f766e"/><path d="M32 12v34M20 24h24M14 38c4 10 32 10 36 0" stroke="#fff" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="32" cy="12" r="4" fill="#e11d48"/></svg>`,
+};
+export function writeSeedLogos(dir: string) {
+  try { fs.mkdirSync(dir, { recursive: true }); for (const [n, svg] of Object.entries(SEED_LOGOS)) { const f = path.join(dir, n); if (!fs.existsSync(f)) fs.writeFileSync(f, svg); } } catch { /* read only disk, the initials fallback shows */ }
+}
 export function seedPlatform() {
   if ((sql.prepare("SELECT COUNT(*) n FROM tenants").get() as { n: number }).n) return topUpSeed();
   const now = new Date().toISOString();
   sql.transaction(() => {
-    const t = sql.prepare("INSERT INTO tenants (id, kind, parent_id, name, branding, rail_settings, created_at) VALUES (?,?,?,?,?,?,?)");
-    for (const x of SEED_TENANTS) t.run(x.id, x.kind, x.parentId, x.name, JSON.stringify(x.branding), JSON.stringify(x.railSettings), now);
+    const t = sql.prepare("INSERT INTO tenants (id, kind, parent_id, name, branding, rail_settings, created_at, pricing) VALUES (?,?,?,?,?,?,?,?)");
+    for (const x of SEED_TENANTS) t.run(x.id, x.kind, x.parentId, x.name, JSON.stringify(x.branding), JSON.stringify(x.railSettings), now, JSON.stringify(x.pricing ?? {}));
     const u = sql.prepare("INSERT INTO users (id, tenant_id, name, email, role) VALUES (?,?,?,?,?)");
     for (const x of SEED_USERS) u.run(x.id, x.tenantId, x.name, x.email, x.role);
   })();
@@ -53,7 +65,7 @@ export function topUpSeed() {
   for (const x of SEED_USERS) u.run(x.id, x.tenantId, x.name, x.email, x.role);
 }
 
-const toTenant = (r: any): Tenant => ({ id: r.id, kind: r.kind, parentId: r.parent_id, name: r.name, branding: JSON.parse(r.branding), railSettings: JSON.parse(r.rail_settings), createdAt: r.created_at });
+const toTenant = (r: any): Tenant => ({ id: r.id, kind: r.kind, parentId: r.parent_id, name: r.name, branding: JSON.parse(r.branding), railSettings: JSON.parse(r.rail_settings), createdAt: r.created_at, pricing: r.pricing ? JSON.parse(r.pricing) : {} });
 const toUser = (r: any): User => ({ id: r.id, tenantId: r.tenant_id, name: r.name, email: r.email, role: r.role });
 export const listTenants = () => (sql.prepare("SELECT * FROM tenants ORDER BY kind, name").all() as any[]).map(toTenant);
 export const getTenant = (id: string) => { const r = sql.prepare("SELECT * FROM tenants WHERE id = ?").get(id); return r ? toTenant(r) : null; };

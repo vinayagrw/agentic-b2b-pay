@@ -18,7 +18,7 @@ export function ClientHome() {
   const [poId, setPoId] = useState<string>();
   const ev = useGet<any>("/evidence");
   return <Wrap title="Good to see you" sub="Your spend, approvals and agent activity at a glance">{(st) => {
-    const spent = st.intents.filter((i: any) => i.status === "settled").reduce((a: number, i: any) => a + i.amount, 0);
+    const spent = st.intents.filter((i: any) => i.status === "settled" && i.kind !== "refund").reduce((a: number, i: any) => a + i.amount, 0);
     const pending = st.pos.filter((p: any) => p.status === "pending_approval").length;
     const openInv = st.invoices.filter((i: any) => !i.paid).length;
     const feed = (ev.data?.records ?? []).filter((r: any) => ["agent", "po", "invoice", "payment"].includes(r.subjectType)).slice(-8).reverse();

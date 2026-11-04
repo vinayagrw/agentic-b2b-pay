@@ -12,7 +12,7 @@ export function useScopedState() {
   return { st: q.data ? { ...EMPTY, ...q.data } : null, loading: q.isLoading, error: q.error as Error | null, empty: false };
 }
 export function Loading({ error }: { error?: Error | null }) {
-  return error ? <ErrorNote msg={`Could not reach the BFF. ${error.message}`} /> : <div className="py-10 text-center text-xs text-muted">Loading</div>;
+  return error ? <ErrorNote msg={(error as any).status ? error.message : `Could not reach the BFF. ${error.message}`} /> : <div className="py-10 text-center text-xs text-muted">Loading</div>;
 }
 export const Busy = ({ on }: { on: boolean }) => on ? <Muted>Working. Live LLM calls can take up to 60 seconds.</Muted> : null;
 

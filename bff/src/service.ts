@@ -367,6 +367,7 @@ export async function railBalances(tenantId = TENANT) {
 /** Refunds use the provider's own refund where it exists (Stripe). Stablecoin sends are final, a refund is a new payment from the supplier. */
 export async function refund(intentId: string, amount: number, reason: string) {
   const pi = must(db.intents.find((p) => p.id === intentId), "payment intent");
+  if (pi.kind === "refund") throw new HttpError(409, "A refund cannot be refunded");
   const st = db.settlements.find((s) => s.id === pi.settlementId);
   if (!st) throw new HttpError(409, "Payment not settled");
   const already = db.refunds.filter((r) => r.originalIntentId === intentId && r.status !== "failed" && r.status !== "rejected").reduce((a, r) => a + r.amount, 0);
@@ -377,8 +378,15 @@ export async function refund(intentId: string, amount: number, reason: string) {
   const rc = await a.refund(st.railRef, amount, pi.env ?? "sandbox");
   const r = { id, originalIntentId: intentId, amount, reason, rail: st.rail, status: rc.status === "settled" ? "settled" as const : rc.status === "failed" ? "failed" as const : "pending" as const, railRef: rc.providerRef, txHash: null, createdAt: now() };
   db.refunds.push(r);
-  if (r.status === "settled") db.journals.push(makeJournal(nextId("jnl"), `Refund ${id} for ${intentId}`, id, [{ account: cashAccount(st.rail), debit: amount }, { account: "1400 Supplier refunds receivable cleared", credit: amount }]));
-  ev("refund", id, `refund.${r.status}`, { originalIntentId: intentId, amount, rail: st.rail, providerRef: rc.providerRef });
+  // The refund is also a payment in its own right, linked to the original, so it shows in payments, revenue and recon.
+  const linked: PaymentIntent = { id: nextId("pi"), kind: "refund", linkedIntentId: pi.id, invoiceId: pi.invoiceId, mandateId: pi.mandateId, amount, currency: "USD", status: r.status === "settled" ? "settled" : r.status === "failed" ? "failed" : "pending",
+    rail: st.rail, env: pi.env, providerRef: rc.providerRef, dashboardUrl: rc.dashboardUrl ?? pi.dashboardUrl, createdAt: now(), tenantId: tenantOf(pi), idempotencyKey: `refund-${id}`, blockedReason: r.status === "failed" ? "Provider refused the refund" : undefined,
+    timeline: [{ at: now(), status: "created", source: "platform", detail: `Refund of ${pi.id}: ${reason}` }, { at: now(), status: r.status === "settled" ? "settled" : r.status, source: "adapter", detail: `${st.rail} refund ${rc.providerRef}` }] };
+  db.intents.push(linked); (pi.refundIds ??= []).push(linked.id); (r as any).intentId = linked.id;
+  if (r.status === "settled") db.journals.push(tj(tenantOf(pi), makeJournal(nextId("jnl"), `Refund ${id} for ${intentId}`, linked.id, [{ account: cashAccount(st.rail), debit: amount }, { account: "1400 Supplier refunds receivable cleared", credit: amount }])));
+  ev("refund", id, `refund.${r.status}`, { originalIntentId: intentId, refundIntentId: linked.id, amount, rail: st.rail, providerRef: rc.providerRef });
+  ev("payment", pi.id, "payment.refund_linked", { refundIntentId: linked.id, amount });
+  if (r.status === "settled") publish(tenantOf(pi), "payment.refunded", { id: linked.id, originalId: pi.id, amount, rail: st.rail });
   save(); return r;
 }
 

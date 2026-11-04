@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { applyTheme } from "../lib/theme";
+import { Logo } from "../components/Shell";
 import { ArrowDown, ArrowUp, Bot, Check, Copy, KeyRound, Plus, Power, Trash2, UserPlus, Workflow, X } from "lucide-react";
 import { RAIL_LABEL, type Rail } from "@b2b/shared";
 import { api, useAct, useGet, useMe } from "../lib/api";
@@ -250,12 +252,14 @@ export function OnboardPortal({ token }: { token: string }) {
   const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
   const call = async (path: string, body: unknown) => { setBusy(true); setErr(""); try { await api(`/onboard/${token}${path}`, body); await refetch(); return true; } catch (e: any) { setErr(e.message); return false; } finally { setBusy(false); } };
   const [k, setK] = useState<any>(null);
+  useEffect(() => { applyTheme(data?.theme); }, [data?.theme]);
   if (error) return <EmptyState icon={UserPlus} title="This link does not work" body={(error as Error).message} />;
   if (!data) return <Loading />;
   const kyb = k ?? data.kyb ?? { legalName: data.name, taxIdType: "ein", taxId: "", address: { line1: "", city: "", postalCode: "", country: "US" }, ubos: [{ name: "", ownershipPct: 100, country: "US" }] };
   const set = (patch: any) => setK({ ...kyb, ...patch });
   const locked = !["draft", "rejected"].includes(data.status);
   return <div className="flex flex-col gap-4">
+    <div className="flex items-center gap-2 text-[13px] text-muted"><Logo name={data.theme.name} logo={data.theme.logo} size={28} />{data.theme.name} supplier portal</div>
     <div className="flex items-center gap-2"><h1 className="text-lg font-semibold">Get paid by {data.tenant}</h1><Badge v={data.status} tone={data.status === "verified" ? "ok" : data.status === "rejected" ? "bad" : "warn"} /></div>
     <p className="text-[13px] text-muted">Fill in your company details and how you want to be paid. {data.tenant} reviews and verifies your details before the first payment.</p>
     {data.status === "rejected" && data.reviewNote && <ErrorNote msg={`Your details were sent back: ${data.reviewNote}`} />}

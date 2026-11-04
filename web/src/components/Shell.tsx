@@ -19,7 +19,7 @@ export const CLIENT_NAV: Item[] = [
   { to: "/app", label: "Home", icon: Home }, { to: "/app/purchase-orders", label: "Purchase orders", icon: ShoppingCart },
   { to: "/app/invoices", label: "Invoices", icon: FileText }, { to: "/app/approvals", label: "Approvals", icon: Inbox },
   { to: "/app/agents", label: "Agents", icon: Bot }, { to: "/app/suppliers", label: "Suppliers", icon: Truck },
-  { to: "/app/payments", label: "Payments", icon: Banknote }, { to: "/app/rules", label: "Rules", icon: Workflow },
+  { to: "/app/payments", label: "Payments", icon: Banknote }, { to: "/app/rules", label: "Rules", icon: Workflow }, { to: "/app/developers", label: "Developers", icon: Code2 },
 ];
 
 export function Logo({ name, logo, size = 28 }: { name: string; logo: string | null; size?: number }) {

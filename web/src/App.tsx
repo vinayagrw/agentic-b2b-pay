@@ -30,7 +30,7 @@ export function App() {
     <Route path="/app" element={<Gate kind="client" />}>
       <Route index element={<C.ClientHome />} /><Route path="purchase-orders" element={<C.PurchaseOrders />} /><Route path="invoices" element={<C.Invoices />} />
       <Route path="approvals" element={<C.Approvals />} /><Route path="agents" element={<C.Agents />} /><Route path="suppliers" element={<C.Suppliers />} />
-      <Route path="payments" element={<C.Payments />} /><Route path="rules" element={<C.Rules />} />
+      <Route path="payments" element={<C.Payments />} /><Route path="rules" element={<C.Rules />} /><Route path="developers" element={<O.Developers />} />
     </Route>
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes></BrowserRouter></QueryClientProvider>;

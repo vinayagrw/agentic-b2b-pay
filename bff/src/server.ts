@@ -18,6 +18,8 @@ import { llmMode } from "./llm.js";
 import { fileURLToPath } from "node:url";
 import * as W from "./workspace.js";
 import * as O from "./ops.js";
+import * as D from "./developers.js";
+import * as A from "./analytics.js";
 import { scoped } from "./modules/store.js";
 
 /** MCP style tool registry. Same names as REST operations. */
@@ -182,7 +184,7 @@ export async function buildApp() {
     const key = req.headers["idempotency-key"]; if (!key) throw new S.HttpError(400, "Idempotency-Key header required");
     return S.payInvoice(req.params.id, String(key), { urgency: b(req).urgency, approvers: b(req).approvers });
   });
-  app.post("/refunds", async (req) => S.refund(b(req).paymentIntentId, Number(b(req).amount), String(b(req).reason ?? "refund")));
+  app.post("/refunds", async (req) => { const u = guard(req, APPR); const pi = db.intents.find((i) => i.id === b(req).paymentIntentId); if (!pi || !P.canAccessTenant(u, pi.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "payment not found"); const r = await S.refund(pi.id, Number(b(req).amount), String(b(req).reason ?? "refund")); P.audit(u.id, "refund", r.id, "refund.requested_by", { amount: r.amount }); return r; });
   app.post("/erp/vendor-master/changes", async (req) => S.requestPayeeChange({ ...b(req), source: b(req).source ?? "erp" }));
   app.post("/erp/vendor-master/changes/:id/approve", async (req: any) => S.approvePayeeChange(req.params.id, String(b(req).approver)));
   app.post("/erp/vendor-master/changes/:id/callback", async (req: any) => S.callbackPayeeChange(req.params.id, !!b(req).confirmed));
@@ -234,6 +236,21 @@ export async function buildApp() {
   app.put("/ops/cases/:id/sar", async (req: any) => O.editSar(guard(req, OPA), req.params.id, String(b(req).text ?? "")));
   app.post("/ops/cases/:id/sar/file", async (req: any) => O.fileSar(guard(req, OPA), req.params.id));
   app.post("/ops/cases/:id/close", async (req: any) => O.closeCase(guard(req, OPA), req.params.id, String(b(req).resolution ?? "")));
+  // Step 6: revenue, KPIs, dispute evidence, developer keys and webhooks
+  app.get("/ops/revenue", async (req) => { guard(req, OPS); return A.revenue(); });
+  app.get("/ops/kpis", async (req) => { guard(req, OPS); return A.kpis(); });
+  app.get("/cases/:id/evidence-pack", async (req: any, reply) => { const u = guard(req, ["operator_admin", "auditor", "client_admin"]); const c = S.getCase(req.params.id); if (!c || !P.canAccessTenant(u, c.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "case not found"); P.audit(u.id, "case", c.id, "dispute.evidence_exported", {}); return reply.header("content-disposition", `attachment; filename="evidence-${c.id}.json"`).send(A.evidencePack(c.id)); });
+  const DEV = ["operator_admin", "client_admin"] as const;
+  app.get("/dev/keys", async (req) => D.listApiKeys(ctx(req, DEV).t));
+  app.post("/dev/keys", async (req) => { const { u, t } = ctx(req, DEV); return D.createApiKey(u, t, String(b(req).label ?? ""), b(req).role ?? "auditor"); });
+  app.post("/dev/keys/:id/revoke", async (req: any) => { const { u, t } = ctx(req, DEV); return D.revokeApiKey(u, t, req.params.id); });
+  app.get("/dev/webhooks", async (req) => ({ endpoints: D.listEndpoints(ctx(req, DEV).t), eventTypes: D.EVENT_TYPES, backoffSec: D.BACKOFF_SEC }));
+  app.post("/dev/webhooks", async (req) => { const { u, t } = ctx(req, DEV); return D.createEndpoint(u, t, String(b(req).url ?? ""), Array.isArray(b(req).events) ? b(req).events : []); });
+  app.post("/dev/webhooks/:id/active", async (req: any) => { const { u, t } = ctx(req, DEV); return D.setEndpointActive(u, t, req.params.id, !!b(req).active); });
+  app.delete("/dev/webhooks/:id", async (req: any) => { const { u, t } = ctx(req, DEV); return D.deleteEndpoint(u, t, req.params.id); });
+  app.post("/dev/webhooks/:id/test", async (req: any) => { const { t } = ctx(req, DEV); if (!D.listEndpoints(t).some((e: any) => e.id === req.params.id)) throw new S.HttpError(404, "endpoint not found"); const id = D.recordEvent(t, "ping", { message: "Test event from the developer page" }, req.params.id); await D.deliverDue(); return { eventId: id }; });
+  app.post("/dev/deliveries/:id/retry", async (req: any) => { const { t } = ctx(req, DEV); D.retryDelivery(t, req.params.id); await D.deliverDue(); return { ok: true }; });
+  app.get("/dev/events", async (req) => D.eventLog(ctx(req, DEV).t));
   // Public supplier portal. The token in the path is the only credential.
   app.get("/onboard/:token", async (req: any) => W.onboardingView(req.params.token));
   app.post("/onboard/:token/kyb", async (req: any) => W.saveKyb(req.params.token, b(req)));
@@ -245,16 +262,18 @@ export async function buildApp() {
 }
 /** Bearer keys: scoped agent keys act as an AP clerk in their tenant. */
 function bearerUser(key: string): P.User | null {
+  if (key.startsWith("bpk_")) return D.apiKeyUser(key);
   if (key.startsWith("agk_")) { const a = W.agentForKey(key); return a ? { id: `agent:${a.id}`, tenantId: a.tenantId ?? "tnt-acme", name: a.name, email: "", role: "ap_clerk" } : null; }
   return null;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  S.bootstrap();
+  S.bootstrap(); P.writeSeedLogos(config.UPLOAD_DIR);
   const app = await buildApp();
   await app.listen({ port: config.BFF_PORT, host: "127.0.0.1" });
   console.log(`bff on http://127.0.0.1:${config.BFF_PORT} LLM_MODE=${llmMode()}`);
   for (const r of S.railsView()) console.log(`rail ${r.rail} ${r.env}: ${r.configured ? "configured" : "Not configured (" + r.notConfiguredReason + ")"}`);
   console.log(`Base Sepolia wallet ${onchainAddress("sandbox")}, fund it with test USDC from https://faucet.circle.com`);
   S.startSettlementWatcher(config.RAIL_POLL_MS);
+  D.startWebhookWorker(config.RAIL_POLL_MS);
 }

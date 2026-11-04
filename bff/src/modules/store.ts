@@ -104,6 +104,12 @@ const railOf = (r: string) => (LEGACY_RAIL[r] ?? r) as Rail;
 function upgrade(d: Db): Db {
   for (const s of d.suppliers) { s.preferredRail = railOf(s.preferredRail); s.acceptedRails = [...new Set(s.acceptedRails.map(railOf))]; }
   for (const m of d.mandates) m.allowedRails = [...new Set(m.allowedRails.map(railOf))];
+  for (const st of d.settlements) st.rail = railOf(st.rail);
+  for (const i of d.intents) if (i.rail) i.rail = railOf(i.rail);
+  // Seed rows added by later build steps (the Globex tenant, small demo items) are topped up by id.
+  const s = seed();
+  for (const k of ["orgs", "agents", "mandates", "suppliers"] as const) for (const x of s[k] as { id: string }[]) if (!(d[k] as { id: string }[]).some((y) => y.id === x.id)) (d[k] as unknown[]).push(x);
+  for (const c of s.catalog) if (!d.catalog.some((y) => y.sku === c.sku)) d.catalog.push(c);
   return d;
 }
 /** Loads the domain state from SQLite. An empty database is seeded. */

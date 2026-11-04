@@ -17,6 +17,12 @@ export function useClientPicker() {
   const pick = <Select aria-label="Business client" value={t?.id ?? ""} onChange={(e) => { setId(e.target.value); try { localStorage.setItem("ops-tenant", e.target.value); } catch { /* private mode */ } }}>{clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select>;
   return { tenantId: t?.id, tenant: t, pick };
 }
+/** Recharts writes colours as SVG attributes, where CSS variables do not resolve. Read the theme values instead. */
+export function useChartColors() {
+  const { data: me } = useGet<any>("/me");
+  const css = (v: string, d: string) => { try { return getComputedStyle(document.documentElement).getPropertyValue(v).trim() || d; } catch { return d; } };
+  return { primary: me?.theme?.primary ?? css("--brand-primary", "#1d4ed8"), accent: me?.theme?.accent ?? css("--brand-accent", "#f59e0b"), grid: css("--border", "#e2e8f0"), muted: css("--muted", "#64748b") };
+}
 const axis = { fontSize: 11, fill: "var(--muted)" };
 const tip = { contentStyle: { background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }, labelStyle: { color: "var(--fg)" } };
 const k = (n: number) => (Math.abs(n) >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toFixed(0));
@@ -24,6 +30,7 @@ const k = (n: number) => (Math.abs(n) >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.
 export function TreasuryPage() {
   const { tenantId, pick } = useClientPicker();
   const { data, error, refetch, isFetching } = useGet<any>(`/ops/treasury?tenantId=${tenantId}`, !!tenantId);
+  const col = useChartColors();
   const { run, busy, error: e2 } = useAct(); const [amt, setAmt] = useState<Record<string, string>>({}); const [last, setLast] = useState<any>(null);
   return <Section>
     <PageHeader title="Treasury" sub="Balances come live from each configured rail. The forecast uses open invoices by due date." actions={<>{pick}<Button size="sm" variant="ghost" disabled={isFetching} onClick={() => refetch()}><RefreshCw size={13} />Refresh</Button></>} />
@@ -42,10 +49,10 @@ export function TreasuryPage() {
         <div className="px-4 pb-3"><ErrorNote msg={e2} />{last && <div className="mt-2 text-xs"><Badge v={last.status} tone={last.status === "unsupported" ? "warn" : undefined} /> {last.detail}</div>}</div></Card>
       <Card title="30 day cash forecast">
         <div className="h-64"><ResponsiveContainer><ComposedChart data={data.forecast} margin={{ left: 0, right: 8, top: 8 }}>
-          <CartesianGrid stroke="var(--border)" vertical={false} /><XAxis dataKey="day" tick={axis} tickFormatter={(d) => d.slice(5)} interval={4} /><YAxis tick={axis} tickFormatter={k} width={48} />
+          <CartesianGrid stroke={col.grid} vertical={false} /><XAxis dataKey="day" tick={{ ...axis, fill: col.muted }} tickFormatter={(d) => d.slice(5)} interval={4} /><YAxis tick={{ ...axis, fill: col.muted }} tickFormatter={k} width={48} />
           <Tooltip {...tip} formatter={(v: any, n: any) => [usd(Number(v)), n === "balance" ? "Projected balance" : "Invoices due"]} />
-          <Area type="stepAfter" dataKey="balance" stroke="var(--brand-primary)" fill="var(--brand-primary)" fillOpacity={0.12} strokeWidth={2} />
-          <Bar dataKey="outflow" fill="var(--brand-accent)" barSize={8} />
+          <Area type="stepAfter" dataKey="balance" stroke={col.primary} fill={col.primary} fillOpacity={0.12} strokeWidth={2} />
+          <Bar dataKey="outflow" fill={col.accent} barSize={8} />
         </ComposedChart></ResponsiveContainer></div>
         {!data.openInvoices && <Muted>No open invoices, so the line stays flat at today's balance.</Muted>}
       </Card>

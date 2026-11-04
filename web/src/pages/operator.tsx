@@ -8,27 +8,10 @@ import { Badge, Button, Card, DataTable, EmptyState, ErrorNote, Input, Label, Mo
 import { Logo, Section } from "../components/Shell";
 import * as F from "./flows";
 import * as Ops from "./ops";
+import * as In from "./insights";
 import { PaymentsTable, RailStatus, type RailRow } from "./payments";
 
-export function OperatorHome() {
-  const { data: st, error } = useAppState(); const { data: tenants } = useGet<Tenant[]>("/tenants");
-  const { run, busy, error: e2 } = useAct();
-  if (!st) return <F.Loading error={error as Error} />;
-  const settled = st.intents.filter((i: any) => i.status === "settled");
-  const vol = settled.reduce((a: number, i: any) => a + i.amount, 0);
-  const fees = st.settlements.reduce((a: number, s: any) => a + s.feeUsd, 0);
-  return <Section>
-    <PageHeader title="Home" sub="Volume, risk and fees across all tenants" actions={<Button variant={st.killSwitch ? "outline" : "danger"} disabled={busy} onClick={() => run(() => api("/kill-switch", { on: !st.killSwitch }))}>{st.killSwitch ? "Release platform kill switch" : "Platform kill switch"}</Button>} />
-    <ErrorNote msg={e2} />
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <Stat icon={ArrowLeftRight} label="Settled volume" value={usd(vol)} hint={`${settled.length} payments`} />
-      <Stat icon={BadgeDollarSign} label="Rail fees" value={usd(fees)} />
-      <Stat icon={ShieldAlert} label="Blocked payments" value={st.intents.filter((i: any) => i.status === "blocked").length} />
-      <Stat icon={Building2} label="Business clients" value={tenants?.filter((t) => t.kind === "client").length ?? 0} />
-    </div>
-    <PaymentsTable title="Latest payments" />
-  </Section>;
-}
+export const OperatorHome = In.OperatorHome;
 
 export function OperatorPayments() { const { data: st, error } = useAppState(); return <Section><PageHeader title="Payments" sub="Every payment across tenants. Status updates live from webhooks and the settlement watcher." /><RailStatus /><PaymentsTable />{st ? <F.Settlements st={st} /> : <F.Loading error={error as Error} />}</Section>; }
 
@@ -47,8 +30,8 @@ export function Tenants() {
 export const Compliance = Ops.CompliancePage;
 export const Treasury = Ops.TreasuryPage;
 export const Recon = Ops.ReconPage;
-export function Revenue() { return <Section><PageHeader title="Revenue" /><Card><EmptyState icon={BadgeDollarSign} title="No revenue analytics yet" body="Bank fee and revenue analytics ship in build step 6." /></Card></Section>; }
-export function Developers() { return <Section><PageHeader title="Developers" sub="Agent gateway tools and, soon, API keys and webhooks" /><F.McpTools /><Card><EmptyState icon={Code2} title="No API keys or webhook endpoints" body="API keys, webhook endpoints and event logs ship in build step 6." /></Card></Section>; }
+export const Revenue = In.RevenuePage;
+export const Developers = In.DevelopersPage;
 
 export function BrandingPage() {
   const { data: me } = useMe(); const { data: tenants } = useGet<Tenant[]>("/tenants");
