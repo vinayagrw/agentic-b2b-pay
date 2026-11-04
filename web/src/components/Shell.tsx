@@ -1,8 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowLeftRight, Banknote, Bot, Building2, Check, ChevronsUpDown, Code2, FileText, Gauge, Home, Inbox, KeyRound, Landmark, MonitorSmartphone, UserCog, LogOut, Moon, Palette, Scale, Search, Settings, ShieldCheck, ShoppingCart, Sun, Truck, Users, Workflow, type LucideIcon } from "lucide-react";
-import { DemoBanner } from "./DemoBanner";
+import { Activity, ArrowLeftRight, Banknote, Bot, Building2, Check, ChevronsUpDown, Code2, FileText, Gauge, Home, Inbox, KeyRound, Landmark, MonitorSmartphone, UserCog, LogOut, Moon, Palette, Scale, Search, Settings, ShieldAlert, ShieldCheck, ShoppingCart, Sun, Truck, Users, Workflow, type LucideIcon } from "lucide-react";
 import { api, useLiveEvents, useMe, type Me } from "../lib/api";
 import { applyTheme } from "../lib/theme";
 import { cn } from "../lib/utils";
@@ -14,7 +13,7 @@ import { Badge, Menu, MenuContent, MenuItem, MenuLabel, MenuSep, MenuTrigger } f
 type Item = { to: string; label: string; icon: LucideIcon };
 export const OPERATOR_NAV: Item[] = [
   { to: "/operator", label: "Home", icon: Home }, { to: "/operator/tenants", label: "Tenants", icon: Building2 },
-  { to: "/operator/transactions", label: "Transactions", icon: Activity }, { to: "/operator/payments", label: "Payments", icon: ArrowLeftRight }, { to: "/operator/compliance", label: "Compliance", icon: ShieldCheck },
+  { to: "/operator/transactions", label: "Transactions", icon: Activity }, { to: "/operator/payments", label: "Payments", icon: ArrowLeftRight }, { to: "/operator/risk", label: "Risk inbox", icon: ShieldAlert }, { to: "/operator/compliance", label: "Compliance", icon: ShieldCheck },
   { to: "/operator/treasury", label: "Treasury", icon: Landmark }, { to: "/operator/reconciliation", label: "Reconciliation", icon: Scale },
   { to: "/operator/revenue", label: "Revenue", icon: Gauge }, { to: "/operator/developers", label: "Developers", icon: Code2 },
   { to: "/operator/branding", label: "Branding", icon: Palette }, { to: "/operator/settings", label: "Settings", icon: Settings },
@@ -22,7 +21,7 @@ export const OPERATOR_NAV: Item[] = [
 ];
 export const CLIENT_NAV: Item[] = [
   { to: "/app", label: "Home", icon: Home }, { to: "/app/purchase-orders", label: "Purchase orders", icon: ShoppingCart },
-  { to: "/app/invoices", label: "Invoices", icon: FileText }, { to: "/app/approvals", label: "Approvals", icon: Inbox },
+  { to: "/app/invoices", label: "Invoices", icon: FileText }, { to: "/app/approvals", label: "Approvals", icon: Inbox }, { to: "/app/risk", label: "Risk inbox", icon: ShieldAlert },
   { to: "/app/agents", label: "Agents", icon: Bot }, { to: "/app/suppliers", label: "Suppliers", icon: Truck },
   { to: "/app/payments", label: "Payments", icon: Banknote }, { to: "/app/transactions", label: "Transactions", icon: Activity }, { to: "/app/ledger", label: "Entity ledger", icon: Scale }, { to: "/app/rules", label: "Rules", icon: Workflow }, { to: "/app/developers", label: "Developers", icon: Code2 },
   { to: "/app/roles", label: "Roles", icon: UserCog }, { to: "/app/sessions", label: "Sessions", icon: MonitorSmartphone },
@@ -54,7 +53,6 @@ export function Shell({ kind }: { kind: "operator" | "client" }) {
       <div className="flex items-center gap-1.5 px-4 py-3 text-[11px] text-muted"><Activity size={12} className={live ? "text-ok" : "text-bad"} />{live ? "Live updates on" : "Reconnecting"}</div>
     </aside>
     <div className="flex min-w-0 flex-1 flex-col">
-      <DemoBanner />
       <TopBar me={me} kind={kind} onSearch={() => keys.setPalette(true)} onCopilot={() => setCopilot({ open: true })} />
       <CommandPalette me={me} kind={kind} open={keys.palette} onOpenChange={keys.setPalette} onAsk={(q) => setCopilot({ open: true, seed: q })} />
       <CopilotPanel open={copilot.open} seed={copilot.seed} onClose={() => setCopilot({ open: false })} />

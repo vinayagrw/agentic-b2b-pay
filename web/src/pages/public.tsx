@@ -2,7 +2,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { KeyRound, LogIn } from "lucide-react";
-import { DemoBanner } from "../components/DemoBanner";
 import { api, useGet, type Me } from "../lib/api";
 import { afterLogin } from "../lib/session";
 import { Badge, Card, ErrorNote, Muted } from "../components/ui";
@@ -15,7 +14,7 @@ export function Login() {
   const { data } = useGet<{ users: any[] }>("/auth/demo-users", !!cfg?.demo); const qc = useQueryClient(); const nav = useNavigate();
   const [err, setErr] = useState(() => new URLSearchParams(location.search).get("error") ?? "");
   const go = async (u: any) => { try { await api("/auth/login", { userId: u.id }); await afterLogin(qc, () => api<Me>("/me"), nav); } catch (e: any) { setErr(e.message); } };
-  return <div className="flex min-h-screen flex-col bg-bg"><DemoBanner /><div className="grid flex-1 place-items-center p-4">
+  return <div className="flex min-h-screen flex-col bg-bg"><div className="grid flex-1 place-items-center p-4">
     <div className="w-full max-w-xl">
       <div className="mb-4 flex items-center gap-2"><LogIn size={18} className="text-primary" /><h1 className="text-lg font-semibold">Sign in</h1></div>
       <Card><ErrorNote msg={err} /><div className="mt-1 flex flex-col gap-2"><SsoButtons sso={cfg?.sso ?? []} />{cfg?.saml?.available && <a href="/api/auth/saml/start" className="flex items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-[14px] font-medium hover:bg-subtle"><KeyRound size={16} aria-hidden />{cfg.saml.label ?? "Sign in with SAML"}</a>}</div><p className="mt-2 text-xs text-muted">You sign in at your company identity provider with OIDC or SAML 2.0.</p></Card>
