@@ -1,0 +1,35 @@
+flowchart LR
+  subgraph Agents["Agents"]
+    BA["Buyer agent<br/>Claude CLI"]
+    IR["Invoice reader"]
+    RX["Route explainer"]
+  end
+  GW["Agent gateway<br/>REST, MCP, A2A"]
+  KYA["Agent identity<br/>signed mandate"]
+  POL["Policy engine<br/>limits, approvals"]
+  M3["3-way match"]
+  RT["Rail router"]
+  CMP["Compliance gate<br/>KYB, sanctions, KYT"]
+  CUS["Custody<br/>2 of 3 signing"]
+  subgraph Adapters["Rail adapters"]
+    ST["Stripe test mode"]
+    CI["Circle sandbox"]
+    BS["Base Sepolia USDC"]
+  end
+  LED["Double entry ledger"]
+  ERP["ERP adapters<br/>SAP, Coupa"]
+  EVD["Evidence store<br/>hash chained"]
+  BA --> GW
+  IR --> GW
+  GW --> KYA --> POL --> M3 --> RT --> CMP
+  CMP --> ST
+  CMP --> CUS --> CI
+  CUS --> BS
+  RX -. explains .-> RT
+  ST --> LED
+  CI --> LED
+  BS --> LED
+  LED --> ERP
+  POL -.-> EVD
+  CMP -.-> EVD
+  LED -.-> EVD

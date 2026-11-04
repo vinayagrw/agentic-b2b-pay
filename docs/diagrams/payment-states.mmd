@@ -1,0 +1,17 @@
+stateDiagram-v2
+  [*] --> created
+  created --> denied: policy says no
+  created --> routed
+  routed --> screened
+  screened --> blocked: sanctions hit
+  screened --> submitted
+  submitted --> pending
+  submitted --> failed
+  pending --> settled
+  pending --> failed
+  settled --> refunded
+  denied --> [*]
+  blocked --> [*]
+  failed --> [*]
+  settled --> [*]
+  refunded --> [*]

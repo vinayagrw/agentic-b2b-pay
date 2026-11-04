@@ -437,8 +437,16 @@ export function ledgerView() {
   const settlements = db.settlements.map((s) => ({ id: s.id, paymentIntentId: s.paymentIntentId, amount: db.intents.find((i) => i.id === s.paymentIntentId)!.amount }));
   return { journals: db.journals, trialBalance: trialBalance(db.journals), reconciliation: reconcile(settlements, db.journals) };
 }
-export function evidenceView(subjectId?: string) {
-  return { verification: verifyChain(db.evidence), records: subjectId ? db.evidence.filter((e) => e.subjectId === subjectId) : db.evidence };
+/** Ids of every row a client tenant owns, so evidence never crosses tenants. */
+function ownedIds(tenantId: string) {
+  const rows: { id: string; tenantId?: string }[][] = [db.agents, db.mandates, db.suppliers, db.pos, db.invoices, db.intents, db.settlements, db.journals];
+  return new Set(rows.flatMap((r) => r.filter((x) => tenantOf(x) === tenantId).map((x) => x.id)));
+}
+
+export function evidenceView(subjectId?: string, tenantId: string | null = null) {
+  const owned = tenantId ? ownedIds(tenantId) : null;
+  const visible = db.evidence.filter((e) => (!subjectId || e.subjectId === subjectId) && (!owned || owned.has(e.subjectId)));
+  return { verification: verifyChain(db.evidence), records: visible };
 }
 
 /** ISO 20022 camt.053 style bank to customer statement from the ledger cash accounts. Tx hash in end to end id. */

@@ -192,8 +192,8 @@ export async function buildApp() {
   app.get("/settlements/:id", async (req: any) => db.settlements.find((s) => s.id === req.params.id) ?? { error: "not found" });
   app.get("/ledger/journals", async () => S.ledgerView());
   app.get("/statements/camt053", async (req: any, reply) => { const t = req.query?.tenantId ? clientOf(req, guard(req, P.ROLES)) : scopeOf(req); return reply.type("application/xml").header("content-disposition", `attachment; filename="camt053-${t ?? "all"}.xml"`).send(S.camt053(undefined, t)); });
-  app.get("/evidence", async () => S.evidenceView());
-  app.get("/evidence/:subjectId", async (req: any) => S.evidenceView(req.params.subjectId));
+  app.get("/evidence", async (req) => S.evidenceView(undefined, scopeOf(req)));
+  app.get("/evidence/:subjectId", async (req: any) => S.evidenceView(req.params.subjectId, scopeOf(req)));
   app.post("/scenario/run", async (req) => { const { t } = ctx(req, PAYERS); return S.runFlow(String(b(req).need ?? "Need 2000 sealed 6204 bearings for line 3 maintenance"), { scenario: b(req).scenario ?? "happy", tenantId: t }); });
   // Rails, payments, webhooks
   app.get("/rails", async () => S.railsView());

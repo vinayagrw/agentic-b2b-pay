@@ -1,0 +1,34 @@
+sequenceDiagram
+    autonumber
+    participant BA as Buyer agent
+    participant GW as Agent gateway
+    participant KYA as KYA service
+    participant ERP as ERP SAP or Coupa
+    participant POL as Mandate and policy
+    participant M as 3-way match
+    participant RR as Rail router
+    participant C as Compliance
+    participant CU as MPC custody
+    participant SC as Stablecoin partner
+    participant L as Ledger
+    participant A as Evidence store
+    BA->>GW: Create PO request with signed intent mandate
+    GW->>KYA: Verify agent signature and principal
+    KYA-->>GW: Agent verified
+    GW->>POL: Check mandate limits and supplier
+    POL-->>GW: Allowed
+    GW->>ERP: Create PO
+    ERP-->>GW: PO number
+    Note over ERP: Supplier ships and posts goods receipt
+    ERP->>M: Invoice received
+    M->>ERP: Fetch PO and goods receipt
+    M-->>POL: Matched within tolerance and approved in ERP
+    POL->>RR: Payment intent
+    RR-->>POL: Route stablecoin USDC on supplier choice
+    POL->>C: Screen wallet, sanctions and Travel Rule
+    C-->>POL: Clear
+    POL->>CU: Sign request with policy decision id
+    CU->>SC: Send USDC with idempotency key
+    SC-->>L: Transaction hash confirmed
+    L->>ERP: camt.054 entry, post payment and clear invoice
+    POL->>A: Store mandate, decisions, screening and hash

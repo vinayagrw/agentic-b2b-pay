@@ -1,0 +1,21 @@
+flowchart LR
+    BA[Buyer agent] --> GW[Agent gateway A2A and MCP]
+    SA[Supplier agent] --> GW
+    GW --> KYA[Agent identity KYA]
+    GW --> LLM[LLM layer proposes only]
+    GW --> MP[Mandate and policy engine]
+    MP --> P2P[PO invoice 3-way match]
+    P2P <--> ERP[ERP adapters SAP Coupa Oracle]
+    MP --> RR[Rail router]
+    RR --> CMP[Compliance screening and Travel Rule]
+    CMP --> CARD[Card partner]
+    CMP --> ACH[ACH RTP wire bank partner]
+    CMP --> CUS[MPC custody quorum]
+    CUS --> SC[Stablecoin partner Circle or BVNK]
+    CARD --> LED[Ledger and reconciliation]
+    ACH --> LED
+    SC --> LED
+    LED -->|camt.053 and camt.054| ERP
+    MP --> AUD[Evidence store]
+    CMP --> AUD
+    LED --> AUD

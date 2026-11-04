@@ -82,7 +82,6 @@ describe("bug 4: login lands on the right page", () => {
   });
 });
 
-import { routePayment } from "../src/modules/router.js";
 describe("router skips a prefunded wallet that cannot cover the payment", () => {
   it("falls back to ACH when the onchain wallet is empty", () => {
     const base = { feeUsd: 0, maxAmount: 1e9, configured: true } as const;
@@ -99,5 +98,17 @@ describe("sanctioned supplier is blocked on fiat rails too", () => {
     const sub = r.steps.find((s: any) => s.step === "Submitted to rail");
     expect(sub?.detail?.status).not.toBe("pending");
     expect(sub?.detail?.status).not.toBe("settled");
+  });
+});
+
+import { evidenceView } from "../src/service.js";
+describe("evidence is scoped to the client tenant", () => {
+  it("does not show another tenant's records", async () => {
+    await runFlow("bearings", { scenario: "happy", autoApprove: true, tenantId: "tnt-acme" });
+    const globex = evidenceView(undefined, "tnt-globex").records;
+    const acme = evidenceView(undefined, "tnt-acme").records;
+    expect(acme.length).toBeGreaterThan(0);
+    const acmeIds = new Set(acme.map((r) => r.subjectId));
+    expect(globex.some((r) => acmeIds.has(r.subjectId))).toBe(false);
   });
 });

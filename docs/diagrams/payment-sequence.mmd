@@ -1,0 +1,23 @@
+sequenceDiagram
+  autonumber
+  actor U as Buyer
+  participant A as Buyer agent
+  participant G as Gateway
+  participant P as Policy
+  participant H as Approver
+  participant M as 3-way match
+  participant R as Router
+  participant C as Compliance
+  participant X as Rail adapter
+  participant L as Ledger and ERP
+  U->>A: Describe the need
+  A->>G: Draft PO with signed mandate
+  G->>P: Check limits and rules
+  P-->>H: Ask for approval if needed
+  H->>P: Approve
+  P->>M: PO, goods receipt, invoice
+  M->>R: Matched invoice
+  R->>C: Chosen rail
+  C->>X: Screened payment
+  X-->>L: Webhook or watcher says settled
+  L-->>U: Paid, posted and synced
