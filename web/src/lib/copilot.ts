@@ -5,7 +5,8 @@ export type Proposal = { id: string; kind: string; label: string; method: "POST"
 export type ChartSpec = { type: "bar" | "line" | "area" | "donut" | "stacked" | "table"; title: string; x: string; y: string[]; series?: string; rows: Record<string, string | number>[] };
 export type Chart = { kind: "bar" | "donut" | "table"; title: string; series: { label: string; value: number }[]; columns: string[]; rows: (string | number)[][]; spec?: ChartSpec };
 export type Offer = { id: string; kind: string; label: "Offer"; title: string; body: string; trigger: string };
-export type Answer = { id: string; threadId: string | null; question: string; answer: string; sources: Source[]; proposals: Proposal[]; offers?: Offer[]; chart: Chart | null; refused: string | null; mode: string; fallback?: string; vote?: "up" | "down" | null };
+export type Answer = { id: string; threadId: string | null; question: string; answer: string; sources: Source[]; proposals: Proposal[]; offers?: Offer[]; chart: Chart | null; refused: string | null; mode: string; fallback?: string; vote?: "up" | "down" | null; memories?: { id: string; kind: string; text: string }[] };
+export type Memory = { id: string; kind: "preference" | "fact" | "alias"; text: string; sourceAnswerId: string | null; createdAt: string };
 export type Thread = { id: string; title: string; createdAt: string; updatedAt: string; answers?: Answer[] };
 export type Folded = { text: string; tools: { tool: string; rows: number; error: string | null }[]; step: string; done: Answer | null; failed: string | null };
 

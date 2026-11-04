@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Bot, Camera, Database, Download, Gift, History, Mic, MicOff, Pencil, Plus, RotateCcw, Search, Send, Square, ShieldAlert, Sun, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { Bookmark, Brain, Bot, Camera, Database, Download, Gift, History, Mic, MicOff, Pencil, Plus, RotateCcw, Search, Send, Square, ShieldAlert, Sun, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { api, useAct } from "../lib/api";
 import { useStream } from "../lib/stream";
-import { foldStream, recordFromPath, snapProblem, speechCtor, SNAP_TYPES, TOOL_NAMES, type Answer, type Chart, type Offer, type Proposal, type Thread } from "../lib/copilot";
+import { foldStream, recordFromPath, snapProblem, speechCtor, SNAP_TYPES, TOOL_NAMES, type Answer, type Chart, type Memory, type Offer, type Proposal, type Thread } from "../lib/copilot";
 import { SlidePanel } from "./kit";
 import { BarList, DataTable, DonutChart } from "./live";
 import { Badge, Button, Input } from "./ui";
@@ -29,7 +29,7 @@ export function CopilotPanel({ open, onClose, seed }: { open: boolean; onClose: 
   const loc = useLocation(); const route = loc.pathname; const recordId = recordFromPath(route);
   const [q, setQ] = useState(""); const [url, setUrl] = useState<string | null>(null);
   const [asked, setAsked] = useState(""); const [history, setHistory] = useState<Answer[]>([]); const [err, setErr] = useState("");
-  const [threadId, setThreadId] = useState<string | null>(null); const [view, setView] = useState<"chat" | "threads">("chat");
+  const [threadId, setThreadId] = useState<string | null>(null); const [view, setView] = useState<"chat" | "threads" | "memory">("chat");
   const [suggest, setSuggest] = useState<string[]>([]); const [snaps, setSnaps] = useState<any[]>([]); const [voice, setVoice] = useState(false);
   const stream = useStream<any>(url, EVENTS, { max: 2000 });
   const f = foldStream(stream.messages);
@@ -40,7 +40,7 @@ export function CopilotPanel({ open, onClose, seed }: { open: boolean; onClose: 
   }, [open, route, recordId]);
   const ask = async (text: string, replace = false) => {
     const t = text.trim(); if (!t || url) return;
-    if (replace) setHistory((h) => h.slice(0, -1));
+    if (replace) { const l = history[history.length - 1]; if (l) await dropTurn(l.id); setHistory((h) => h.slice(0, -1)); }
     setErr(""); setQ(""); setVoice(false); setAsked(t); setView("chat"); stream.clear();
     try { const { id } = await api<{ id: string }>("/copilot/ask", { question: t, threadId, route, recordId, voice }); setUrl(`/api/copilot/stream/${id}`); } catch (e: any) { setErr(e.message); setAsked(""); }
   };
@@ -53,7 +53,8 @@ export function CopilotPanel({ open, onClose, seed }: { open: boolean; onClose: 
   const openThread = async (id: string) => { try { const t = await api<Thread>(`/copilot/threads/${id}`); setHistory(t.answers ?? []); setThreadId(t.id); setView("chat"); } catch (e: any) { setErr(e.message); } };
   const stop = () => { setUrl(null); if (asked) setQ(asked); setAsked(""); stream.clear(); };
   const last = history[history.length - 1];
-  const edit = () => { if (!last) return; setQ(last.question); setHistory((h) => h.slice(0, -1)); };
+  const dropTurn = (id: string) => api(`/copilot/answers/${id}`, undefined, { method: "DELETE" }).catch(() => undefined);
+  const edit = async () => { if (!last) return; setQ(last.question); await dropTurn(last.id); setHistory((h) => h.slice(0, -1)); };
   const fresh = () => { setHistory([]); setThreadId(null); setView("chat"); setErr(""); };
   return <SlidePanel open={open} onClose={onClose} width={560} title={<span className="flex items-center gap-2"><Bot size={15} aria-hidden />Copilot</span>} description={recordId ? `Looking at ${recordId}` : "Ask about spend, payments, suppliers, approvals, ledger and FX"}
     footer={<form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); ask(q); }}>
@@ -64,10 +65,11 @@ export function CopilotPanel({ open, onClose, seed }: { open: boolean; onClose: 
     <div className="flex flex-wrap items-center gap-1.5">
       <Button size="sm" variant={view === "chat" ? "primary" : "outline"} onClick={() => setView("chat")}>Chat</Button>
       <Button size="sm" variant={view === "threads" ? "primary" : "outline"} onClick={() => setView("threads")}><History size={13} aria-hidden className="mr-1" />Threads</Button>
+      <Button size="sm" variant={view === "memory" ? "primary" : "outline"} onClick={() => setView("memory")}><Brain size={13} aria-hidden className="mr-1" />What I remember</Button>
       <Button size="sm" onClick={fresh}><Plus size={13} aria-hidden className="mr-1" />New</Button>
       <Button size="sm" onClick={() => ask(DIGEST)} disabled={!!url}><Sun size={13} aria-hidden className="mr-1" />What changed today</Button>
     </div>
-    {view === "threads" ? <Threads current={threadId} onOpen={openThread} onDeleted={(id) => { if (id === threadId) fresh(); }} /> : <>
+    {view === "threads" ? <Threads current={threadId} onOpen={openThread} onDeleted={(id) => { if (id === threadId) fresh(); }} /> : view === "memory" ? <Memories /> : <>
       <p className="text-xs text-muted">Answers use read-only tools on your tenant only. The copilot can suggest an action, but nothing happens until you click it, and the normal permission and approval checks still apply.</p>
       {!history.length && !asked && <div className="flex flex-col gap-1.5" aria-label="Suggested questions">
         <span className="text-[11px] font-medium uppercase tracking-wide text-muted">Suggested for this page</span>
@@ -108,6 +110,35 @@ function Threads({ current, onOpen, onDeleted }: { current: string | null; onOpe
   </div>;
 }
 
+/** What the copilot remembers for you in this tenant. Only you see it. Edit keeps the old version closed, forget stops it being used. */
+function Memories() {
+  const [rows, setRows] = useState<Memory[] | null>(null); const [edit, setEdit] = useState<{ id: string; text: string } | null>(null); const [err, setErr] = useState("");
+  const load = () => api<Memory[]>("/copilot/memories").then(setRows).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  const run = async (f: () => Promise<unknown>) => { try { setErr(""); await f(); setEdit(null); load(); } catch (e: any) { setErr(e.message); } };
+  const kind = { alias: "Name", preference: "Preference", fact: "Fact" } as Record<string, string>;
+  return <div className="flex flex-col gap-2">
+    <p className="text-xs text-muted">The copilot remembers only what you tell it. Start a question with "remember", for example: remember Northwind means Northwind Components LLC. Or press Save to memory under an answer. Numbers that look like cards, bank accounts or keys are left out. Only you can see this list.</p>
+    {err && <p role="alert" className="text-xs text-bad">{err}</p>}
+    {!rows ? <p className="text-xs text-muted">Loading</p> : !rows.length ? <p className="text-xs text-muted">Nothing saved yet.</p> : <>
+      <ul className="divide-y divide-border rounded-lg border border-border">{rows.map((m) => <li key={m.id} className="flex items-center gap-1.5 px-2.5 py-2">
+        {edit?.id === m.id ? <form className="flex flex-1 gap-1.5" onSubmit={(e) => { e.preventDefault(); run(() => api(`/copilot/memories/${m.id}`, { text: edit.text }, { method: "PATCH" })); }}><Input aria-label="Memory text" value={edit.text} onChange={(e) => setEdit({ ...edit, text: e.target.value })} className="h-7 flex-1" autoFocus /><Button size="sm" type="submit" variant="primary">Save</Button><Button size="sm" type="button" onClick={() => setEdit(null)}>Cancel</Button></form> : <>
+          <span className="min-w-0 flex-1 text-[13px]"><Badge v={kind[m.kind] ?? m.kind} tone="neutral" /> {m.text}</span>
+          <button aria-label={`Edit ${m.text}`} className="rounded p-1 text-muted hover:bg-subtle" onClick={() => setEdit({ id: m.id, text: m.text })}><Pencil size={13} /></button>
+          <button aria-label={`Forget ${m.text}`} className="rounded p-1 text-muted hover:bg-subtle hover:text-bad" onClick={() => run(() => api(`/copilot/memories/${m.id}`, undefined, { method: "DELETE" }))}><Trash2 size={13} /></button></>}
+      </li>)}</ul>
+      <div className="flex justify-end"><Button size="sm" variant="outline" onClick={() => { if (confirm("Forget everything the copilot remembers for you here?")) run(() => api("/copilot/memories", undefined, { method: "DELETE" })); }}>Forget all</Button></div></>}
+  </div>;
+}
+
+/** Save to memory: you type the note. The answer text itself is never saved. */
+function SaveMemory({ a }: { a: Answer }) {
+  const [text, setText] = useState<string | null>(null); const [msg, setMsg] = useState("");
+  const save = async () => { try { await api("/copilot/memories", { answerId: a.id, text }); setText(null); setMsg("Saved"); } catch (e: any) { setMsg(e.message); } };
+  if (text === null) return <span className="inline-flex items-center gap-1"><button onClick={() => { setText(a.question); setMsg(""); }} className="inline-flex items-center gap-1 rounded px-1 text-[11px] text-muted hover:bg-subtle"><Bookmark size={12} aria-hidden />Save to memory</button>{msg && <span role="status" className="text-[11px] text-muted">{msg}</span>}</span>;
+  return <form className="flex flex-1 gap-1.5" onSubmit={(e) => { e.preventDefault(); save(); }}><Input aria-label="What should I remember" value={text} onChange={(e) => setText(e.target.value)} className="h-7 flex-1" autoFocus /><Button size="sm" type="submit" variant="primary">Save</Button><Button size="sm" type="button" onClick={() => setText(null)}>Cancel</Button></form>;
+}
+
 /** Inline chart for numeric answers, with a type switch, a PNG and a CSV of the answer data. */
 function ChartView({ c, id }: { c: Chart; id: string }) {
   const sp = c.spec; const [view, setView] = useState<View>(sp?.type ?? "bar"); const box = useRef<HTMLDivElement>(null);
@@ -137,6 +168,7 @@ function Turn({ a, onClose }: { a: Answer; onClose: () => void }) {
   return <div className="flex flex-col gap-2">
     <Bubble me>{a.question}</Bubble>
     <Bubble>{a.refused && <span className="mb-1 block text-[11px] font-medium text-warn">No source found, so no answer</span>}{a.answer}</Bubble>
+    {!!a.memories?.length && <div className="flex flex-wrap items-center gap-1" aria-label="From memory"><span className="text-[11px] text-muted">From memory</span>{a.memories.map((m) => <Badge key={m.id} v={m.text.length > 40 ? m.text.slice(0, 40) + "..." : m.text} tone="neutral" />)}</div>}
     {a.chart && <ChartView c={a.chart} id={a.id} />}
     {a.proposals.map((p) => <ProposalCard key={p.id} p={p} answerId={a.id} />)}
     {(a.offers ?? []).map((o) => <OfferCard key={o.id} o={o} />)}
@@ -145,7 +177,7 @@ function Turn({ a, onClose }: { a: Answer; onClose: () => void }) {
       <ul className="flex flex-col gap-1">{a.sources.map((s) => <li key={s.tool}><span className="font-medium">{TOOL_NAMES[s.tool] ?? s.tool}</span>{s.links.length ? ": " : ", no records"}
         {s.links.slice(0, 8).map((l, n) => <span key={l.id + n}>{n > 0 && " "}<Link to={l.href} onClick={onClose} className="font-mono text-primary underline-offset-2 hover:underline">{l.id}</Link></span>)}</li>)}</ul>
     </div>}
-    <div className="flex justify-end"><Vote a={a} /></div>
+    <div className="flex items-center justify-end gap-2">{!a.refused && <SaveMemory a={a} />}<Vote a={a} /></div>
   </div>;
 }
 

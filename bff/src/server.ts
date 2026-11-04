@@ -125,7 +125,7 @@ export async function buildApp() {
     "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /refunds": "payments.refund",
     "POST /erp/vendor-master/changes": "erp.vendor_master", "POST /erp/vendor-master/changes/:id/approve": "payments.approve", "POST /erp/vendor-master/changes/:id/callback": "payments.approve",
     "GET /rails/balances": "rails.balances", "GET /users": "users.read", "PATCH /tenants/:id/branding": "settings.branding", "POST /tenants/:id/logo": "settings.branding",
-    "POST /changes": "changes.request", "POST /copilot/ask": "workspace.read", "POST /copilot/answer": "workspace.read", "POST /copilot/threads/:id": "workspace.read", "DELETE /copilot/threads/:id": "workspace.read", "POST /copilot/feedback": "workspace.read", "POST /changes/:id/decide": "changes.decide",
+    "POST /changes": "changes.request", "POST /copilot/ask": "workspace.read", "POST /copilot/answer": "workspace.read", "POST /copilot/threads/:id": "workspace.read", "DELETE /copilot/threads/:id": "workspace.read", "POST /copilot/feedback": "workspace.read", "POST /copilot/memories": "workspace.read", "PATCH /copilot/memories/:id": "workspace.read", "DELETE /copilot/memories/:id": "workspace.read", "DELETE /copilot/memories": "workspace.read", "DELETE /copilot/answers/:id": "workspace.read", "POST /changes/:id/decide": "changes.decide",
     "POST /workspace/agents": "agents.manage", "PUT /workspace/agents/:id/mandate": "agents.manage", "POST /workspace/agents/:id/keys": "agents.manage", "POST /workspace/agents/:id/:action": "agents.manage",
     "POST /workspace/rules": "rules.edit", "PUT /workspace/rules/:id": "rules.edit", "DELETE /workspace/rules/:id": "rules.edit", "POST /workspace/rules/order": "rules.edit",
     "POST /workspace/suppliers/invite": "suppliers.invite", "POST /workspace/suppliers/:id/link": "suppliers.invite", "POST /workspace/suppliers/:id/review": "suppliers.review", "POST /workspace/suppliers/:id/hold": "suppliers.review",
@@ -385,6 +385,13 @@ export async function buildApp() {
   app.get("/copilot/threads/:id", async (req: any) => CP.getThread(who(req), req.params.id));
   app.post("/copilot/threads/:id", async (req: any) => CP.renameThread(who(req), req.params.id, String(b(req).title ?? "")));
   app.delete("/copilot/threads/:id", async (req: any) => CP.deleteThread(who(req), req.params.id));
+  // Memory: own user and tenant only. An operator never sees a client user's memories, since every query is keyed on the caller.
+  app.get("/copilot/memories", async (req) => CP.listMemories(who(req), scopeOf(req)));
+  app.post("/copilot/memories", async (req) => CP.saveMemory(who(req), scopeOf(req), String(b(req).answerId ?? ""), String(b(req).text ?? "")));
+  app.patch("/copilot/memories/:id", async (req: any) => CP.editMemory(who(req), scopeOf(req), req.params.id, String(b(req).text ?? "")));
+  app.delete("/copilot/memories/:id", async (req: any) => CP.forgetMemory(who(req), scopeOf(req), req.params.id));
+  app.delete("/copilot/memories", async (req) => CP.forgetAll(who(req), scopeOf(req)));
+  app.delete("/copilot/answers/:id", async (req: any) => CP.deleteTurn(who(req), req.params.id));
   app.post("/copilot/feedback", async (req) => CP.feedback(who(req), String(b(req).answerId ?? ""), String(b(req).vote ?? "")));
   app.get("/copilot/answers/:id/export.csv", async (req: any, reply) => reply.type("text/csv").header("content-disposition", `attachment; filename="copilot-${String(req.params.id).replace(/[^\w-]/g, "")}.csv"`).send(CP.answerCsv(who(req), req.params.id)));
   app.get("/copilot/stream/:id", async (req: any, reply) => {
