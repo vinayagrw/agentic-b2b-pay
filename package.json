@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "description": "Agentic B2B payments demo: mandates, policy, 3-way match, rail router, Stripe test mode and USDC on Base Sepolia. No real funds.",
-  "workspaces": ["shared", "bff", "web"],
+  "workspaces": [
+    "shared",
+    "bff",
+    "web"
+  ],
   "scripts": {
     "dev:bff": "npm run dev --workspace bff",
     "dev:web": "npm run dev --workspace web",
@@ -13,8 +17,14 @@
     "e2e:live": "npm run e2e:live --workspace bff",
     "e2e:mock": "npm run e2e:mock --workspace bff",
     "build": "npm run build --workspace web",
-    "circle:register": "npm run circle:register --workspace bff"
+    "circle:register": "npm run circle:register --workspace bff",
+    "eval": "cd evals && PROMPTFOO_DISABLE_TELEMETRY=1 PROMPTFOO_DISABLE_UPDATE=1 promptfoo eval --no-cache --no-progress-bar --no-write -j 1"
   },
-  "devDependencies": { "concurrently": "^9.1.0" },
-  "engines": { "node": ">=20" }
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "promptfoo": "^0.125.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }
