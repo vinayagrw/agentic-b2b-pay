@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import * as D from "@radix-ui/react-dialog";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ExternalLink, RefreshCw, X } from "lucide-react";
+import { ExternalLink, GitBranch, RefreshCw, X } from "lucide-react";
+import { Link } from "react-router-dom";
 import { RAIL_LABEL, type Rail } from "@b2b/shared";
 import { api, useAct, useGet } from "../lib/api";
 import { usd } from "../lib/utils";
@@ -56,6 +57,7 @@ export function PaymentDrawer({ id, onClose }: { id: string | null; onClose: () 
             <tr><td className="text-muted">Invoice</td><td><Mono>{pi.invoiceId}</Mono></td></tr>
             <tr><td className="text-muted">Idempotency key</td><td><Mono className="break-all">{pi.idempotencyKey}</Mono></td></tr>
           </Table>
+          <Button asChild size="sm" variant="primary"><Link to={`${location.pathname.startsWith("/operator") ? "/operator" : "/app"}/payments/${pi.id}`}><GitBranch size={13} aria-hidden />Open transaction flow</Link></Button>
           {pi.blockedReason && <ErrorNote msg={pi.blockedReason} />}
           {pi.kind === "refund" && <Muted>Refund linked to payment {pi.linkedIntentId}</Muted>}
           {!!pi.refundIds?.length && <Muted>Refunds: {pi.refundIds.join(", ")}</Muted>}

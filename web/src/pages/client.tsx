@@ -7,6 +7,7 @@ import { Section } from "../components/Shell";
 import * as F from "./flows";
 import { PaymentsTable, RailStatus } from "./payments";
 import * as Wk from "./workspace";
+import { HomeStrip } from "./txflow";
 
 function useSt() { const s = F.useScopedState(); return s; }
 const Wrap = ({ title, sub, children }: { title: string; sub?: string; children: (st: any) => React.ReactNode }) => {
@@ -30,6 +31,7 @@ export function ClientHome() {
         <Stat icon={FileText} label="Open invoices" value={openInv} />
         <Stat icon={Bot} label="Active agents" value={st.agents.filter((a: any) => a.status === "active").length} hint={st.killSwitch ? "Kill switch is on" : undefined} />
       </div>
+      <HomeStrip />
       <Card title="Latest flow"><F.FlowTracker st={st} poId={last} /></Card>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
         <F.Scenarios onRun={(r) => setPoId(r.poId)} />

@@ -21,6 +21,7 @@ import * as O from "./ops.js";
 import * as D from "./developers.js";
 import * as A from "./analytics.js";
 import { scoped } from "./modules/store.js";
+import * as FV from "./flowview.js";
 
 /** MCP style tool registry. Same names as REST operations. */
 export const TOOLS = [
@@ -238,6 +239,12 @@ export async function buildApp() {
   app.post("/ops/cases/:id/close", async (req: any) => O.closeCase(guard(req, OPA), req.params.id, String(b(req).resolution ?? "")));
   // Step 6: revenue, KPIs, dispute evidence, developer keys and webhooks
   app.get("/ops/revenue", async (req) => { guard(req, OPS); return A.revenue(); });
+  app.get("/flows/:id", async (req: any) => FV.flowSummary(req.params.id, scopeOf(req)));
+  app.get("/transactions", async (req: any) => FV.transactions(scopeOf(req), req.query ?? {}));
+  app.get("/transactions/export.csv", async (req: any, reply) => reply.type("text/csv").header("content-disposition", `attachment; filename="transactions.csv"`).send(FV.transactionsCsv(scopeOf(req), req.query ?? {})));
+  app.get("/transactions/feed", async (req: any) => FV.liveFeed(scopeOf(req), Math.min(200, Number(req.query?.limit ?? 50) || 50)));
+  app.get("/insights/home", async (req: any) => FV.homeInsights(scopeOf(req), Math.min(90, Number(req.query?.days ?? 14) || 14)));
+  app.get("/ops/sankey", async (req: any) => { guard(req, OPS); return FV.sankey(Math.min(365, Number(req.query?.days ?? 30) || 30)); });
   app.get("/ops/kpis", async (req) => { guard(req, OPS); return A.kpis(); });
   app.get("/cases/:id/evidence-pack", async (req: any, reply) => { const u = guard(req, ["operator_admin", "auditor", "client_admin"]); const c = S.getCase(req.params.id); if (!c || !P.canAccessTenant(u, c.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "case not found"); P.audit(u.id, "case", c.id, "dispute.evidence_exported", {}); return reply.header("content-disposition", `attachment; filename="evidence-${c.id}.json"`).send(A.evidencePack(c.id)); });
   const DEV = ["operator_admin", "client_admin"] as const;

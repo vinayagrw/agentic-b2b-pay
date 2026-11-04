@@ -10,7 +10,7 @@ import { Badge, Menu, MenuContent, MenuItem, MenuLabel, MenuSep, MenuTrigger } f
 type Item = { to: string; label: string; icon: LucideIcon };
 export const OPERATOR_NAV: Item[] = [
   { to: "/operator", label: "Home", icon: Home }, { to: "/operator/tenants", label: "Tenants", icon: Building2 },
-  { to: "/operator/payments", label: "Payments", icon: ArrowLeftRight }, { to: "/operator/compliance", label: "Compliance", icon: ShieldCheck },
+  { to: "/operator/transactions", label: "Transactions", icon: Activity }, { to: "/operator/payments", label: "Payments", icon: ArrowLeftRight }, { to: "/operator/compliance", label: "Compliance", icon: ShieldCheck },
   { to: "/operator/treasury", label: "Treasury", icon: Landmark }, { to: "/operator/reconciliation", label: "Reconciliation", icon: Scale },
   { to: "/operator/revenue", label: "Revenue", icon: Gauge }, { to: "/operator/developers", label: "Developers", icon: Code2 },
   { to: "/operator/branding", label: "Branding", icon: Palette }, { to: "/operator/settings", label: "Settings", icon: Settings },
@@ -19,7 +19,7 @@ export const CLIENT_NAV: Item[] = [
   { to: "/app", label: "Home", icon: Home }, { to: "/app/purchase-orders", label: "Purchase orders", icon: ShoppingCart },
   { to: "/app/invoices", label: "Invoices", icon: FileText }, { to: "/app/approvals", label: "Approvals", icon: Inbox },
   { to: "/app/agents", label: "Agents", icon: Bot }, { to: "/app/suppliers", label: "Suppliers", icon: Truck },
-  { to: "/app/payments", label: "Payments", icon: Banknote }, { to: "/app/rules", label: "Rules", icon: Workflow }, { to: "/app/developers", label: "Developers", icon: Code2 },
+  { to: "/app/payments", label: "Payments", icon: Banknote }, { to: "/app/transactions", label: "Transactions", icon: Activity }, { to: "/app/rules", label: "Rules", icon: Workflow }, { to: "/app/developers", label: "Developers", icon: Code2 },
 ];
 
 export function Logo({ name, logo, size = 28 }: { name: string; logo: string | null; size?: number }) {

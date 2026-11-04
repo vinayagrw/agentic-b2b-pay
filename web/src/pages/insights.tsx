@@ -8,6 +8,7 @@ import { Section } from "../components/Shell";
 import { Loading } from "./flows";
 import { PaymentsTable, railName } from "./payments";
 import { useChartColors, useClientPicker } from "./ops";
+import { HomeStrip, MoneyFlowMap } from "./txflow";
 
 const axis = { fontSize: 11, fill: "var(--muted)" };
 const tip = { contentStyle: { background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }, labelStyle: { color: "var(--fg)" } };
@@ -30,6 +31,8 @@ export function OperatorHome() {
       <Stat icon={Scale} label="Open recon exceptions" value={k.openExceptions} />
       <Stat icon={Bot} label="Active agents" value={k.activeAgents} hint={k.killSwitch ? "Kill switch is on" : undefined} />
     </div>
+    <HomeStrip />
+    <MoneyFlowMap />
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <Card title="Settled volume by day"><div className="h-52"><ResponsiveContainer><BarChart data={k.daily}><CartesianGrid stroke={col.grid} vertical={false} /><XAxis dataKey="day" tick={{ ...axis, fill: col.muted }} tickFormatter={(d) => d.slice(5)} interval={6} /><YAxis tick={{ ...axis, fill: col.muted }} width={48} /><Tooltip {...tip} formatter={(v: any) => [usd(Number(v)), "Settled"]} /><Bar dataKey="volume" fill={col.primary} radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer></div></Card>
       <Card title="Volume by rail" pad={false}>{k.byRail.length ? <Table>{k.byRail.map((r: any) => <tr key={r.rail}><td>{railName(r.rail)}</td><td className="text-right tabular-nums">{usd(r.volume)}</td></tr>)}</Table> : <EmptyState title="No settled payments yet" />}</Card>
