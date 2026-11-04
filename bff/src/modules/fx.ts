@@ -73,6 +73,35 @@ export async function getRate(base: string, quote: string, opts: { force?: boole
     throw new FxError(503, `No FX rate for ${base} to ${quote}: the rate source is unreachable and nothing is cached. No rate is invented.`);
   }
 }
+// Rates on a past date (invoice date). Frankfurter serves ECB history by date. Tests swap this fetcher too.
+export type DatedFetcher = (base: string, quote: string, date: string) => Promise<{ rate: number; date: string | null; source: string }>;
+const frankfurterOn: DatedFetcher = async (base, quote, date) => {
+  const r = await fetch(`https://api.frankfurter.app/${date}?from=${base}&to=${quote}`, { signal: AbortSignal.timeout(Number(process.env.FX_TIMEOUT_MS ?? 4000)) });
+  if (!r.ok) throw new Error(`Frankfurter HTTP ${r.status}`);
+  const j = (await r.json()) as { date?: string; rates?: Record<string, number> };
+  const rate = j.rates?.[quote];
+  if (typeof rate !== "number" || !(rate > 0)) throw new Error("Frankfurter returned no rate");
+  return { rate, date: j.date ?? date, source: "Frankfurter (ECB reference rates, historical)" };
+};
+let datedFetcher: DatedFetcher = frankfurterOn;
+export function setDatedRateFetcher(f: DatedFetcher | null) { datedFetcher = f ?? frankfurterOn; dated.clear(); }
+const dated = new Map<string, Rate>();
+export const today = () => new Date().toISOString().slice(0, 10);
+/** Cached rate for a past date, or the current cached rate when the date is today or missing. */
+export function cachedRateOn(base: string, quote: string, date?: string | null): Rate | null {
+  if (base === quote || !date || date >= today()) return cachedRate(base, quote);
+  return dated.get(`${base}${quote}${date}`) ?? null;
+}
+/** Fetches the rate on a past date. Never invented: no source means an error. */
+export async function getRateOn(base: string, quote: string, date?: string | null): Promise<Rate> {
+  if (base === quote || !date || date >= today()) return getRate(base, quote);
+  const k = `${base}${quote}${date}`; const hit = dated.get(k); if (hit) return hit;
+  try {
+    const f = await datedFetcher(base, quote, date);
+    const r: Rate = { base, quote, rate: f.rate, rateDate: f.date, source: f.source, fetchedAt: new Date().toISOString(), stale: false };
+    dated.set(k, r); return r;
+  } catch (e: any) { throw new FxError(503, `No FX rate for ${base} to ${quote} on ${date}: ${e.message}. No rate is invented.`); }
+}
 export const convert = (amount: number, rate: number) => Math.round(amount * rate * 100) / 100;
 
 /** Locks the rate for one payment. Settlement must use this rate. */

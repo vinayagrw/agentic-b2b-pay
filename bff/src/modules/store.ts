@@ -9,13 +9,13 @@ export type Mandate = {
   allowedSuppliers: string[]; allowedCategories: Category[]; allowedRails: Rail[];
   perSupplierLimit: Record<string, number>; validFrom: string; validTo: string; signature: string;
 };
-export type Supplier = { id: string; tenantId?: string; orgId: string; name: string; bankDetailsRef: string; walletAddress: string | null; preferredRail: Rail; acceptedRails: Rail[]; screeningStatus: "clear" | "flagged"; erp: "SAP" | "Coupa"; onboarding?: Onboarding };
+export type Supplier = { id: string; tenantId?: string; orgId: string; name: string; bankDetailsRef: string; walletAddress: string | null; preferredRail: Rail; acceptedRails: Rail[]; screeningStatus: "clear" | "flagged"; erp: "SAP" | "Coupa"; onboarding?: Onboarding; entityId?: string; currency?: "USD" | "EUR" | "GBP" };
 export type Onboarding = { status: "draft" | "submitted" | "verified" | "rejected"; token: string; email: string; invitedBy: string; invitedAt: string; kyb?: any; bank?: { tokenId: string; last4: string; bankName: string | null; routingNumber: string; holderName: string } | null; bankNote?: string; wallet?: { address: string; message: string; signature: string; verifiedAt: string } | null; screening?: any; submittedAt?: string; reviewedBy?: string; reviewNote?: string; reviewedAt?: string };
 export type Approval = { ruleId: string | null; ruleName: string; levels: { role: string; count: number; approvals: { userId: string; at: string; comment: string }[] }[]; current: number; rejectedBy?: { userId: string; at: string; comment: string } };
 export type CatalogItem = { tenantId?: string; sku: string; supplierId: string; description: string; category: Category; unitPrice: number; keywords: string[] };
 export type PurchaseOrder = { id: string; tenantId?: string; requestedBy?: string; approval?: Approval; buyerOrgId: string; supplierId: string; agentId: string; mandateId: string; erpRef: string | null; category: Category; lines: PoLine[]; total: number; currency: "USD" | "EUR" | "GBP"; entityId?: string; usdEquivalent?: number; status: "pending_approval" | "approved" | "rejected" | "received" | "invoiced" | "paid"; justification: string; policy: PolicyDecision; createdAt: string };
 export type GoodsReceipt = { id: string; poId: string; lines: { sku: string; qty: number }[]; receivedAt: string };
-export type Invoice = { id: string; tenantId?: string; poId: string; supplierId: string; number: string; amount: number; currency: "USD" | "EUR" | "GBP"; entityId?: string; accrual?: { functionalCurrency: string; rate: number; amount: number; source: string; stale: boolean; at: string }; dueDate: string; extract: InvoiceExtract; extractedBy: string; matchStatus: "unmatched" | "matched" | "exception"; match?: MatchResult; erpApproval: "pending" | "approved"; paid: boolean };
+export type Invoice = { id: string; tenantId?: string; poId: string; supplierId: string; number: string; amount: number; currency: "USD" | "EUR" | "GBP"; entityId?: string; invoiceDate?: string; accrual?: { functionalCurrency: string; rate: number; usdRate?: number; rateDate?: string | null; amount: number; source: string; stale: boolean; at: string }; dueDate: string; extract: InvoiceExtract; extractedBy: string; matchStatus: "unmatched" | "matched" | "exception"; match?: MatchResult; erpApproval: "pending" | "approved"; paid: boolean };
 export type TimelineEntry = { at: string; status: string; source: "platform" | "adapter" | "webhook" | "watcher"; detail: string };
 export type PaymentIntent = { id: string; kind?: "payment" | "refund"; linkedIntentId?: string; refundIds?: string[]; bankFeeUsd?: number; invoiceId: string; mandateId: string; amount: number; currency: "USD"; entityId?: string; fx?: PaymentFx; status: "created" | "routed" | "blocked" | "denied" | "submitted" | "pending" | "settled" | "failed";
   rail?: Rail; env?: "sandbox" | "live"; providerRef?: string; explorerUrl?: string; dashboardUrl?: string; timeline?: TimelineEntry[]; createdAt?: string; tenantId?: string; idempotencyKey: string; route?: RouteDecision; explanation?: string; explainedBy?: string; compliance?: ComplianceResult; custody?: unknown; settlementId?: string; blockedReason?: string };
@@ -40,6 +40,11 @@ export type RefundIntent = { id: string; originalIntentId: string; amount: numbe
 export const SANCTIONED_WALLETS = ["0xBAD0000000000000000000000000000000000BAD"];
 export const SANCTIONED_NAMES = ["Rogue Metals Trading"];
 
+/** Seeded EUR order and invoice from Van Dijk, owned by Acme Europe BV. Unmatched until goods arrive. */
+const EU_PO = (now: Date): PurchaseOrder => ({ id: "po-eu-seed", tenantId: "tnt-acme", buyerOrgId: "org-acme", supplierId: "sup-vandijk", agentId: "agt-buyer-1", mandateId: "mdt-1", erpRef: null, category: "components", currency: "EUR", entityId: "ent-acme-eu",
+  lines: [{ sku: "VD-VLV-HYD", description: "Hydraulic valve DN25", qty: 20, unitPrice: 85 }], total: 1700, status: "invoiced", justification: "Seeded EUR order for Acme Europe BV", policy: { outcome: "allow", reasons: ["Seeded"], checks: [] } as any, createdAt: now.toISOString() });
+const EU_INV = (now: Date): Invoice => ({ id: "inv-eu-seed", tenantId: "tnt-acme", poId: "po-eu-seed", supplierId: "sup-vandijk", number: "VD-2026-0001", amount: 1700, currency: "EUR", entityId: "ent-acme-eu", invoiceDate: now.toISOString().slice(0, 10), dueDate: new Date(now.getTime() + 30 * 864e5).toISOString().slice(0, 10),
+  extract: { invoiceNumber: "VD-2026-0001", poNumber: "po-eu-seed", supplierName: "Van Dijk Industrie BV", currency: "EUR", lines: [{ sku: "VD-VLV-HYD", qty: 20, unitPrice: 85 }], total: 1700, dueDate: new Date(now.getTime() + 30 * 864e5).toISOString().slice(0, 10) } as any, extractedBy: "seed", matchStatus: "unmatched", erpApproval: "pending", paid: false });
 export function seed(): Db {
   const now = new Date();
   const later = new Date(now.getTime() + 90 * 864e5);
@@ -49,6 +54,7 @@ export function seed(): Db {
       { id: "org-northwind", legalName: "Northwind Components LLC", type: "supplier", kybStatus: "verified", country: "US" },
       { id: "org-contoso", legalName: "Contoso Logistics Ltd", type: "supplier", kybStatus: "verified", country: "GB" },
       { id: "org-fabrikam", legalName: "Fabrikam Metals SA", type: "supplier", kybStatus: "verified", country: "MX" },
+      { id: "org-vandijk", legalName: "Van Dijk Industrie BV", type: "supplier", kybStatus: "verified", country: "NL" },
       { id: "org-globex", tenantId: "tnt-globex", legalName: "Globex Retail Group", type: "buyer", kybStatus: "verified", country: "US" },
       { id: "org-initech", tenantId: "tnt-globex", legalName: "Initech Packaging Co", type: "supplier", kybStatus: "verified", country: "US" },
       { id: "org-hooli", tenantId: "tnt-globex", legalName: "Hooli Store Fixtures Ltd", type: "supplier", kybStatus: "verified", country: "GB" },
@@ -61,8 +67,8 @@ export function seed(): Db {
     mandates: [{
       id: "mdt-1", agentId: "agt-buyer-1", principalUserId: "usr-cfo-jane", type: "intent",
       maxAmount: 100000, perTxnMax: 40000, approvalThreshold: 10000, currency: "USD",
-      allowedSuppliers: ["sup-northwind", "sup-contoso", "sup-fabrikam"], allowedCategories: ["mro", "components", "logistics"],
-      allowedRails: ["stripe_card", "stripe_ach", "circle_usdc", "onchain_usdc"], perSupplierLimit: { "sup-northwind": 60000, "sup-contoso": 20000, "sup-fabrikam": 30000 },
+      allowedSuppliers: ["sup-northwind", "sup-contoso", "sup-fabrikam", "sup-vandijk"], allowedCategories: ["mro", "components", "logistics"],
+      allowedRails: ["stripe_card", "stripe_ach", "circle_usdc", "onchain_usdc"], perSupplierLimit: { "sup-northwind": 60000, "sup-contoso": 20000, "sup-fabrikam": 30000, "sup-vandijk": 30000 },
       validFrom: now.toISOString(), validTo: later.toISOString(), signature: "", monthlyLimit: 80000,
     }, {
       id: "mdt-globex-1", tenantId: "tnt-globex", agentId: "agt-globex-1", principalUserId: "usr-globex-gina", type: "intent",
@@ -75,6 +81,7 @@ export function seed(): Db {
       { id: "sup-northwind", orgId: "org-northwind", name: "Northwind Components LLC", bankDetailsRef: "bank-ref-001", walletAddress: "0x9a1C00000000000000000000000000000000C0DE", preferredRail: "onchain_usdc", acceptedRails: ["stripe_card", "stripe_ach", "circle_usdc", "onchain_usdc"], screeningStatus: "clear", erp: "SAP" },
       { id: "sup-contoso", orgId: "org-contoso", name: "Contoso Logistics Ltd", bankDetailsRef: "bank-ref-002", walletAddress: null, preferredRail: "stripe_ach", acceptedRails: ["stripe_card", "stripe_ach"], screeningStatus: "clear", erp: "Coupa" },
       { id: "sup-fabrikam", orgId: "org-fabrikam", name: "Fabrikam Metals SA", bankDetailsRef: "bank-ref-003", walletAddress: SANCTIONED_WALLETS[0], preferredRail: "circle_usdc", acceptedRails: ["stripe_ach", "circle_usdc"], screeningStatus: "clear", erp: "SAP" },
+      { id: "sup-vandijk", orgId: "org-vandijk", name: "Van Dijk Industrie BV", bankDetailsRef: "bank-ref-004", walletAddress: null, preferredRail: "stripe_ach", acceptedRails: ["stripe_card", "stripe_ach"], screeningStatus: "clear", erp: "SAP", entityId: "ent-acme-eu", currency: "EUR" },
       { id: "sup-initech", tenantId: "tnt-globex", orgId: "org-initech", name: "Initech Packaging Co", bankDetailsRef: "bank-ref-101", walletAddress: null, preferredRail: "stripe_ach", acceptedRails: ["stripe_card", "stripe_ach"], screeningStatus: "clear", erp: "Coupa" },
       { id: "sup-hooli", tenantId: "tnt-globex", orgId: "org-hooli", name: "Hooli Store Fixtures Ltd", bankDetailsRef: "bank-ref-102", walletAddress: "0x7E5700000000000000000000000000000000F1E0", preferredRail: "onchain_usdc", acceptedRails: ["stripe_ach", "circle_usdc", "onchain_usdc"], screeningStatus: "clear", erp: "SAP" },
     ],
@@ -88,9 +95,10 @@ export function seed(): Db {
       { tenantId: "tnt-globex", sku: "IN-BOX-M", supplierId: "sup-initech", description: "Shipping carton medium", category: "logistics", unitPrice: 0.9, keywords: ["box", "boxes", "carton", "cartons"] },
       { tenantId: "tnt-globex", sku: "HL-HOOK-25", supplierId: "sup-hooli", description: "Display hook set of 25", category: "mro", unitPrice: 3.4, keywords: ["hook", "hooks", "display"] },
       { tenantId: "tnt-globex", sku: "HL-TAB-01", supplierId: "sup-hooli", description: "Store tablet kiosk", category: "it", unitPrice: 640, keywords: ["tablet", "kiosk"] },
+      { sku: "VD-VLV-HYD", supplierId: "sup-vandijk", description: "Hydraulic valve DN25", category: "components", unitPrice: 85, keywords: ["valve", "valves", "hydraulic"] },
       { sku: "FB-STL-304", supplierId: "sup-fabrikam", description: "Stainless steel sheet 304 per ton", category: "components", unitPrice: 3100, keywords: ["steel", "stainless", "sheet"] },
     ],
-    pos: [], receipts: [], invoices: [], intents: [], settlements: [], journals: [], evidence: [], erp: [], payeeChanges: [], refunds: [], alerts: [],
+    pos: [EU_PO(now)], receipts: [], invoices: [EU_INV(now)], intents: [], settlements: [], journals: [], evidence: [], erp: [], payeeChanges: [], refunds: [], alerts: [],
     killSwitch: false, seq: 1000,
   };
 }
@@ -119,6 +127,9 @@ function upgrade(d: Db): Db {
   const s = seed();
   for (const k of ["orgs", "agents", "mandates", "suppliers"] as const) for (const x of s[k] as { id: string }[]) if (!(d[k] as { id: string }[]).some((y) => y.id === x.id)) (d[k] as unknown[]).push(x);
   for (const c of s.catalog) if (!d.catalog.some((y) => y.sku === c.sku)) d.catalog.push(c);
+  for (const k of ["pos", "invoices"] as const) for (const x of s[k] as { id: string }[]) if (!(d[k] as { id: string }[]).some((y) => y.id === x.id)) (d[k] as unknown[]).push(x);
+  const m1 = d.mandates.find((m) => m.id === "mdt-1");
+  if (m1 && !m1.allowedSuppliers.includes("sup-vandijk")) { m1.allowedSuppliers.push("sup-vandijk"); m1.perSupplierLimit = { ...m1.perSupplierLimit, "sup-vandijk": 30000 }; }
   // Seeded Northwind takes card and ACH too, so the happy path can route to Stripe when the wallet has no USDC.
   const nw = d.suppliers.find((x) => x.id === "sup-northwind");
   if (nw) for (const r of ["stripe_card", "stripe_ach"] as Rail[]) if (!nw.acceptedRails.includes(r)) nw.acceptedRails.unshift(r);

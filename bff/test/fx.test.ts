@@ -105,3 +105,55 @@ describe("legal entities and FX (rate fetch mocked)", () => {
     await app.close();
   });
 });
+
+describe("realised FX between invoice date and payment (two mocked rates)", () => {
+  const dated: Record<string, number> = {};
+  beforeEach(() => { for (const k of Object.keys(dated)) delete dated[k]; FX.setDatedRateFetcher(async (b, q, d) => { const r = dated[`${b}${q}${d}`]; if (!r) throw new Error("no pair"); return { rate: r, date: d, source: "mock ECB history" }; }); });
+  async function vanDijk(invoiceDate: string) {
+    await S.ensureRates({ currency: "EUR", entityId: "ent-acme-eu", tenantId: "tnt-acme" });
+    const po = S.createPo({ supplierId: "sup-vandijk", category: "components", currency: "EUR", lines: [{ sku: "VD-VLV-HYD", description: "Hydraulic valve DN25", qty: 10, unitPrice: 85 }], justification: "EUR entity test" });
+    expect(po.entityId).toBe("ent-acme-eu");
+    S.autoApprove(po); S.receiveGoods(po.id);
+    const inv = await S.submitInvoice(po.id, S.invoiceText(po.id, {}), { invoiceDate });
+    await S.ensureRates({ currency: "EUR", entityId: inv.entityId, tenantId: "tnt-acme", invoiceDate });
+    expect(S.matchInvoice(inv.id).status).toBe("matched");
+    return db.invoices.find((i) => i.id === inv.id)!;
+  }
+  const pay = async (invId: string, key: string) => { const { intent } = await S.payInvoice(invId, key); await S.pollSettlements(); return intent; };
+  const balanced = (j: any) => Math.abs(j.entries.reduce((a: number, e: any) => a + (e.debit ?? 0) - (e.credit ?? 0), 0)) < 0.005;
+  it("books a loss in ent-acme-eu when EUR strengthens after the invoice date", async () => {
+    dated["EURUSD2026-10-01"] = 1.08;
+    const inv = await vanDijk("2026-10-01");
+    expect(inv.entityId).toBe("ent-acme-eu"); expect(inv.accrual).toMatchObject({ rate: 1, usdRate: 1.08, amount: 850 });
+    const i = await pay(inv.id, "k-eu-loss");
+    expect(i.entityId).toBe("ent-acme-eu"); expect(i.fx!.rate).toBe(1.1); expect(i.amount).toBe(935); expect(i.status).toBe("settled");
+    expect(i.fx!.realised).toMatchObject({ kind: "loss", apFunctional: 850, cashFunctional: 865.74 });
+    const j = db.journals.find((x) => x.id === i.fx!.realised!.journalId)!;
+    expect(j.entityId).toBe("ent-acme-eu"); expect(balanced(j)).toBe(true);
+    expect(j.entries.find((e: any) => e.account === "7200 Realised FX loss")).toMatchObject({ debit: 15.74 });
+  });
+  it("books a gain in ent-acme-eu when EUR weakens after the invoice date", async () => {
+    dated["EURUSD2026-10-02"] = 1.15;
+    const inv = await vanDijk("2026-10-02");
+    const i = await pay(inv.id, "k-eu-gain");
+    expect(i.fx!.realised).toMatchObject({ kind: "gain", apFunctional: 850, cashFunctional: 813.04 });
+    const j = db.journals.find((x) => x.id === i.fx!.realised!.journalId)!;
+    expect(j.entityId).toBe("ent-acme-eu"); expect(balanced(j)).toBe(true);
+    expect(j.entries.find((e: any) => e.account === "7100 Realised FX gain")).toMatchObject({ credit: 36.96 });
+  });
+  it("routes a EUR supplier invoice to its entity even when the invoice row lacks one", async () => {
+    dated["EURUSD2026-10-03"] = 1.1;
+    const inv = await vanDijk("2026-10-03"); delete inv.entityId;
+    expect(S.invoiceEntity(inv).id).toBe("ent-acme-eu");
+    const i = await pay(inv.id, "k-eu-route");
+    expect(i.entityId).toBe("ent-acme-eu");
+    expect(db.journals.filter((x) => x.ref === i.id).every((x) => x.entityId === "ent-acme-eu")).toBe(true);
+  });
+  it("seeds a Van Dijk EUR invoice owned by Acme Europe BV", () => {
+    const inv = db.invoices.find((i) => i.id === "inv-eu-seed")!;
+    expect(inv).toMatchObject({ currency: "EUR", entityId: "ent-acme-eu", supplierId: "sup-vandijk" });
+  });
+  it("refuses an invoice date with no historical rate rather than inventing one", async () => {
+    await expect(FX.getRateOn("EUR", "USD", "2020-01-01")).rejects.toThrow(/No rate is invented/);
+  });
+});

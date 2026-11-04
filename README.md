@@ -246,10 +246,10 @@ curl -s http://localhost:5180/api/scim/v2/Users -H "Authorization: Bearer $SCIM_
 Forward test webhooks to the BFF and put the printed `whsec_` value in `.env` as `STRIPE_WEBHOOK_SECRET`.
 
 ```bash
-stripe listen --api-key "$STRIPE_SECRET_KEY" --all-snapshot --forward-to localhost:8790/webhooks/stripe
+STRIPE_API_KEY="$STRIPE_SECRET_KEY" stripe listen --all-snapshot --forward-to localhost:8790/webhooks/stripe
 ```
 
-Load `STRIPE_SECRET_KEY` from `.env` into your shell first. Do not paste keys into the command history.
+The Stripe CLI reads the key from the `STRIPE_API_KEY` environment variable, so the key never appears in the process arguments. Load `STRIPE_SECRET_KEY` from `.env` into your shell first. Do not paste keys into the command history.
 
 ### Circle sandbox
 

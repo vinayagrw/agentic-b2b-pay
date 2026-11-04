@@ -109,7 +109,9 @@ export function createPo(draft: PoDraft, agentId?: string) {
   if (tenantOf(agent) !== tenantId) throw new HttpError(403, "Agent and supplier belong to different tenants");
   if (sup.onboarding && sup.onboarding.status !== "verified") throw new HttpError(409, `Supplier onboarding is ${sup.onboarding.status}. A client admin must verify it first.`);
   const total = round(draft.lines.reduce((a, l) => a + l.qty * l.unitPrice, 0));
-  const ent = draft.entityId ? FX.getEntity(draft.entityId, tenantId) : FX.defaultEntity(tenantId);
+  // The order belongs to the chosen entity, else the entity that owns the supplier, else the default.
+  const ownerId = draft.entityId ?? sup.entityId;
+  const ent = ownerId ? FX.getEntity(ownerId, tenantId) : FX.defaultEntity(tenantId);
   if (!ent) throw new HttpError(404, "entity not found");
   // Mandate limits are in USD. A EUR or GBP order is checked on its USD value at the cached rate. No cached rate means no order.
   let usd = total;
@@ -210,12 +212,14 @@ export function receiveGoods(poId: string, shortBy = 0) {
 export function invoiceText(poId: string, opts: { priceBumpPct?: number; poison?: boolean }) {
   const po = must(db.pos.find((p) => p.id === poId), "po"); return renderInvoiceText(po, supplier(po.supplierId), opts);
 }
-export async function submitInvoice(poId: string, text: string) {
+export async function submitInvoice(poId: string, text: string, opts: { invoiceDate?: string } = {}) {
   const po = must(db.pos.find((p) => p.id === poId), "po");
   const sup = supplier(po.supplierId);
   const walletBefore = sup.walletAddress;
   const r = await readInvoice(text);
-  const inv = { id: nextId("inv"), tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: false, injection: r.injection };
+  const invoiceDate = opts.invoiceDate ?? FX.today();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) || invoiceDate > FX.today()) throw new HttpError(422, "invoiceDate must be YYYY-MM-DD and not in the future");
+  const inv = { id: nextId("inv"), invoiceDate, tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? sup.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: false, injection: r.injection };
   db.invoices.push(inv); po.status = po.status === "received" ? "invoiced" : po.status;
   ev("invoice", inv.id, "llm.invoice_extracted", { source: r.source, extract: r.value });
   if (r.injection.length) {
@@ -225,18 +229,21 @@ export async function submitInvoice(poId: string, text: string) {
   save(); return inv;
 }
 /** Fetches (or reuses) the rates a PO or invoice needs, so the sync steps never run without a real rate. */
-export async function ensureRates(input: { currency?: string; entityId?: string; tenantId: string }) {
+export async function ensureRates(input: { currency?: string; entityId?: string; tenantId: string; invoiceDate?: string }) {
   const ent = input.entityId ? FX.getEntity(input.entityId, input.tenantId) : FX.defaultEntity(input.tenantId);
   const c = input.currency ?? "USD";
   if (c !== "USD") await FX.getRate(c, "USD");
   if (ent && c !== ent.currency) await FX.getRate(c, ent.currency);
+  if (input.invoiceDate) { if (c !== "USD") await FX.getRateOn(c, "USD", input.invoiceDate); if (ent && c !== ent.currency) await FX.getRateOn(c, ent.currency, input.invoiceDate); }
 }
 export function matchInvoice(invId: string) {
   const inv = must(db.invoices.find((i) => i.id === invId), "invoice");
   const po = must(db.pos.find((p) => p.id === inv.poId), "po");
-  const ent = entityFor(inv, tenantOf(po));
-  const ar = FX.cachedRate(inv.currency ?? "USD", ent.currency);
-  if (!ar) throw new HttpError(409, `No ${inv.currency} to ${ent.currency} rate is cached. Get an FX quote first.`);
+  const ent = invoiceEntity(inv, po);
+  // AP is booked at the rates on the invoice date. Settlement later uses the FX lock rate.
+  const ar = FX.cachedRateOn(inv.currency ?? "USD", ent.currency, inv.invoiceDate);
+  const ur = FX.cachedRateOn(inv.currency ?? "USD", "USD", inv.invoiceDate);
+  if (!ar || !ur) throw new HttpError(409, `No ${inv.currency} rate for ${inv.invoiceDate ?? "today"} is cached. Get an FX quote first.`);
   const grLines = db.receipts.filter((g) => g.poId === po.id).flatMap((g) => g.lines);
   const m = threeWayMatch(po.lines, grLines, inv.extract.lines);
   if (Math.abs(inv.extract.total - m.totals.invoice) > 0.01) { m.status = "exception"; m.lines.push({ sku: "TOTAL", poQty: 0, grQty: 0, invQty: 0, poPrice: m.totals.invoice, invPrice: inv.extract.total, ok: false, note: "Stated total does not equal sum of lines" }); }
@@ -246,7 +253,7 @@ export function matchInvoice(invId: string) {
     const pair = AP2.currentPair(po.id);
     if (pair.intent) signCartFor(po, pair.intent, AP2.normLines(inv.extract.lines), inv.amount, supplier(po.supplierId));
     const fn = FX.convert(inv.amount, ar.rate);
-    inv.accrual = { functionalCurrency: ent.currency, rate: ar.rate, amount: fn, source: ar.source, stale: ar.stale, at: now() };
+    inv.accrual = { functionalCurrency: ent.currency, rate: ar.rate, usdRate: ur.rate, rateDate: ar.rateDate ?? inv.invoiceDate ?? null, amount: fn, source: ar.source, stale: ar.stale, at: now() };
     const o = (inv.currency ?? "USD") !== ent.currency ? { origCurrency: inv.currency, origAmount: inv.amount } : {};
     db.journals.push(ej(tenantOf(po), ent.id, makeJournal(nextId("jnl"), `Invoice ${inv.number} accrued`, inv.id, [{ account: po.category === "logistics" ? "5100 Freight expense" : "1300 Inventory", debit: fn, ...o }, { account: "2000 Accounts payable", credit: fn, ...o }], ent.currency)));
     erp({ system: supplier(po.supplierId).erp, kind: "invoice.approved", at: new Date().toISOString(), payload: { invoice: inv.number, po: po.erpRef, amount: inv.amount } });
@@ -258,6 +265,12 @@ export function matchInvoice(invId: string) {
 const tj = (tenantId: string, j: import("./modules/store.js").Journal) => ({ ...j, tenantId });
 const ej = (tenantId: string, entityId: string, j: import("./modules/store.js").Journal) => ({ ...j, tenantId, entityId });
 /** The legal entity that owns an invoice or payment. Rows from before entities existed belong to the default entity. */
+/** Owner of an invoice: its own entity, else the PO entity, else the supplier entity, else the default. */
+export function invoiceEntity(inv: import("./modules/store.js").Invoice, po?: PurchaseOrder) {
+  const t = tenantOf(inv); po ??= db.pos.find((p) => p.id === inv.poId);
+  const sup = db.suppliers.find((s) => s.id === inv.supplierId);
+  return entityFor({ entityId: inv.entityId ?? po?.entityId ?? sup?.entityId }, t);
+}
 export function entityFor(x: { entityId?: string }, tenantId: string) {
   const e = (x.entityId && FX.getEntity(x.entityId, tenantId)) || FX.defaultEntity(tenantId);
   if (!e) throw new HttpError(409, `Tenant ${tenantId} has no legal entity`);
@@ -301,7 +314,7 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
   const mandate = must(db.mandates.find((m) => m.id === po.mandateId), "mandate");
   const agent = must(db.agents.find((a) => a.id === po.agentId), "agent");
   // FX: rails settle in USD. A EUR or GBP invoice, or a non USD entity, gets a locked quote before any money moves.
-  const ent = entityFor(inv, TENANT); const invCcy = inv.currency ?? "USD";
+  const ent = invoiceEntity(inv, po); const invCcy = inv.currency ?? "USD";
   let lock: FX.FxLock | null = null;
   if (invCcy !== "USD" || ent.currency !== "USD") {
     if (opts.fxLockId) { const l = FX.getLock(opts.fxLockId, TENANT); if (!l) throw new HttpError(404, "FX lock not found"); if (FX.isExpired(l)) throw new HttpError(409, `FX lock ${l.id} expired at ${l.expiresAt}. Get a new quote.`); lock = l; }
@@ -404,11 +417,14 @@ export function applyRailUpdate(intentId: string, u: { status: "pending" | "sett
   publish(tenantOf(intent), "payment.settled", { id: intent.id, amount: intent.amount, rail, providerRef: st.railRef, txHash });
   save(); return intent;
 }
-/** Books the payment in the entity ledger at the locked rate. A difference to the accrual is a realised FX gain or loss line. */
+/** Books the payment in the entity ledger. AP is cleared at the invoice date rate it was booked at. The USD cash
+ * paid at the FX lock rate is valued in the functional currency at the invoice date cross rate. The difference is
+ * a realised FX gain (7100) or loss (7200), so a rate move between invoice date and payment always posts. */
 function bookSettlement(intent: PaymentIntent, inv: import("./modules/store.js").Invoice, rail: Rail, cash: string, fee: number) {
   const t = tenantOf(intent); const ent = entityFor(intent, t); const fx = intent.fx;
   const ap = inv.accrual?.amount ?? inv.amount;
-  const cashFn = fx ? FX.convert(inv.amount, fx.functionalRate) : intent.amount;
+  const bookFn = inv.accrual?.rate ?? fx?.functionalRate ?? 1; const bookUsd = inv.accrual?.usdRate ?? fx?.rate ?? 1;
+  const cashFn = fx ? round(intent.amount * bookFn / bookUsd) : intent.amount;
   const diff = round(cashFn - ap);
   const cashO = fx && ent.currency !== "USD" ? { origCurrency: "USD", origAmount: intent.amount } : {};
   const apO = (inv.currency ?? "USD") !== ent.currency ? { origCurrency: inv.currency, origAmount: inv.amount } : {};
@@ -419,7 +435,7 @@ function bookSettlement(intent: PaymentIntent, inv: import("./modules/store.js")
   db.journals.push(j);
   if (fx) {
     fx.realised = { apFunctional: ap, cashFunctional: cashFn, gainLoss: diff === 0 ? 0 : -diff, kind: diff < 0 ? "gain" : diff > 0 ? "loss" : "none", journalId: diff === 0 ? null : j.id };
-    ev("payment", intent.id, "fx.realised", { lockId: fx.lockId, rate: fx.rate, functionalRate: fx.functionalRate, accrualRate: inv.accrual?.rate ?? null, ...fx.realised });
+    ev("payment", intent.id, "fx.realised", { lockId: fx.lockId, rate: fx.rate, functionalRate: fx.functionalRate, accrualRate: inv.accrual?.rate ?? null, accrualUsdRate: bookUsd, invoiceDate: inv.invoiceDate ?? null, ...fx.realised });
   }
   if (fee) {
     const feeFn = fx && ent.currency !== "USD" ? FX.convert(fee, fx.functionalRate / fx.rate) : fee;
@@ -592,7 +608,7 @@ ${ntries.join("\n")}
 }
 
 /** Full flow used by the scenario buttons and the e2e script. */
-export async function runFlow(need: string, opts: { scenario?: "happy" | "sanctioned" | "poisoned"; autoApprove?: boolean; tenantId?: string; entityId?: string; currency?: "USD" | "EUR" | "GBP" } = {}) {
+export async function runFlow(need: string, opts: { scenario?: "happy" | "sanctioned" | "poisoned"; autoApprove?: boolean; tenantId?: string; entityId?: string; currency?: "USD" | "EUR" | "GBP"; invoiceDate?: string } = {}) {
   const steps: { step: string; ok: boolean; detail: unknown }[] = [];
   const log = (step: string, ok: boolean, detail: unknown) => steps.push({ step, ok, detail });
   const d = await draftPo(need, opts.tenantId ?? TENANT);
@@ -606,7 +622,8 @@ export async function runFlow(need: string, opts: { scenario?: "happy" | "sancti
   if (po.status === "pending_approval" && opts.autoApprove !== false) { po = autoApprove(po); log("Human approval", po.status === "approved", { rule: po.approval?.ruleName, approvals: po.approval?.levels.flatMap((l) => l.approvals.map((a) => a.userId)) }); }
   if (po.status !== "approved") return { steps, poId: po.id };
   receiveGoods(po.id); log("Goods receipt", true, {});
-  const inv = await submitInvoice(po.id, invoiceText(po.id, { poison: opts.scenario === "poisoned" }));
+  const inv = await submitInvoice(po.id, invoiceText(po.id, { poison: opts.scenario === "poisoned" }), { invoiceDate: opts.invoiceDate });
+  await ensureRates({ currency: inv.currency, entityId: inv.entityId, tenantId: opts.tenantId ?? TENANT, invoiceDate: inv.invoiceDate });
   log("Supplier invoice", true, { extractedBy: inv.extractedBy, number: inv.number, total: inv.amount, injection: (inv as any).injection });
   const m = matchInvoice(inv.id); log("3-way match", m.status === "matched", m);
   if (m.status !== "matched") return { steps, poId: po.id, invoiceId: inv.id };

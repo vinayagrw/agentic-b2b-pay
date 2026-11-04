@@ -250,8 +250,8 @@ export async function buildApp() {
   app.post("/approvals/:poId", async (req: any) => { const { u, t } = ctx(req); const po = db.pos.find((p) => p.id === req.params.poId); if (!po || (po.tenantId ?? "tnt-acme") !== t) throw new S.HttpError(404, "po not found"); if (b(req).approve) I.requirePermission(u, "payments.approve", { amount: po.total, tenantId: t }); return S.decideApproval(po.id, !!b(req).approve, u.id, String(b(req).comment ?? "")); });
   app.post("/goods-receipts", async (req) => S.receiveGoods(b(req).poId, Number(b(req).shortBy ?? 0)));
   app.post("/invoices/render", async (req) => ({ text: S.invoiceText(b(req).poId, { priceBumpPct: Number(b(req).priceBumpPct ?? 0), poison: !!b(req).poison }) }));
-  app.post("/invoices", async (req) => S.submitInvoice(b(req).poId, String(b(req).text)));
-  app.post("/invoices/:id/match", async (req: any) => { const inv = db.invoices.find((i) => i.id === req.params.id); if (inv) await S.ensureRates({ currency: inv.currency, entityId: inv.entityId, tenantId: inv.tenantId ?? "tnt-acme" }); return S.matchInvoice(req.params.id); });
+  app.post("/invoices", async (req) => S.submitInvoice(b(req).poId, String(b(req).text), { invoiceDate: b(req).invoiceDate ? String(b(req).invoiceDate) : undefined }));
+  app.post("/invoices/:id/match", async (req: any) => { const inv = db.invoices.find((i) => i.id === req.params.id); if (inv) await S.ensureRates({ currency: inv.currency, entityId: S.invoiceEntity(inv).id, tenantId: inv.tenantId ?? "tnt-acme", invoiceDate: inv.invoiceDate }); return S.matchInvoice(req.params.id); });
   app.post("/invoices/:id/pay", async (req: any) => {
     const key = req.headers["idempotency-key"]; if (!key) throw new S.HttpError(400, "Idempotency-Key header required");
     const u = who(req); const inv = db.invoices.find((i) => i.id === req.params.id); const po = inv && db.pos.find((p) => p.id === inv.poId);
@@ -273,7 +273,7 @@ export async function buildApp() {
   app.get("/statements/camt053", async (req: any, reply) => { const t = req.query?.tenantId ? clientOf(req, who(req)) : scopeOf(req); return reply.type("application/xml").header("content-disposition", `attachment; filename="camt053-${t ?? "all"}.xml"`).send(S.camt053(undefined, t)); });
   app.get("/evidence", async (req) => S.evidenceView(undefined, scopeOf(req)));
   app.get("/evidence/:subjectId", async (req: any) => S.evidenceView(req.params.subjectId, scopeOf(req)));
-  app.post("/scenario/run", async (req) => { const { t } = ctx(req); return S.runFlow(String(b(req).need ?? "Need 2000 sealed 6204 bearings for line 3 maintenance"), { scenario: b(req).scenario ?? "happy", tenantId: t, entityId: b(req).entityId ? String(b(req).entityId) : undefined, currency: ["USD", "EUR", "GBP"].includes(b(req).currency) ? b(req).currency : undefined }); });
+  app.post("/scenario/run", async (req) => { const { t } = ctx(req); return S.runFlow(String(b(req).need ?? "Need 2000 sealed 6204 bearings for line 3 maintenance"), { scenario: b(req).scenario ?? "happy", tenantId: t, entityId: b(req).entityId ? String(b(req).entityId) : undefined, currency: ["USD", "EUR", "GBP"].includes(b(req).currency) ? b(req).currency : undefined, invoiceDate: b(req).invoiceDate ? String(b(req).invoiceDate) : undefined }); });
   // Rails, payments, webhooks
   app.get("/rails", async () => S.railsView());
   app.get("/rails/balances", async () => S.railBalances());

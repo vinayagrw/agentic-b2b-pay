@@ -54,6 +54,7 @@ describe("treasury", () => {
     const inv = db.invoices.find((i) => i.id === r.invoiceId)!;
     db.intents.find((i) => i.id === r.intentId)!.status = "failed"; inv.paid = false; // keep it open for the forecast
     inv.dueDate = new Date(Date.now() + 10 * 864e5).toISOString().slice(0, 10);
+    db.invoices.find((i) => i.id === "inv-eu-seed")!.paid = true; // the seeded EUR invoice is not part of this forecast
     const t = await O.treasury("tnt-acme");
     expect(t.balances).toHaveLength(4); expect(t.startingCash).toBe(202000);
     expect(t.forecast).toHaveLength(31); expect(t.forecast[10].outflow).toBe(inv.amount); expect(t.forecast[30].balance).toBe(202000 - inv.amount);
