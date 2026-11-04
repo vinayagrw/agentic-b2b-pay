@@ -155,6 +155,8 @@ These Stripe test mode PaymentIntents were read back from Stripe and matched to 
 
 ## Quick start
 
+New here? Follow the step by step [guide to running transactions](docs/guide-transactions.md).
+
 ```bash
 make setup        # npm install
 cp .env.example .env

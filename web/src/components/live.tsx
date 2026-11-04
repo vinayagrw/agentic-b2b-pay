@@ -111,8 +111,8 @@ export function JsonTree({ value, name, depth = 0, open: start }: { value: unkno
 export function JsonViewer({ title, value, meta }: { title: string; value: unknown; meta?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => { try { await navigator.clipboard.writeText(JSON.stringify(value, null, 2)); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { setCopied(false); } };
-  return <details className="group rounded-lg border border-border">
-    <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[13px]"><ChevronRight size={13} aria-hidden className="transition-transform group-open:rotate-90" /><span className="font-medium">{title}</span>{meta && <span className="text-[11px] text-muted">{meta}</span>}
+  return <details className="group min-w-0 rounded-lg border border-border">
+    <summary className="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-2 px-3 py-2 text-[13px]"><ChevronRight size={13} aria-hidden className="transition-transform group-open:rotate-90" /><span className="font-medium">{title}</span>{meta && <span className="min-w-0 break-all text-[11px] text-muted">{meta}</span>}
       <button type="button" className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-subtle hover:text-fg" onClick={(e) => { e.preventDefault(); void copy(); }} aria-label={`Copy ${title} JSON`}>{copied ? <Check size={12} aria-hidden /> : <Copy size={12} aria-hidden />}{copied ? "Copied" : "Copy"}</button></summary>
     <div className="overflow-x-auto border-t border-border bg-subtle/50 px-2 py-2 font-mono text-[12px]"><JsonTree value={value} open /></div>
   </details>;
