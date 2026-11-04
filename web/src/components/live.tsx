@@ -130,3 +130,31 @@ export function PayloadsCard({ id }: { id: string }) {
     </div></section>
   </div>}</Card>;
 }
+
+/** Generic donut for label and value pairs, same SVG arcs as the rail donut. Used by the copilot answers. */
+export function DonutChart({ title, data, format = (n: number) => String(n) }: { title: string; data: { label: string; value: number }[]; format?: (n: number) => string }) {
+  const parts = slices(data.map((d) => d.value)); const total = data.reduce((a, d) => a + d.value, 0);
+  return <div className="flex items-center gap-3">
+    <svg viewBox="0 0 120 120" className="h-24 w-24 shrink-0" role="img" aria-label={`${title}: ${data.map((d, n) => `${d.label} ${Math.round(parts[n].share * 100)} percent`).join(", ")}`}>
+      {data.map((d, n) => <path key={d.label + n} d={arcPath(parts[n].from, parts[n].to, 58, 38, 60)} style={{ fill: PALETTE[n % PALETTE.length] }} stroke="var(--surface)" strokeWidth={1.5}><title>{`${d.label}: ${format(d.value)}`}</title></path>)}
+      <text x="60" y="65" textAnchor="middle" className="fill-fg text-[12px] font-semibold">{format(total)}</text>
+    </svg>
+    <ul className="min-w-0 flex-1 space-y-0.5 text-[11px]">{data.map((d, n) => <li key={d.label + n} className="flex items-center gap-1.5"><span aria-hidden className="h-2 w-2 shrink-0 rounded-sm" style={{ background: PALETTE[n % PALETTE.length] }} /><span className="min-w-0 flex-1 truncate">{d.label}</span><span className="tabular-nums text-muted">{format(d.value)}</span></li>)}</ul>
+  </div>;
+}
+
+/** Generic horizontal bars for label and value pairs. */
+export function BarList({ title, data, format = (n: number) => String(n) }: { title: string; data: { label: string; value: number }[]; format?: (n: number) => string }) {
+  const max = Math.max(1, ...data.map((d) => Math.abs(d.value)));
+  return <ul className="space-y-1.5" aria-label={title}>{data.map((d, n) => <li key={d.label + n}>
+    <div className="flex justify-between gap-2 text-[11px]"><span className="truncate">{d.label}</span><span className="tabular-nums text-muted">{format(d.value)}</span></div>
+    <div className="mt-0.5 h-2 rounded-sm" role="img" aria-label={`${d.label} ${format(d.value)}`} style={{ width: `${Math.max(3, (Math.abs(d.value) / max) * 100)}%`, background: d.value < 0 ? "var(--bad)" : PALETTE[0] }} />
+  </li>)}</ul>;
+}
+
+/** Small scrollable table for answer data. */
+export function DataTable({ columns, rows, max = 8 }: { columns: string[]; rows: (string | number)[][]; max?: number }) {
+  return <div className="overflow-x-auto"><table className="w-full text-[11px]"><thead><tr>{columns.map((c) => <th key={c} scope="col" className="whitespace-nowrap border-b border-border px-1.5 py-1 text-left font-medium text-muted">{c}</th>)}</tr></thead>
+    <tbody>{rows.slice(0, max).map((r, n) => <tr key={n} className="border-b border-border/60">{r.map((v, k) => <td key={k} className={cn("whitespace-nowrap px-1.5 py-1", typeof v === "number" && "text-right tabular-nums")}>{String(v)}</td>)}</tr>)}</tbody></table>
+    {rows.length > max && <Muted>{rows.length - max} more rows in the CSV</Muted>}</div>;
+}

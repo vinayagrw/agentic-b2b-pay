@@ -122,10 +122,10 @@ export async function buildApp() {
     "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /refunds": "payments.refund",
     "POST /erp/vendor-master/changes": "erp.vendor_master", "POST /erp/vendor-master/changes/:id/approve": "payments.approve", "POST /erp/vendor-master/changes/:id/callback": "payments.approve",
     "GET /rails/balances": "rails.balances", "GET /users": "users.read", "PATCH /tenants/:id/branding": "settings.branding", "POST /tenants/:id/logo": "settings.branding",
-    "POST /changes": "changes.request", "POST /copilot/ask": "workspace.read", "POST /copilot/answer": "workspace.read", "POST /changes/:id/decide": "changes.decide",
+    "POST /changes": "changes.request", "POST /copilot/ask": "workspace.read", "POST /copilot/answer": "workspace.read", "POST /copilot/threads/:id": "workspace.read", "DELETE /copilot/threads/:id": "workspace.read", "POST /copilot/feedback": "workspace.read", "POST /changes/:id/decide": "changes.decide",
     "POST /workspace/agents": "agents.manage", "PUT /workspace/agents/:id/mandate": "agents.manage", "POST /workspace/agents/:id/keys": "agents.manage", "POST /workspace/agents/:id/:action": "agents.manage",
     "POST /workspace/rules": "rules.edit", "PUT /workspace/rules/:id": "rules.edit", "DELETE /workspace/rules/:id": "rules.edit", "POST /workspace/rules/order": "rules.edit",
-    "POST /workspace/suppliers/invite": "suppliers.invite", "POST /workspace/suppliers/:id/link": "suppliers.invite", "POST /workspace/suppliers/:id/review": "suppliers.review",
+    "POST /workspace/suppliers/invite": "suppliers.invite", "POST /workspace/suppliers/:id/link": "suppliers.invite", "POST /workspace/suppliers/:id/review": "suppliers.review", "POST /workspace/suppliers/:id/hold": "suppliers.review",
     "POST /workspace/suppliers/:id/payee-change": "suppliers.payee_change", "POST /workspace/suppliers/:id/wallet-message": "workspace.read",
     "GET /ops/treasury": "treasury.read", "POST /ops/treasury/sweep": "treasury.sweep", "POST /ops/recon/run": "treasury.sweep", "GET /ops/recon": "treasury.read", "POST /ops/recon/exceptions/:id/resolve": "treasury.sweep",
     "GET /ops/recon/export.csv": "treasury.read", "GET /ops/compliance": "compliance.read", "POST /ops/cases/:id/sar/draft": "compliance.case.file", "PUT /ops/cases/:id/sar": "compliance.case.file",
@@ -272,7 +272,7 @@ export async function buildApp() {
   });
   // Maker-checker
   app.get("/changes", async (req: any) => { const u = who(req); return P.listChanges(req.query?.status, P.isOperator(u) ? null : u.tenantId); });
-  app.post("/changes", async (req) => { const x = b(req); const u = can(req, x.kind === "rail.settings" ? "settings.live_toggle" : x.kind === "identity.oidc" ? "identity.manage" : "changes.request"); return P.requestChange(u, String(x.kind), x.payload, x.tenantId ?? null); });
+  app.post("/changes", async (req) => { const x = b(req); const u = can(req, x.kind === "rail.settings" ? "settings.live_toggle" : x.kind === "identity.oidc" ? "identity.manage" : "changes.request"); if (x.kind === "rule.draft") { const t = clientOf(req, u); I.requirePermission(u, "rules.edit", { tenantId: t }); return P.requestChange(u, "rule.draft", { ...(x.payload ?? {}), tenantId: t, requestedBy: u.id }, t); } return P.requestChange(u, String(x.kind), x.payload, x.tenantId ?? null); });
   app.post("/changes/:id/decide", async (req: any) => { const u = who(req); return P.decideChange(u, req.params.id, !!b(req).approve); });
 
   app.get("/health", async () => ({ ok: true, llmMode: llmMode() }));
@@ -353,6 +353,7 @@ export async function buildApp() {
   app.post("/workspace/suppliers/invite", async (req) => { const { u, t } = ctx(req); return W.inviteSupplier(u, t, b(req)); });
   app.post("/workspace/suppliers/:id/link", async (req: any) => { const { u, t } = ctx(req); return W.newInviteLink(u, t, req.params.id); });
   app.post("/workspace/suppliers/:id/review", async (req: any) => { const { u, t } = ctx(req); return W.reviewSupplier(u, t, req.params.id, !!b(req).verify, String(b(req).note ?? "")); });
+  app.post("/workspace/suppliers/:id/hold", async (req: any) => { const { u, t } = ctx(req); return W.setSupplierHold(u, t, req.params.id, b(req).hold !== false, String(b(req).reason ?? "")); });
   app.post("/workspace/suppliers/:id/payee-change", async (req: any) => { const { u, t } = ctx(req); return W.requestPayeeChange(u, t, req.params.id, b(req)); });
   app.post("/workspace/suppliers/:id/wallet-message", async (req: any) => { const { t } = ctx(req); return W.walletMessageFor(t, req.params.id, String(b(req).address ?? "")); });
   // Step 5: treasury, reconciliation, compliance cases. Operator console, per tenant.
@@ -372,16 +373,23 @@ export async function buildApp() {
   app.get("/ops/revenue", async (req) => { who(req); return A.revenue(); });
   app.get("/payments/:id/mandates", async (req: any) => { const i = scoped(scopeOf(req)).intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); return S.mandatesView(i.id); });
   // Copilot. Read-only tools scoped like every other read view. Proposals are returned, never executed.
-  const cpCtx = (req: any): CP.Ctx => { const u = who(req); return { user: u, scope: scopeOf(req), prefix: P.isOperator(u) ? "/operator" : "/app" }; };
-  app.post("/copilot/answer", async (req) => CP.ask(cpCtx(req), String(b(req).question ?? "")));
-  app.post("/copilot/ask", async (req) => CP.enqueue(cpCtx(req), String(b(req).question ?? "")));
+  const cpCtx = (req: any): CP.Ctx => { const u = who(req); const x = { ...(req.query ?? {}), ...b(req) }; return { user: u, scope: scopeOf(req), prefix: P.isOperator(u) ? "/operator" : "/app", route: x.route ? String(x.route).slice(0, 200) : undefined, recordId: x.recordId ? String(x.recordId).slice(0, 60) : undefined }; };
+  app.post("/copilot/answer", async (req) => CP.ask(cpCtx(req), String(b(req).question ?? ""), undefined, { threadId: b(req).threadId ?? null }));
+  app.post("/copilot/ask", async (req) => CP.enqueue(cpCtx(req), String(b(req).question ?? ""), b(req).threadId ? String(b(req).threadId) : null));
+  app.get("/copilot/suggest", async (req: any) => ({ questions: CP.suggestFor(cpCtx(req), String(req.query?.route ?? ""), String(req.query?.recordId ?? "")) }));
+  app.get("/copilot/threads", async (req: any) => CP.listThreads(who(req), String(req.query?.q ?? "")));
+  app.get("/copilot/threads/:id", async (req: any) => CP.getThread(who(req), req.params.id));
+  app.post("/copilot/threads/:id", async (req: any) => CP.renameThread(who(req), req.params.id, String(b(req).title ?? "")));
+  app.delete("/copilot/threads/:id", async (req: any) => CP.deleteThread(who(req), req.params.id));
+  app.post("/copilot/feedback", async (req) => CP.feedback(who(req), String(b(req).answerId ?? ""), String(b(req).vote ?? "")));
+  app.get("/copilot/answers/:id/export.csv", async (req: any, reply) => reply.type("text/csv").header("content-disposition", `attachment; filename="copilot-${String(req.params.id).replace(/[^\w-]/g, "")}.csv"`).send(CP.answerCsv(who(req), req.params.id)));
   app.get("/copilot/stream/:id", async (req: any, reply) => {
     const u = who(req); const p = CP.take(req.params.id, u.id);
     reply.hijack();
     reply.raw.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
     const send = (event: string, data: unknown) => reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     try {
-      const r = await CP.ask(p.ctx, p.question, (s) => send(s.event, s.data));
+      const r = await CP.ask(p.ctx, p.question, (s) => send(s.event, s.data), { threadId: p.threadId });
       for (const w of r.answer.match(/\S+\s*/g) ?? []) send("token", { text: w });
       send("done", r);
     } catch (e: any) { send("failed", { error: String(e.message ?? e) }); }

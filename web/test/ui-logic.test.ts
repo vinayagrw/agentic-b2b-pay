@@ -60,3 +60,18 @@ describe("step-up and rate limit UI logic", () => {
     expect(got).toEqual(["hi"]);
   });
 });
+
+import { recordFromPath } from "../src/lib/copilot";
+describe("copilot page awareness", () => {
+  it("reads the record id from the route", () => {
+    expect(recordFromPath("/app/payments/pi-12")).toBe("pi-12");
+    expect(recordFromPath("/operator/payments/pi-abc-1?tab=why")).toBe("pi-abc-1");
+    expect(recordFromPath("/app/approvals")).toBeUndefined();
+    expect(recordFromPath("/app/payments/<script>")).toBeUndefined();
+  });
+  it("folds a done answer with its chart and thread", () => {
+    const done = { id: "ans-1", threadId: "thr-1", question: "q", answer: "a", sources: [], proposals: [], chart: { kind: "bar", title: "t", series: [{ label: "x", value: 1 }], columns: ["x"], rows: [[1]] }, refused: null, mode: "mock" };
+    const f = foldStream([{ event: "done", data: done } as any]);
+    expect(f.done?.threadId).toBe("thr-1"); expect(f.done?.chart?.kind).toBe("bar");
+  });
+});

@@ -318,6 +318,7 @@ async function payInvoiceCore(invId: string, idempotencyKey: string, opts: { urg
   const sup = supplier(inv.supplierId); const so = org(sup.orgId);
   const TENANT = tenantOf(po); const bo = org(po.buyerOrgId); const BUYER = { name: bo.legalName, orgId: bo.id, country: bo.country };
   if (sup.onboarding && sup.onboarding.status !== "verified") throw new HttpError(409, `Supplier onboarding is ${sup.onboarding.status}`);
+  if ((sup as any).hold?.on) throw new HttpError(409, `Supplier ${sup.name} is on hold: ${(sup as any).hold.reason}`);
   const mandate = must(db.mandates.find((m) => m.id === po.mandateId), "mandate");
   const agent = must(db.agents.find((a) => a.id === po.agentId), "agent");
   // FX: rails settle in USD. A EUR or GBP invoice, or a non USD entity, gets a locked quote before any money moves.

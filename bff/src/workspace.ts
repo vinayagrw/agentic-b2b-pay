@@ -298,3 +298,28 @@ export const walletMessageFor = (tenantId: string, supplierId: string, address: 
   if (!isAddress(address)) throw err(422, "That is not a valid wallet address"); return { message: walletMessage(s, address) };
 };
 export const onboardingMessage = (token: string, address: string) => { const s = byToken(token); if (!isAddress(address)) throw err(422, "That is not a valid wallet address"); return { message: walletMessage(s, address) }; };
+
+// Supplier hold. A held supplier gets no new payments until the hold is lifted. A reason is required and lands in the evidence chain.
+export type Hold = { on: boolean; reason: string; by: string; at: string };
+export const holdOf = (s: Supplier | undefined) => ((s as any)?.hold as Hold | undefined)?.on ? ((s as any).hold as Hold) : null;
+export function setSupplierHold(user: P.User, tenantId: string, supplierId: string, on: boolean, reason: string) {
+  const s = inTenant(db.suppliers.find((x) => x.id === supplierId), tenantId, "supplier");
+  const why = String(reason ?? "").trim().slice(0, 300); if (why.length < 3) throw err(422, "Give a reason of at least 3 characters");
+  if (!!holdOf(s) === on) throw err(409, on ? "Supplier is already on hold" : "Supplier is not on hold");
+  (s as any).hold = { on, reason: why, by: user.id, at: now() } satisfies Hold;
+  ev("supplier", s.id, on ? "supplier.hold" : "supplier.hold_released", { actor: user.id, reason: why });
+  save(); return s;
+}
+
+/** A policy rule drafted for review. The maker requests it, a second client admin approves, and it is saved switched off so a person must turn it on. */
+P.registerChangeKind("rule.draft", {
+  role: "client_admin",
+  validate: (p) => {
+    if (!P.getTenant(p?.tenantId) || P.getTenant(p.tenantId)!.kind !== "client") throw new P.AuthError(422, "rule draft needs a client tenantId");
+    const r = RuleInput.parse({ ...p.rule, active: false }); const bad = validateRule(r as any); if (bad) throw new P.AuthError(422, bad);
+  },
+  apply: (p) => {
+    const maker = P.getUser(p.requestedBy) ?? { id: "system" } as P.User;
+    return upsertRule(maker, p.tenantId, RuleInput.parse({ ...p.rule, active: false }));
+  },
+});
