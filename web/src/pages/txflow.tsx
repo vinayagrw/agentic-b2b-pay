@@ -209,7 +209,7 @@ const RANGES = [[1, "Last 24 hours"], [7, "Last 7 days"], [30, "Last 30 days"], 
 /** Settled volume from tenants through rails to suppliers, and blocked volume to Blocked. */
 export function MoneyFlowMap() {
   const [days, setDays] = useState(30); const { data, error } = useGet<any>(`/ops/sankey?days=${days}`); const col = useChartColors();
-  const fill = (kind: string) => kind === "blocked" ? "var(--bad)" : kind === "rail" ? col.accent : kind === "supplier" ? "var(--ok)" : col.primary;
+  const fill = (kind: string) => kind === "blocked" ? "var(--bad)" : kind === "rail" ? col.muted : kind === "supplier" ? "var(--ok)" : col.primary;
   const NodeShape = (p: any) => {
     const { x, y, width, height, payload } = p; const right = payload.kind === "supplier" || payload.kind === "blocked";
     return <Layer><Rectangle x={x} y={y} width={width} height={height} fill={fill(payload.kind)} fillOpacity={0.9} />

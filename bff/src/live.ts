@@ -100,7 +100,8 @@ export function kindOf(subjectType: string, event: string): ActivityKind | null 
   if (subjectType === "payment" || subjectType === "webhook") return "payment";
   return null;
 }
-const titleOf = (event: string) => { const t = event.replace(/[._]/g, " "); return t[0].toUpperCase() + t.slice(1); };
+const ACRONYMS = new Set(["kya", "kyb", "kyc", "fx", "ach", "usdc", "ofac", "sdn", "ap2", "po", "mcp", "aml", "sla"]);
+export const titleOf = (event: string) => { const t = event.split(/[._]/).map((w) => (ACRONYMS.has(w) ? w.toUpperCase() : w)).join(" "); return t[0].toUpperCase() + t.slice(1); };
 
 export function activity(scope: string | null, opts: { limit?: number; afterSeq?: number } = {}): Activity[] {
   const d = scoped(scope); const limit = Math.min(200, opts.limit ?? 30);
