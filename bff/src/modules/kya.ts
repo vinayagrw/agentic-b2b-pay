@@ -1,21 +1,17 @@
 import crypto from "node:crypto";
 import type { Agent } from "./store.js";
+import { ensureKey, publicKeyOf, signMessage } from "./ap2.js";
 
-/** Simplified KYA: each agent gets an Ed25519 key, requests are signed, registry binds agent to org and ERP role. */
-const privateKeys = new Map<string, crypto.KeyObject>();
-
+/** KYA: each agent holds its AP2 Ed25519 key (the same key that signs cart mandates), requests are signed with it, registry binds agent to org and ERP role. */
 export function issueKey(agent: Agent) {
-  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
-  agent.publicKey = publicKey.export({ type: "spki", format: "pem" }).toString();
-  privateKeys.set(agent.id, privateKey);
+  agent.publicKey = ensureKey(agent.id, "agent");
   return agent.publicKey;
 }
 
-/** Simulates the agent signing on its own side. In production the key never leaves the agent runtime. */
+/** Signs with the agent's AP2 Ed25519 private key from the key store. The key never goes to the model or the API. */
 export function signAs(agentId: string, message: string): string {
-  const k = privateKeys.get(agentId);
-  if (!k) throw new Error(`no key for ${agentId}`);
-  return crypto.sign(null, Buffer.from(message), k).toString("base64");
+  if (!publicKeyOf(agentId)) throw new Error(`no key for ${agentId}`);
+  return signMessage(agentId, "agent", message);
 }
 
 export function verifySignature(agent: Agent, message: string, signature: string): boolean {
@@ -24,12 +20,14 @@ export function verifySignature(agent: Agent, message: string, signature: string
 }
 
 export type KyaResult = { verified: boolean; checks: { name: string; pass: boolean }[] };
+/** Signs a fresh random challenge with the agent's AP2 key and checks it against the registered public key. */
 export function verifyAgent(agent: Agent, orgKybVerified: boolean): KyaResult {
-  const challenge = `kya-challenge:${agent.id}`;
+  const challenge = `kya-challenge:${agent.id}:${crypto.randomUUID()}`;
+  const registered = publicKeyOf(agent.id);
   let sigOk = false;
-  try { sigOk = verifySignature(agent, challenge, signAs(agent.id, challenge)); } catch { sigOk = false; }
+  try { sigOk = !!registered && agent.publicKey === registered && verifySignature(agent, challenge, signAs(agent.id, challenge)); } catch { sigOk = false; }
   const checks = [
-    { name: "Key signature challenge", pass: sigOk },
+    { name: "AP2 agent key signs a fresh challenge", pass: sigOk },
     { name: "Bound to KYB verified org", pass: orgKybVerified },
     { name: "ERP role assigned", pass: !!agent.erpRole },
   ];

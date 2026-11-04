@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient, useMe } from "./lib/api";
 import { Shell } from "./components/Shell";
+import { Toaster } from "./components/Toaster";
 import * as C from "./pages/client";
 import * as O from "./pages/operator";
 import { Login, Onboard } from "./pages/public";
@@ -36,5 +37,5 @@ export function App() {
       <Route path="payments" element={<C.Payments />} /><Route path="payments/:id" element={<FlowPage />} /><Route path="transactions" element={<TransactionsPage operator={false} />} /><Route path="rules" element={<C.Rules />} /><Route path="ledger" element={<EntityLedgerPage />} /><Route path="developers" element={<O.Developers />} /><Route path="roles" element={<IAM.RolesPage />} /><Route path="sessions" element={<IAM.SessionsPage />} />
     </Route>
     <Route path="*" element={<Navigate to="/" replace />} />
-  </Routes></BrowserRouter></QueryClientProvider>;
+  </Routes><Toaster /></BrowserRouter></QueryClientProvider>;
 }

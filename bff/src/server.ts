@@ -28,6 +28,11 @@ import * as FV from "./flowview.js";
 import * as I from "./iam.js";
 import * as OIDC from "./oidc.js";
 import { registerScim } from "./scim.js";
+import * as SAML from "./saml.js";
+import * as SU from "./stepup.js";
+import rateLimit from "@fastify/rate-limit";
+import swagger from "@fastify/swagger";
+import swaggerUi from "@fastify/swagger-ui";
 
 /** MCP style tool registry. Same names as REST operations. */
 export const TOOLS = [
@@ -49,7 +54,20 @@ export async function buildApp() {
     if (!body.length) return done(null, {});
     try { done(null, JSON.parse(body.toString("utf8"))); } catch (e: any) { e.statusCode = 400; done(e, undefined); }
   });
+  // SAML posts the response as a form.
+  app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body: string, done) => done(null, Object.fromEntries(new URLSearchParams(body))));
   await app.register(cookie, { secret: config.SESSION_SECRET });
+  // Rate limits: per API key for bearer calls, per session for the browser, per IP otherwise.
+  const bearerOf = (req: any) => /^Bearer (\S+)$/.exec(String(req.headers?.authorization ?? ""))?.[1];
+  const rlKey = (req: any) => { const k = bearerOf(req); if (k) return `key:${crypto.createHash("sha256").update(k).digest("hex").slice(0, 24)}`; const sid = req.cookies?.sid; return sid ? `sid:${crypto.createHash("sha256").update(sid).digest("hex").slice(0, 24)}` : `ip:${req.ip}`; };
+  await app.register(rateLimit, {
+    global: true, timeWindow: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000, keyGenerator: rlKey,
+    max: (req: any, key: string) => key.startsWith("key:") ? Number(process.env.RATE_LIMIT_KEY_MAX) || 120 : key.startsWith("sid:") ? Number(process.env.RATE_LIMIT_SESSION_MAX) || 600 : Number(process.env.RATE_LIMIT_IP_MAX) || 300,
+    allowList: (req: any) => req.url === "/health" || req.url.startsWith("/events") || req.url.startsWith("/webhooks/") || req.url.startsWith("/docs"),
+    errorResponseBuilder: (_req: any, c: any) => Object.assign(new Error(`Too many requests. Try again in ${c.after}.`), { statusCode: 429 }),
+  });
+  await app.register(swagger, { openapi: { info: { title: "B2B Pay BFF", version: "0.1.0", description: "Agentic B2B payments API. Test mode only, no real funds." }, components: { securitySchemes: { session: { type: "apiKey", in: "cookie", name: "sid" }, bearer: { type: "http", scheme: "bearer" } } } } });
+  await app.register(swaggerUi, { routePrefix: "/docs" });
   P.seedPlatform(); I.seedIdp();
   const COOKIE = { path: "/", httpOnly: true, sameSite: "lax" as const, signed: true };
   const userOf = (req: any): P.User | null => {
@@ -95,7 +113,7 @@ export async function buildApp() {
   });
   const b = (req: any) => (req.body ?? {}) as any;
   // Every route needs a signed-in user unless listed as public. Each route maps to one permission, checked here by requirePermission.
-  const PUBLIC = new Set(["/health", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle"]);
+  const PUBLIC = new Set(["/health", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle"]);
   const ROUTE_PERMS: Record<string, I.Permission> = {
     "POST /reset": "platform.reset", "POST /kill-switch": "agents.manage", "POST /agents": "agents.manage", "POST /agents/:id/verify": "agents.manage", "POST /agents/:id/suspend": "agents.manage", "POST /agents/:id/resume": "agents.manage",
     "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /refunds": "payments.refund",
@@ -117,7 +135,7 @@ export async function buildApp() {
   const permFor = (method: string, url: string): I.Permission => ROUTE_PERMS[`${method} ${url}`] ?? (url.startsWith("/dev/") ? "developers.keys" : method === "GET" ? "workspace.read" : "flow.operate");
   app.addHook("preHandler", async (req: any) => {
     const url = req.routeOptions?.url as string | undefined;
-    if (!url || PUBLIC.has(url) || url.startsWith("/uploads/") || url.startsWith("/onboard/") || url.startsWith("/scim/") || req.method === "HEAD" || req.method === "OPTIONS") return;
+    if (!url || PUBLIC.has(url) || url.startsWith("/uploads/") || url.startsWith("/onboard/") || url.startsWith("/scim/") || url.startsWith("/docs") || req.method === "HEAD" || req.method === "OPTIONS") return;
     can(req, permFor(req.method, url));
   });
 
@@ -126,7 +144,7 @@ export async function buildApp() {
   const OIDC_COOKIE = { path: "/", httpOnly: true, sameSite: "lax" as const, signed: true, maxAge: 600 };
   const sessionCookie = (reply: any, id: string) => reply.setCookie("sid", id, { ...COOKIE, maxAge: Math.floor(I.absoluteMs() / 1000) }).clearCookie("tenant", { path: "/" });
   const meta = (req: any) => ({ ip: req.ip, ua: String(req.headers["user-agent"] ?? "") });
-  app.get("/auth/config", async () => ({ demo: demoOn(), sso: I.listIdps().filter((x) => x.enabled).map((x) => ({ id: x.id, scope: x.scope, label: x.scope === "platform" ? "Sign in with SSO" : `Sign in with ${P.getTenant(x.scope)?.name ?? x.scope}` })), saml: { available: false } }));
+  app.get("/auth/config", async () => ({ demo: demoOn(), sso: I.listIdps().filter((x) => x.enabled).map((x) => ({ id: x.id, scope: x.scope, label: x.scope === "platform" ? "Sign in with SSO" : `Sign in with ${P.getTenant(x.scope)?.name ?? x.scope}` })), saml: { available: SAML.available(), label: "Sign in with SAML" } }));
   app.get("/auth/demo-users", async () => { if (!demoOn()) throw new P.AuthError(404, "Demo login is off"); return { demo: true, users: P.listUsers().filter((u) => u.active !== false) }; });
   app.post("/auth/login", async (req, reply) => {
     if (!demoOn()) throw new P.AuthError(404, "Demo login is off");
@@ -154,6 +172,26 @@ export async function buildApp() {
       return reply.redirect(`${OIDC.publicUrl()}/`);
     } catch (e: any) { return fail(e instanceof P.AuthError ? e.message : "The identity provider rejected the sign in", pending.idp); }
   });
+  app.get("/auth/saml/start", async (_req, reply) => {
+    if (!SAML.available()) throw new P.AuthError(404, "SAML is not set up");
+    return reply.redirect(await SAML.authorizeUrl());
+  });
+  app.post("/auth/saml/acs", async (req: any, reply) => {
+    try {
+      const user = await SAML.acs(b(req));
+      sessionCookie(reply, I.createSession(user, "saml", meta(req)));
+      return reply.redirect(`${OIDC.publicUrl()}/`);
+    } catch (e: any) {
+      const msg = e instanceof P.AuthError ? e.message : "The SAML sign in failed";
+      P.audit(null, "auth", SAML.SAML_IDP_ID, "auth.login_failed", { reason: msg });
+      return reply.redirect(`${OIDC.publicUrl()}/login?error=${encodeURIComponent(msg)}`);
+    }
+  });
+  app.get("/auth/saml/metadata", async (_req, reply) => reply.type("application/xml").send(`<?xml version="1.0"?><md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="${SAML.spEntityId()}"><md:SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol" WantAssertionsSigned="true"><md:NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</md:NameIDFormat><md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="${SAML.acsUrl()}" index="1"/></md:SPSSODescriptor></md:EntityDescriptor>`));
+  // Step-up with an authenticator app (TOTP), checked on the server for large approvals.
+  app.get("/auth/step-up", async (req: any) => { const u = who(req); return SU.status(u.id, req.sessionId ?? null); });
+  app.post("/auth/step-up/enroll", async (req: any) => SU.enroll(who(req)));
+  app.post("/auth/step-up/verify", async (req: any) => { const u = who(req); return SU.verify(u, req.sessionId ?? null, String(b(req).code ?? "")); });
   app.post("/auth/logout", async (req: any, reply) => {
     userOf(req); const ended = req.sessionId ? I.endSession(req.sessionId, "logout", null) : null;
     reply.clearCookie("sid", { path: "/" }).clearCookie("tenant", { path: "/" });
@@ -167,7 +205,7 @@ export async function buildApp() {
   });
   // Identity, roles, permission check, sessions
   const roleTenant = (u: P.User) => (P.isOperator(u) ? null : u.tenantId);
-  app.get("/identity/configs", async () => ({ providers: I.listIdps(), redirectUri: OIDC.redirectUri(), saml: { available: false, note: "SAML is not available yet" } }));
+  app.get("/identity/configs", async () => ({ providers: I.listIdps(), redirectUri: OIDC.redirectUri(), saml: { available: SAML.available(), entityId: SAML.spEntityId(), acsUrl: SAML.acsUrl() } }));
   app.post("/identity/configs", async (req) => P.requestChange(who(req), "identity.oidc", { ...b(req) }, null));
   app.get("/iam/permissions", async () => ({ permissions: I.PERMISSIONS, builtin: I.BUILTIN, clientPermissions: I.CLIENT_PERMS }));
   app.get("/iam/roles", async (req) => I.listRoles(roleTenant(who(req))));
@@ -247,7 +285,7 @@ export async function buildApp() {
 
   app.post("/buyer/draft", async (req) => { const { t } = ctx(req); return S.draftPo(z.object({ need: z.string().min(3) }).parse(b(req)).need, t); });
   app.post("/purchase-orders", async (req) => { const d = PoDraft.parse(b(req).draft); const sup = db.suppliers.find((x) => x.id === d.supplierId); if (sup) await S.ensureRates({ currency: d.currency, entityId: d.entityId, tenantId: sup.tenantId ?? "tnt-acme" }); const po = S.createPo(d, b(req).agentId); po.requestedBy = who(req).id; save(); return po; });
-  app.post("/approvals/:poId", async (req: any) => { const { u, t } = ctx(req); const po = db.pos.find((p) => p.id === req.params.poId); if (!po || (po.tenantId ?? "tnt-acme") !== t) throw new S.HttpError(404, "po not found"); if (b(req).approve) I.requirePermission(u, "payments.approve", { amount: po.total, tenantId: t }); return S.decideApproval(po.id, !!b(req).approve, u.id, String(b(req).comment ?? "")); });
+  app.post("/approvals/:poId", async (req: any) => { const { u, t } = ctx(req); const po = db.pos.find((p) => p.id === req.params.poId); if (!po || (po.tenantId ?? "tnt-acme") !== t) throw new S.HttpError(404, "po not found"); if (b(req).approve) { I.requirePermission(u, "payments.approve", { amount: po.total, tenantId: t }); SU.requireFresh(u, req.sessionId ?? null, po.usdEquivalent ?? po.total); } return S.decideApproval(po.id, !!b(req).approve, u.id, String(b(req).comment ?? "")); });
   app.post("/goods-receipts", async (req) => S.receiveGoods(b(req).poId, Number(b(req).shortBy ?? 0)));
   app.post("/invoices/render", async (req) => ({ text: S.invoiceText(b(req).poId, { priceBumpPct: Number(b(req).priceBumpPct ?? 0), poison: !!b(req).poison }) }));
   app.post("/invoices", async (req) => S.submitInvoice(b(req).poId, String(b(req).text), { invoiceDate: b(req).invoiceDate ? String(b(req).invoiceDate) : undefined }));

@@ -1,7 +1,8 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { LogIn } from "lucide-react";
+import { KeyRound, LogIn } from "lucide-react";
+import { DemoBanner } from "../components/DemoBanner";
 import { api, useGet, type Me } from "../lib/api";
 import { afterLogin } from "../lib/session";
 import { Badge, Card, ErrorNote, Muted } from "../components/ui";
@@ -10,14 +11,14 @@ import { SsoButtons } from "./iam";
 
 const ROLE_LABEL: Record<string, string> = { operator_admin: "Operator admin", client_admin: "Client admin", approver: "Approver", ap_clerk: "AP clerk", auditor: "Auditor" };
 export function Login() {
-  const { data: cfg } = useGet<{ demo: boolean; sso: { id: string; label: string }[] }>("/auth/config");
+  const { data: cfg } = useGet<{ demo: boolean; sso: { id: string; label: string }[]; saml?: { available: boolean; label?: string } }>("/auth/config");
   const { data } = useGet<{ users: any[] }>("/auth/demo-users", !!cfg?.demo); const qc = useQueryClient(); const nav = useNavigate();
   const [err, setErr] = useState(() => new URLSearchParams(location.search).get("error") ?? "");
   const go = async (u: any) => { try { await api("/auth/login", { userId: u.id }); await afterLogin(qc, () => api<Me>("/me"), nav); } catch (e: any) { setErr(e.message); } };
-  return <div className="grid min-h-screen place-items-center bg-bg p-4">
+  return <div className="flex min-h-screen flex-col bg-bg"><DemoBanner /><div className="grid flex-1 place-items-center p-4">
     <div className="w-full max-w-xl">
       <div className="mb-4 flex items-center gap-2"><LogIn size={18} className="text-primary" /><h1 className="text-lg font-semibold">Sign in</h1></div>
-      <Card><ErrorNote msg={err} /><div className="mt-1"><SsoButtons sso={cfg?.sso ?? []} /></div><p className="mt-2 text-xs text-muted">You sign in at your company identity provider. SAML is not available yet.</p></Card>
+      <Card><ErrorNote msg={err} /><div className="mt-1 flex flex-col gap-2"><SsoButtons sso={cfg?.sso ?? []} />{cfg?.saml?.available && <a href="/api/auth/saml/start" className="flex items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-[14px] font-medium hover:bg-subtle"><KeyRound size={16} aria-hidden />{cfg.saml.label ?? "Sign in with SAML"}</a>}</div><p className="mt-2 text-xs text-muted">You sign in at your company identity provider with OIDC or SAML 2.0.</p></Card>
       {cfg?.demo && <>
         <div className="mb-2 mt-6 flex items-center gap-2"><h2 className="text-[13px] font-semibold">Demo users</h2><Badge v="Demo login, no password" tone="warn" /></div>
         <Card pad={false}><ul className="divide-y divide-border">{(data?.users ?? []).map((u) => <li key={u.id}><button className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle" onClick={() => go(u)}>
@@ -27,7 +28,7 @@ export function Login() {
         <p className="mt-3 text-xs text-muted">Demo login is on because DEMO_LOGIN=1. Turn it off for real use.</p>
       </>}
     </div>
-  </div>;
+  </div></div>;
 }
 export function Onboard() {
   const { token } = useParams();

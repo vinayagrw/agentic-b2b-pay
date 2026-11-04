@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSSE } from "./stream";
 import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
+import { rateLimitText, toast } from "./toast";
 
 export class ApiError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 export async function api<T = any>(path: string, body?: unknown, opts: { method?: string; headers?: Record<string, string> } = {}): Promise<T> {
@@ -8,6 +9,7 @@ export async function api<T = any>(path: string, body?: unknown, opts: { method?
   const r = await fetch(`/api${path}`, { method, credentials: "include", headers: body === undefined ? opts.headers : { "content-type": "application/json", ...opts.headers }, body: body === undefined ? undefined : JSON.stringify(body) });
   const ct = r.headers.get("content-type") ?? "";
   const j: any = ct.includes("json") ? await r.json().catch(() => ({})) : await r.text();
+  if (r.status === 429) toast(rateLimitText(r.headers.get("retry-after")));
   if (!r.ok) throw new ApiError(r.status, j?.error ?? `HTTP ${r.status}`);
   return j as T;
 }

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowLeftRight, Banknote, Bot, Building2, Check, ChevronsUpDown, Code2, FileText, Gauge, Home, Inbox, KeyRound, Landmark, MonitorSmartphone, UserCog, LogOut, Moon, Palette, Scale, Search, Settings, ShieldCheck, ShoppingCart, Sun, Truck, Users, Workflow, type LucideIcon } from "lucide-react";
+import { DemoBanner } from "./DemoBanner";
 import { api, useLiveEvents, useMe, type Me } from "../lib/api";
 import { applyTheme } from "../lib/theme";
 import { cn } from "../lib/utils";
@@ -53,6 +54,7 @@ export function Shell({ kind }: { kind: "operator" | "client" }) {
       <div className="flex items-center gap-1.5 px-4 py-3 text-[11px] text-muted"><Activity size={12} className={live ? "text-ok" : "text-bad"} />{live ? "Live updates on" : "Reconnecting"}</div>
     </aside>
     <div className="flex min-w-0 flex-1 flex-col">
+      <DemoBanner />
       <TopBar me={me} kind={kind} onSearch={() => keys.setPalette(true)} onCopilot={() => setCopilot({ open: true })} />
       <CommandPalette me={me} kind={kind} open={keys.palette} onOpenChange={keys.setPalette} onAsk={(q) => setCopilot({ open: true, seed: q })} />
       <CopilotPanel open={copilot.open} seed={copilot.seed} onClose={() => setCopilot({ open: false })} />

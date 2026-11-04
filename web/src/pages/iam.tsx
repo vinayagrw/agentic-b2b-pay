@@ -8,9 +8,9 @@ type Idp = { id: string; scope: string; issuer: string; clientId: string; groupR
 type Role = { id: string; name: string; baseRole: string; permissions: string[]; approveLimit: number | null; entityScope: string[] | null };
 type Catalog = { permissions: Record<string, string>; builtin: Record<string, string[]>; clientPermissions: string[] };
 
-/** Operator page: OIDC providers per bank, edited through maker checker. SAML shown as not available. */
+/** Operator page: OIDC providers per bank, edited through maker checker. SAML 2.0 SP details shown for the IdP admin. */
 export function IdentityPage() {
-  const { data } = useGet<{ providers: Idp[]; redirectUri: string }>("/identity/configs");
+  const { data } = useGet<{ providers: Idp[]; redirectUri: string; saml?: { available: boolean; entityId: string; acsUrl: string } }>("/identity/configs");
   const { data: changes } = useGet<any[]>("/changes?status=pending");
   const { run, busy, error } = useAct();
   const blank = { id: "", scope: "platform", issuer: "", clientId: "", clientSecret: "", map: JSON.stringify({ operator_admin: "operator_admin", client_admin: "client_admin", approver: "approver", ap_clerk: "ap_clerk", auditor: "auditor" }, null, 1), enabled: true };
@@ -45,7 +45,7 @@ export function IdentityPage() {
     </Card>
     {pending.length > 0 && <Card title="Waiting for approval"><Table head={["Change", "Scope", "Requested by", ""]}>{pending.map((c) => <tr key={c.id}><td><Mono>{c.id}</Mono></td><td><Mono>{c.payload.scope}</Mono></td><td><Mono>{c.requestedBy}</Mono></td>
       <td className="flex gap-2"><Button size="sm" disabled={busy} onClick={() => run(() => api(`/changes/${c.id}/decide`, { approve: true }))}>Approve</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => api(`/changes/${c.id}/decide`, { approve: false }))}>Reject</Button></td></tr>)}</Table></Card>}
-    <Card title="SAML 2.0"><div className="flex items-center gap-2"><Badge v="Not available yet" tone="neutral" /><Muted>SAML sign in is not built. Use OpenID Connect for now. Most identity providers offer both.</Muted></div></Card>
+    <Card title="SAML 2.0"><div className="flex flex-col gap-1"><div className="flex items-center gap-2"><Badge v={data?.saml?.available ? "On" : "Not set up"} tone={data?.saml?.available ? "ok" : "neutral"} /><Muted>Signed response and signed assertion required. Attributes email, tenant and groups map like OIDC claims.</Muted></div>{data?.saml && <Muted>Entity ID <code>{data.saml.entityId}</code>, ACS <code>{data.saml.acsUrl}</code>, metadata at /api/auth/saml/metadata</Muted>}</div></Card>
   </Section>;
 }
 

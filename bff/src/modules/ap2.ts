@@ -46,6 +46,11 @@ function sign(signerId: string, kind: SignerKind, body: object) {
   const key = crypto.createPrivateKey(fs.readFileSync(keyFile(signerId)));
   return crypto.sign(null, Buffer.from(canonical(body)), key).toString("base64");
 }
+/** Signs raw bytes with a signer's Ed25519 key from the key store. Used by KYA challenges and agent messages. */
+export function signMessage(signerId: string, kind: SignerKind, message: string): string {
+  ensureKey(signerId, kind);
+  return crypto.sign(null, Buffer.from(message), crypto.createPrivateKey(fs.readFileSync(keyFile(signerId)))).toString("base64");
+}
 export function verifySigned(m: SignedMandate<any>): boolean {
   const pub = publicKeyOf(m.signerId); if (!pub) return false;
   try { return crypto.verify(null, Buffer.from(canonical(m.body)), pub, Buffer.from(m.signature, "base64")); } catch { return false; }

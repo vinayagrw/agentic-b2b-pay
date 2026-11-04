@@ -4,6 +4,7 @@ import * as S from "../src/service.js";
 import * as CP from "../src/copilot.js";
 import * as P from "../src/platform.js";
 import { buildApp } from "../src/server.js";
+import { stepUp } from "./helpers/security.js";
 
 beforeEach(() => { reset(); P.seedPlatform(); S.bootstrap(); });
 const login = async (app: any, userId: string) => { const r = await app.inject({ method: "POST", url: "/auth/login", payload: { userId } }); return `sid=${r.cookies.find((x: any) => x.name === "sid").value}`; };
@@ -42,6 +43,9 @@ describe("copilot (mock mode, no model)", () => {
     const p = res.json().proposals[0];
     expect(p).toMatchObject({ kind: "approve_po", path: `/approvals/${po.id}`, allowed: true });
     expect(db.pos.find((x) => x.id === po.id)!.status).toBe("pending_approval");
+    const early = await app.inject({ method: "POST", url: p.path, headers: { cookie: sam }, payload: p.body });
+    expect(early.statusCode).toBe(403); expect(early.json().error).toMatch(/step_up_required/);
+    await stepUp(app, sam);
     const click = await app.inject({ method: "POST", url: p.path, headers: { cookie: sam }, payload: p.body });
     expect(click.statusCode).toBe(200); expect(click.json().status).toBe("approved");
   });

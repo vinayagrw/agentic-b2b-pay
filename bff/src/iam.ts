@@ -160,7 +160,7 @@ export const idleMs = () => (Number(process.env.SESSION_IDLE_MINUTES) || 30) * 6
 export const absoluteMs = () => (Number(process.env.SESSION_ABSOLUTE_HOURS) || 12) * 3_600_000;
 export type Session = { id: string; userId: string; method: string; idpId: string | null; ip: string | null; userAgent: string | null; createdAt: string; lastSeenAt: string; expiresAt: string; revokedAt: string | null; revokedReason: string | null };
 const toSession = (r: any): Session => ({ id: r.id, userId: r.user_id, method: r.method, idpId: r.idp_id, ip: r.ip, userAgent: r.user_agent, createdAt: r.created_at, lastSeenAt: r.last_seen_at, expiresAt: r.expires_at, revokedAt: r.revoked_at, revokedReason: r.revoked_reason });
-export function createSession(u: P.User, method: "demo" | "oidc", o: { idpId?: string; idToken?: string; ip?: string; ua?: string } = {}, now = Date.now()) {
+export function createSession(u: P.User, method: "demo" | "oidc" | "saml", o: { idpId?: string; idToken?: string; ip?: string; ua?: string } = {}, now = Date.now()) {
   const id = `ses_${crypto.randomBytes(24).toString("base64url")}`;
   const at = new Date(now).toISOString();
   sql.prepare("INSERT INTO sessions (id, user_id, method, idp_id, id_token, ip, user_agent, created_at, last_seen_at, expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)")

@@ -44,3 +44,19 @@ describe("copilot stream", () => {
     expect(d.text).toBe("Final"); expect(d.step).toBe("done");
   });
 });
+
+import { stepUpNeeded } from "../src/lib/perm";
+import { rateLimitText, toast, onToast } from "../src/lib/toast";
+describe("step-up and rate limit UI logic", () => {
+  it("asks for a code only above the threshold and when not fresh", () => {
+    const s = { enrolled: true, thresholdUsd: 10000, fresh: false, freshUntil: null };
+    expect(stepUpNeeded(10000, s)).toBe(false); expect(stepUpNeeded(10000.01, s)).toBe(true);
+    expect(stepUpNeeded(50000, { ...s, fresh: true })).toBe(false); expect(stepUpNeeded(50000, undefined)).toBe(false);
+  });
+  it("words the 429 toast with Retry-After and delivers it to listeners", () => {
+    expect(rateLimitText("12")).toBe("Too many requests. Wait 12 s and try again.");
+    expect(rateLimitText(null)).toMatch(/Wait a moment/);
+    const got: string[] = []; const off = onToast((t) => got.push(t.text)); toast("hi"); off(); toast("gone");
+    expect(got).toEqual(["hi"]);
+  });
+});
