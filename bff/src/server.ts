@@ -11,6 +11,7 @@ import * as P from "./platform.js";
 import { z } from "zod";
 import { PoDraft, RegisterAgent } from "@b2b/shared";
 import { db, reset, save } from "./modules/store.js";
+import * as X from "./explain.js";
 import * as S from "./service.js";
 import { RailError } from "./rails/index.js";
 import { onchainAddress } from "./rails/onchain.js";
@@ -106,7 +107,7 @@ export async function buildApp() {
     "GET /ops/treasury": "treasury.read", "POST /ops/treasury/sweep": "treasury.sweep", "POST /ops/recon/run": "treasury.sweep", "GET /ops/recon": "treasury.read", "POST /ops/recon/exceptions/:id/resolve": "treasury.sweep",
     "GET /ops/recon/export.csv": "treasury.read", "GET /ops/compliance": "compliance.read", "POST /ops/cases/:id/sar/draft": "compliance.case.file", "PUT /ops/cases/:id/sar": "compliance.case.file",
     "POST /ops/cases/:id/sar/file": "compliance.case.file", "POST /ops/cases/:id/close": "compliance.case.file", "GET /ops/revenue": "treasury.read", "GET /ops/sankey": "treasury.read", "GET /ops/kpis": "treasury.read",
-    "GET /cases/:id/evidence-pack": "audit.read",
+    "GET /cases/:id/evidence-pack": "audit.read", "GET /payments/:id/why/export.json": "audit.read", "GET /payments/:id/why/export.md": "audit.read",
     "GET /identity/configs": "identity.manage", "POST /identity/configs": "identity.manage", "GET /iam/users": "roles.manage", "GET /iam/roles": "roles.manage", "POST /iam/roles": "roles.manage", "PUT /iam/roles/:id": "roles.manage", "DELETE /iam/roles/:id": "roles.manage", "POST /iam/users/:id/role": "roles.manage",
     "POST /sessions/:id/revoke": "workspace.read", "GET /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens/:id/revoke": "developers.keys",
   };
@@ -309,6 +310,9 @@ export async function buildApp() {
   // Step 6: revenue, KPIs, dispute evidence, developer keys and webhooks
   app.get("/ops/revenue", async (req) => { who(req); return A.revenue(); });
   app.get("/payments/:id/mandates", async (req: any) => { const i = scoped(scopeOf(req)).intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); return S.mandatesView(i.id); });
+  app.get("/payments/:id/why", async (req: any) => X.explainPayment(req.params.id, scopeOf(req)));
+  app.get("/payments/:id/why/export.json", async (req: any, reply) => { const w = X.explainPayment(req.params.id, scopeOf(req)); return reply.header("content-disposition", `attachment; filename="why-${w.paymentId}.json"`).send({ ...w, records: S.evidenceView(undefined, null).records.filter((e) => [w.paymentId, w.poId, w.invoiceId].includes(e.subjectId)) }); });
+  app.get("/payments/:id/why/export.md", async (req: any, reply) => { const w = X.explainPayment(req.params.id, scopeOf(req)); return reply.type("text/markdown; charset=utf-8").header("content-disposition", `attachment; filename="why-${w.paymentId}.md"`).send(X.whyMarkdown(w)); });
   app.get("/flows/:id", async (req: any) => FV.flowSummary(req.params.id, scopeOf(req)));
   app.get("/transactions", async (req: any) => FV.transactions(scopeOf(req), req.query ?? {}));
   app.get("/transactions/export.csv", async (req: any, reply) => reply.type("text/csv").header("content-disposition", `attachment; filename="transactions.csv"`).send(FV.transactionsCsv(scopeOf(req), req.query ?? {})));

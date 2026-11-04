@@ -32,7 +32,19 @@ export function bootstrap() {
   for (const a of db.agents) { issueKey(a); const r = verifyAgent(a, org(a.orgId).kybStatus === "verified"); ev("agent", a.id, "kya.verified", r); }
   for (const m of db.mandates) signMandate(m);
   seedRules();
+  backfillMandates();
   save();
+}
+/** Open POs from before signed mandates existed get an Intent and Cart on reset or seed, so demo data is never blocked. */
+export function backfillMandates() {
+  let n = 0;
+  for (const po of db.pos) {
+    if (po.status === "rejected" || po.status === "paid" || AP2.mandatesForPo(po.id).length) continue;
+    const m = db.mandates.find((x) => x.id === po.mandateId); const sup = db.suppliers.find((s) => s.id === po.supplierId);
+    if (!m || !sup) continue;
+    issueMandates(po, m, sup); ev("po", po.id, "ap2.backfilled", { reason: "PO created before signed mandates existed" }); n++;
+  }
+  return n;
 }
 export function signMandate(m: import("./modules/store.js").Mandate) {
   const a = db.agents.find((x) => x.id === m.agentId); if (!a) return;

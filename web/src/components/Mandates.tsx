@@ -24,7 +24,7 @@ function MandateBlock({ m, title }: { m: M; title: string }) {
 export function MandatesCard({ id }: { id: string }) {
   const { data } = useGet<View>(`/payments/${id}/mandates`, !!id);
   if (!data) return <Card title="Signed mandates"><Skeleton lines={3} /></Card>;
-  if (!data.intent && !data.cart) return <Card title="Signed mandates"><EmptyState title="No signed mandates" body="This purchase was created before signed mandates existed, so the payment cannot be sent." /></Card>;
+  if (!data.intent && !data.cart) return <Card title="Signed mandates"><EmptyState title="No signed mandates" body="This purchase order was created before signed mandates were switched on, so it has no signed Intent or Cart and the payment is blocked. Raise a new purchase order or reset the demo data." /></Card>;
   const plain = data.ok ? "The user approved this purchase and the agent's cart fits inside that approval. The payment matches the cart exactly." : `This payment is held. ${data.reason}`;
   return <Card title="Signed mandates" action={<Badge v={data.ok ? "valid" : "blocked"} tone={data.ok ? "ok" : "bad"} />}>
     <p className="text-sm mb-3">{plain}</p>

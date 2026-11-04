@@ -330,6 +330,22 @@ Signatures use Ed25519 from `node:crypto`. Each user and agent gets its own key 
 
 Before any payment is sent the policy engine (`evaluateMandates` in `bff/src/modules/policy.ts`) checks both signatures, that the cart points at the intent, that the intent has not expired, that the cart fits inside the intent (amount, currency, supplier) and that the cart hash equals the payment about to be sent. Any failure blocks the payment with the failed rule named. Mandates are stored by migration `008_ap2_mandates.sql` and every signature lands in the evidence hash chain. The payment detail page shows both mandates, who signed them, their hashes and a plain words status.
 
+## Explainable decisions
+
+Every payment detail page has a **Why** panel. It lists each decision in plain words: spending policy, approval and maker checker, signed mandates, compliance (OFAC, KYT, Travel Rule), payment rail and settlement. Each item shows the outcome, the rule or data that drove it, who decided (agent, system or person), the time, and the evidence record id and hash.
+
+The text is built from the stored evidence chain by `bff/src/explain.ts`. It is deterministic and never calls a model.
+
+| Endpoint | Permission | Returns |
+| --- | --- | --- |
+| `GET /payments/:id/why` | `workspace.read` | The decisions as JSON |
+| `GET /payments/:id/why/export.json` | `audit.read` | Decisions, the raw evidence records and a hash chain check |
+| `GET /payments/:id/why/export.md` | `audit.read` | A readable Markdown report for auditors |
+
+All three are tenant scoped. A user from another tenant gets 404.
+
+Purchase orders created before signed mandates existed have no Intent or Cart, so their payments are blocked. The Why panel says so clearly. Demo reset and seed sign mandates for every open purchase order, so fresh demo data is never blocked.
+
 ## Safety
 
 > [!IMPORTANT]
