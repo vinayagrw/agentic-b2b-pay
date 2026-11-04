@@ -9,6 +9,7 @@ import { screen } from "./modules/compliance.js";
 import { makeJournal, trialBalance, reconcile } from "./modules/ledger.js";
 import { appendEvidence, verifyChain } from "./modules/evidence.js";
 import { adapter, allAdapters, railReadiness } from "./rails/index.js";
+import type { RailEnv } from "./rails/types.js";
 import { walletActivity } from "./rails/onchain.js";
 import { sql } from "./db.js";
 import * as P from "./platform.js";
@@ -206,6 +207,14 @@ export function railCandidates(tenantId = TENANT, amount = 0) {
   });
 }
 
+/** Adds live wallet balances for prefunded stablecoin rails so the router never picks a wallet that cannot cover the payment. */
+async function withBalances<T extends { rail: Rail; configured: boolean; env: RailEnv; available?: number }>(cands: T[]): Promise<T[]> {
+  return Promise.all(cands.map(async (c) => {
+    if (!c.configured || !isUsdc(c.rail)) return c;
+    try { return { ...c, available: (await adapter(c.rail).balance(c.env)).amount }; } catch { return c; }
+  }));
+}
+
 export async function payInvoice(invId: string, idempotencyKey: string, opts: { urgency?: "standard" | "urgent"; approvers?: string[] } = {}) {
   const key = sql.prepare("SELECT intent_id FROM idempotency_keys WHERE key = ?").get(idempotencyKey) as { intent_id: string } | undefined;
   const prior = key && db.intents.find((p) => p.id === key.intent_id);
@@ -229,7 +238,7 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
   const stop = (status: "denied" | "blocked", why: string) => { mark(intent, status, "platform", why); intent.blockedReason = why; ev("payment", intent.id, `payment.${status}`, { reason: why }); save(); return { intent, replay: false }; };
   if (db.killSwitch || agent.status !== "active") return stop("denied", db.killSwitch ? "Kill switch on" : "Agent suspended");
 
-  const route = routePayment({ amount: inv.amount, urgency: opts.urgency ?? "standard", mandateRails: mandate.allowedRails, supplierRails: sup.acceptedRails, supplierPreferred: sup.preferredRail, supplierHasWallet: !!sup.walletAddress, supplierScreening: sup.screeningStatus, supplierCountry: so.country, candidates: railCandidates(TENANT, inv.amount) });
+  const route = routePayment({ amount: inv.amount, urgency: opts.urgency ?? "standard", mandateRails: mandate.allowedRails, supplierRails: sup.acceptedRails, supplierPreferred: sup.preferredRail, supplierHasWallet: !!sup.walletAddress, supplierScreening: sup.screeningStatus, supplierCountry: so.country, candidates: await withBalances(railCandidates(TENANT, inv.amount)) });
   intent.route = route; mark(intent, "routed", "platform", route.reason);
   const ex = await explainRoute(route, inv.amount, sup.name);
   intent.explanation = ex.value; intent.explainedBy = ex.source;

@@ -55,8 +55,8 @@ describe("treasury", () => {
     db.intents.find((i) => i.id === r.intentId)!.status = "failed"; inv.paid = false; // keep it open for the forecast
     inv.dueDate = new Date(Date.now() + 10 * 864e5).toISOString().slice(0, 10);
     const t = await O.treasury("tnt-acme");
-    expect(t.balances).toHaveLength(4); expect(t.startingCash).toBe(4000);
-    expect(t.forecast).toHaveLength(31); expect(t.forecast[10].outflow).toBe(inv.amount); expect(t.forecast[30].balance).toBe(4000 - inv.amount);
+    expect(t.balances).toHaveLength(4); expect(t.startingCash).toBe(202000);
+    expect(t.forecast).toHaveLength(31); expect(t.forecast[10].outflow).toBe(inv.amount); expect(t.forecast[30].balance).toBe(202000 - inv.amount);
     expect(t.balances.find((b: any) => b.rail === "circle_usdc")!.sweep.supported).toBe(false);
   });
   it("sweeps through the adapter where supported and records unsupported honestly", async () => {

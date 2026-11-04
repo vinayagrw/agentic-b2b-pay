@@ -2,7 +2,7 @@ import { isUsdc, type Rail, type RouteDecision, type RouteOption } from "@b2b/sh
 import type { RailQuote } from "../rails/types.js";
 
 /** One candidate rail: the adapter's quote plus whether its keys are present for this tenant's environment. */
-export type RailCandidate = RailQuote & { configured: boolean; notConfiguredReason?: string };
+export type RailCandidate = RailQuote & { configured: boolean; notConfiguredReason?: string; available?: number };
 export type RouteInput = {
   amount: number; urgency: "standard" | "urgent";
   mandateRails: Rail[]; supplierRails: Rail[]; supplierPreferred: Rail;
@@ -18,6 +18,7 @@ export function routePayment(i: RouteInput): RouteDecision {
     if (!r.configured) { eligible = false; why.push(`Not configured${r.notConfiguredReason ? ": " + r.notConfiguredReason : ""}`); }
     if (!i.mandateRails.includes(r.rail)) { eligible = false; why.push("Not allowed by mandate"); }
     if (!i.supplierRails.includes(r.rail)) { eligible = false; why.push("Supplier does not accept"); }
+    if (r.available !== undefined && r.available < i.amount) { eligible = false; why.push(`Wallet holds ${r.available} USDC, below the amount`); }
     if (i.amount > r.maxAmount) { eligible = false; why.push(`Above rail limit ${r.maxAmount}`); }
     if (isUsdc(r.rail) && !i.supplierHasWallet) { eligible = false; why.push("No supplier wallet on file"); }
     if (isUsdc(r.rail) && i.supplierScreening === "flagged") { eligible = false; why.push("Supplier wallet flagged in screening"); }

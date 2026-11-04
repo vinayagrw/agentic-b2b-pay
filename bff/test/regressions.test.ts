@@ -81,3 +81,13 @@ describe("bug 4: login lands on the right page", () => {
     }
   });
 });
+
+import { routePayment } from "../src/modules/router.js";
+describe("router skips a prefunded wallet that cannot cover the payment", () => {
+  it("falls back to ACH when the onchain wallet is empty", () => {
+    const base = { feeUsd: 0, maxAmount: 1e9, configured: true } as const;
+    const d = routePayment({ amount: 8.5, urgency: "standard", mandateRails: ["stripe_ach", "onchain_usdc"], supplierRails: ["stripe_ach", "onchain_usdc"], supplierPreferred: "onchain_usdc", supplierHasWallet: true, supplierScreening: "clear", supplierCountry: "US",
+      candidates: [{ ...base, rail: "onchain_usdc", label: "o", settleMinutes: 1, available: 0 }, { ...base, rail: "stripe_ach", label: "a", settleMinutes: 5760 }] as any });
+    expect(d.rail).toBe("stripe_ach");
+  });
+});

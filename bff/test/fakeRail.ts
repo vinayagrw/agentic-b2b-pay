@@ -24,7 +24,7 @@ export function fake(id: Rail, configured = true): Fake {
     },
     async status(ref) { return { providerRef: ref, status: f.outcome, detail: `fake ${f.outcome}` }; },
     async handleWebhook(raw) { if (raw.toString() !== "signed") throw new RailError(400, "bad signature"); return f.webhookQueue.splice(0); },
-    async balance() { return { rail: id, currency: id.endsWith("usdc") ? "USDC" : "USD", amount: 1000, detail: "fake" }; },
+    async balance() { return { rail: id, currency: id.endsWith("usdc") ? "USDC" : "USD", amount: id.endsWith("usdc") ? 100000 : 1000, detail: "fake" }; },
     refund: id.startsWith("stripe") ? async (ref) => ({ providerRef: `re-${ref}`, status: "settled" }) : undefined,
   };
   return f;
