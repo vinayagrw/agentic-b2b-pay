@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Bookmark, Brain, Sparkles, Bot, Camera, Database, Download, Gift, History, Mic, MicOff, Pencil, Plus, RotateCcw, Search, Send, Square, ShieldAlert, Sun, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
-import { api, useAct, useMe } from "../lib/api";
+import { api, useAct, useGet, useMe } from "../lib/api";
+import { StepUpPrompt } from "./ApprovalCard";
+import type { StepUpStatus } from "../lib/perm";
 import { useStream } from "../lib/stream";
 import { foldStream, recordFromPath, snapProblem, speechCtor, SNAP_TYPES, TOOL_NAMES, type Answer, type Chart, type Memory, type Offer, type Proposal, type Skill, type Thread } from "../lib/copilot";
 import { SlidePanel } from "./kit";
@@ -211,6 +213,7 @@ function Turn({ a, onClose }: { a: Answer; onClose: () => void }) {
 /** A proposed action. It runs only on click, through the normal API with your own permissions. */
 function ProposalCard({ p, answerId }: { p: Proposal; answerId: string }) {
   const act = useAct(); const [done, setDone] = useState("");
+  const needCode = !done && /^step_up_required/.test(act.error ?? ""); const { data: su } = useGet<StepUpStatus>("/auth/step-up", needCode);
   const run = async () => { const r = await act.run(() => api(p.path, p.body)); api("/copilot/outcome", { answerId, kind: p.kind, ok: !!r }).catch(() => undefined); if (r) setDone(p.path === "/changes" ? "Sent for review" : "Done. The normal API accepted it."); };
   return <div className="rounded-lg border border-warn/50 bg-warn/5 p-3 text-[13px]" role="group" aria-label="Proposed action">
     <div className="flex items-center gap-1.5 text-xs font-medium text-warn"><ShieldAlert size={13} aria-hidden />Proposed action, not done yet</div>
@@ -219,8 +222,9 @@ function ProposalCard({ p, answerId }: { p: Proposal; answerId: string }) {
     <div className="mt-0.5 text-xs text-muted">{p.reason}</div>
     <div className="mt-2 flex items-center gap-2">
       {done ? <Badge v={done} tone="ok" /> : <Button size="sm" variant={/reject|hold|suspend/.test(p.kind) ? "danger" : "primary"} disabled={!p.allowed || act.busy} onClick={run}>{act.busy ? "Working" : p.allowed ? "Confirm and run" : "Not allowed for you"}</Button>}
-      {act.error && <span role="alert" className="text-xs text-bad">{act.error}</span>}
+      {act.error && !needCode && <span role="alert" className="text-xs text-bad">{act.error}</span>}
     </div>
+    {needCode && su && <><StepUpPrompt s={su} threshold={su.thresholdUsd} /><p className="mt-1 text-xs text-muted">After you verify, press Confirm and run again.</p></>}
   </div>;
 }
 
