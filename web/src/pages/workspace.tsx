@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { applyTheme } from "../lib/theme";
 import { Logo } from "../components/Shell";
-import { ArrowDown, ArrowUp, Bot, Check, Copy, KeyRound, Plus, Power, Trash2, UserPlus, Workflow, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Bot, Check, Copy, KeyRound, Plus, Power, Trash2, UserPlus, Workflow, X, Inbox, Truck } from "lucide-react";
 import { RAIL_LABEL, type Rail } from "@b2b/shared";
 import { api, useAct, useGet, useMe } from "../lib/api";
 import { usd } from "../lib/utils";
 import { Badge, Button, Card, EmptyState, ErrorNote, Input, Label, Mono, Muted, PageHeader, Select, Table, Textarea } from "../components/ui";
 import { Section } from "../components/Shell";
 import { Loading } from "./flows";
+import { ApprovalCard } from "../components/ApprovalCard";
+import { Skeleton, SkeletonTable } from "../components/kit";
 
 const CATS = ["mro", "components", "logistics", "it"] as const;
 const CAT_LABEL: Record<string, string> = { mro: "MRO", components: "Components", logistics: "Logistics", it: "IT" };
@@ -16,7 +18,7 @@ const roleName = (r: string) => (r === "client_admin" ? "Client admin" : r === "
 const inDays = (n: number) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
 
 function Toggle<T extends string>({ all, value, onChange, label = (x: T) => x }: { all: readonly T[]; value: T[]; onChange: (v: T[]) => void; label?: (x: T) => string }) {
-  return <div className="flex flex-wrap gap-1">{all.map((x) => { const on = value.includes(x); return <button key={x} type="button" aria-pressed={on} onClick={() => onChange(on ? value.filter((y) => y !== x) : [...value, x])} className={on ? "rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-white" : "rounded-full border border-border px-2.5 py-1 text-[11px] text-muted hover:bg-subtle"}>{label(x)}</button>; })}</div>;
+  return <div className="flex flex-wrap gap-1">{all.map((x) => { const on = value.includes(x); return <button key={x} type="button" aria-pressed={on} onClick={() => onChange(on ? value.filter((y) => y !== x) : [...value, x])} className={on ? "rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-fg" : "rounded-full border border-border px-2.5 py-1 text-[11px] text-muted hover:bg-subtle"}>{label(x)}</button>; })}</div>;
 }
 function Reveal({ secret, onDone, what }: { secret: string; onDone: () => void; what: string }) {
   const [copied, setCopied] = useState(false);
@@ -136,36 +138,14 @@ export function RulesPage() {
 
 // Approvals inbox
 
-function ApprovalCard({ p }: { p: any }) {
-  const { run, busy, error } = useAct(); const [comment, setComment] = useState("");
-  const decide = (approve: boolean) => run(() => api(`/approvals/${p.id}`, { approve, comment }));
-  return <Card className={p.status === "pending_approval" ? "" : "opacity-80"}>
-    <div className="flex flex-wrap items-start gap-3">
-      <div className="min-w-0 flex-1"><div className="text-[13px] text-muted">{p.supplier}</div><div className="text-2xl font-semibold tabular-nums">{usd(p.total)}</div>
-        <div className="mt-1 flex flex-wrap items-center gap-1.5"><span className="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent"><Bot size={11} />{p.agent}</span><Badge v={CAT_LABEL[p.category] ?? p.category} tone="neutral" /><Mono className="text-muted">{p.id}</Mono></div></div>
-      <Badge v={p.status === "pending_approval" ? "waiting" : p.status} />
-    </div>
-    <p className="mt-2 text-[13px]">{p.justification}</p>
-    <ul className="mt-1 text-xs text-muted">{p.lines.map((l: any) => <li key={l.sku}>{l.qty} x {l.description} at {usd(l.unitPrice)}</li>)}</ul>
-    {p.approval && <div className="mt-3 rounded-lg bg-subtle p-3"><div className="text-xs font-medium">Rule: {p.approval.ruleName}</div>
-      <ol className="mt-2 flex flex-col gap-1">{p.approval.levels.map((l: any, n: number) => { const done = l.approvals.length >= l.count; const cur = n === p.approval.current && p.status === "pending_approval";
-        return <li key={n} className="flex flex-wrap items-center gap-2 text-xs"><span className={done ? "grid h-5 w-5 place-items-center rounded-full bg-ok text-white" : cur ? "grid h-5 w-5 place-items-center rounded-full bg-primary text-white" : "grid h-5 w-5 place-items-center rounded-full bg-border"}>{done ? <Check size={11} /> : n + 1}</span>
-          <span className="font-medium">{l.count} {roleName(l.role)}{l.count > 1 ? "s" : ""}</span>{l.approvals.map((a: any) => <span key={a.userId} className="text-muted">{a.name}{a.comment ? `: "${a.comment}"` : ""}</span>)}</li>; })}</ol>
-      {p.approval.rejectedBy && <div className="mt-2 text-xs text-bad">Rejected by {p.approval.rejectedBy.name}{p.approval.rejectedBy.comment ? `: "${p.approval.rejectedBy.comment}"` : ""}</div>}</div>}
-    {p.status === "pending_approval" && (p.canAct ? <div className="mt-3 flex flex-col gap-2"><Textarea className="min-h-12 font-sans text-[13px]" placeholder="Comment for the record (optional)" value={comment} onChange={(e) => setComment(e.target.value)} />
-      <div className="flex gap-2"><Button variant="primary" disabled={busy} onClick={() => decide(true)}><Check size={13} />Approve</Button><Button disabled={busy} onClick={() => decide(false)}><X size={13} />Reject</Button></div></div>
-      : <Muted className="mt-3 block">{p.why}</Muted>)}
-    <ErrorNote msg={error} />
-  </Card>;
-}
 export function ApprovalsInbox() {
   const { data, error } = useGet<any[]>("/workspace/approvals"); const [tab, setTab] = useState<"mine" | "all" | "done">("mine");
-  if (!data) return <Loading error={error as Error} />;
+  if (!data) return error ? <Loading error={error as Error} /> : <div className="grid gap-3 lg:grid-cols-2">{[0, 1].map((n) => <Card key={n}><Skeleton lines={5} /></Card>)}</div>;
   const pending = data.filter((p) => p.status === "pending_approval"); const mine = pending.filter((p) => p.canAct);
   const list = tab === "mine" ? mine : tab === "all" ? pending : data.filter((p) => p.status !== "pending_approval");
   return <div className="flex flex-col gap-3">
     <div className="flex gap-1">{([["mine", `For you (${mine.length})`], ["all", `All waiting (${pending.length})`], ["done", "Decided"]] as const).map(([k, l]) => <Button key={k} size="sm" variant={tab === k ? "primary" : "ghost"} onClick={() => setTab(k)}>{l}</Button>)}</div>
-    {!list.length ? <Card><EmptyState title={tab === "mine" ? "Inbox zero" : "Nothing here"} body="Purchases that match a rule, or go above the mandate threshold, land here for the right people." /></Card> : <div className="grid gap-3 lg:grid-cols-2">{list.map((p) => <ApprovalCard key={p.id} p={p} />)}</div>}
+    {!list.length ? <Card><EmptyState icon={Inbox} title={tab === "mine" ? "Inbox zero" : "Nothing here"} body="Purchases that match a rule, or go above the mandate threshold, land here for the right people." /></Card> : <div className="grid gap-3 lg:grid-cols-2">{list.map((p) => <ApprovalCard key={p.id} p={p} />)}</div>}
   </div>;
 }
 
@@ -231,7 +211,7 @@ function SupplierRow({ s, me }: { s: any; me: any }) {
 export function SuppliersPage() {
   const { data, error } = useGet<any[]>("/workspace/suppliers"); const { data: me } = useMe();
   const { run, busy, error: e2 } = useAct(); const [f, setF] = useState({ name: "", email: "", country: "US" }); const [link, setLink] = useState(""); const [open, setOpen] = useState(false);
-  if (!data || !me) return <Loading error={error as Error} />;
+  if (!data || !me) return error ? <Loading error={error as Error} /> : <Card pad={false}><SkeletonTable rows={4} cols={3} /></Card>;
   const can = ["client_admin", "ap_clerk", "operator_admin"].includes(me.user.role);
   const counts = ["draft", "submitted", "verified", "rejected"].map((k) => [k, data.filter((s) => s.status === k).length] as const);
   return <Section>
@@ -241,7 +221,7 @@ export function SuppliersPage() {
       <div><Label>Country</Label><Input maxLength={2} value={f.country} onChange={(e) => setF({ ...f, country: e.target.value.toUpperCase() })} /></div>
       <div className="flex items-end"><Button variant="primary" disabled={busy || !f.name || !f.email} onClick={async () => { const r = await run(() => api("/workspace/suppliers/invite", f)); if (r) { setLink(`${location.origin}${r.link}`); setOpen(false); setF({ name: "", email: "", country: "US" }); } }}>Create link</Button></div></div><ErrorNote msg={e2} /></Card>}
     {link && <Reveal secret={link} what="onboarding link" onDone={() => setLink("")} />}
-    <Card title="All suppliers" pad={false}>{data.length ? <ul className="divide-y divide-border">{data.map((s) => <SupplierRow key={s.id} s={s} me={me} />)}</ul> : <EmptyState title="No suppliers" />}</Card>
+    <Card title="All suppliers" pad={false}>{data.length ? <ul className="divide-y divide-border">{data.map((s) => <SupplierRow key={s.id} s={s} me={me} />)}</ul> : <EmptyState icon={Truck} title="No suppliers yet" body="Invite a supplier to start onboarding. They show here once invited." />}</Card>
   </Section>;
 }
 

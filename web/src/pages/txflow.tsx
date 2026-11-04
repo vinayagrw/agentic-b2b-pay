@@ -10,6 +10,10 @@ import { Section } from "../components/Shell";
 import { Loading } from "./flows";
 import { railName } from "./payments";
 import { useChartColors } from "./ops";
+import { KpiCard, Skeleton, StatusDot, halfDelta } from "../components/kit";
+import { Sparkline } from "../components/charts";
+import { TraceTimeline } from "../components/TraceTimeline";
+import { RouteGraph } from "../components/RouteGraph";
 
 type Step = { key: string; label: string; status: "done" | "failed" | "blocked" | "running" | "waiting" | "skipped" | "not_reached"; actor: { kind: "agent" | "person" | "system"; name: string } | null; at: string | null; durationMs: number | null; reason: string | null; details: any };
 type Flow = { intent: any; steps: Step[]; decision: { deterministic: { rail: string | null; reason: string; options: any[] } | null; explanation: string | null; explainedBy: string | null; decidedBy: "router" } };
@@ -121,7 +125,9 @@ export function FlowPage() {
         <Muted>Select a step to see its details. Use the arrow keys to move between steps.</Muted>
       </Card>
       {cur && <Card title="Step details"><StepDetails s={cur} /></Card>}
+      <TraceTimeline id={data.intent.id} />
       <DecisionCard d={data.decision} />
+      <RouteGraph options={data.decision.deterministic?.options} chosen={data.decision.deterministic?.rail ?? null} amount={data.intent.amount} supplier={data.intent.supplier} />
     </>}
   </Section>;
 }
@@ -229,18 +235,18 @@ function Spark({ label, value, data, k, color }: { label: string; value: string;
 export function HomeStrip() {
   const { data, error } = useGet<any>("/insights/home?days=14"); const col = useChartColors();
   if (error) return <ErrorNote msg={(error as Error).message} />;
-  if (!data) return <Loading />;
+  if (!data) return <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[0, 1, 2, 3].map((n) => <Skeleton key={n} className="h-28 rounded-xl" />)}</div>;
   const s = data.series as any[]; const sum = (k: string) => s.reduce((a, x) => a + x[k], 0);
   return <>
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <Spark label="Settled, 14 days" value={usd(sum("settledVolume"))} data={s} k="settledVolume" color="var(--ok)" />
-      <Spark label="Payments, 14 days" value={String(sum("payments"))} data={s} k="payments" color={col.primary} />
-      <Spark label="Blocked, 14 days" value={String(sum("blocked"))} data={s} k="blocked" color="var(--bad)" />
-      <Spark label="Failed, 14 days" value={String(sum("failed"))} data={s} k="failed" color="var(--warn)" />
+      <KpiCard label="Settled, 14 days" value={usd(sum("settledVolume"))} delta={halfDelta(s.map((x) => x.settledVolume))} trend={<Sparkline data={s} k="settledVolume" color="ok" label="Settled" />} />
+      <KpiCard label="Payments, 14 days" value={String(sum("payments"))} delta={halfDelta(s.map((x) => x.payments))} trend={<Sparkline data={s} k="payments" label="Payments" />} />
+      <KpiCard label="Blocked, 14 days" value={String(sum("blocked"))} goodWhen="down" delta={halfDelta(s.map((x) => x.blocked))} trend={<Sparkline data={s} k="blocked" color="bad" label="Blocked" />} />
+      <KpiCard label="Failed, 14 days" value={String(sum("failed"))} goodWhen="down" delta={halfDelta(s.map((x) => x.failed))} trend={<Sparkline data={s} k="failed" color="warn" label="Failed" />} />
     </div>
     <Card title="Rail health" pad={false}>
       <ul className="grid divide-y divide-border sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4">{data.rails.map((r: any) => <li key={r.rail} className="flex flex-col gap-1 p-3">
-        <div className="flex items-center gap-2"><span aria-hidden className={cn("h-2 w-2 rounded-full", !r.configured ? "bg-bad" : r.errorRate ? "bg-warn" : "bg-ok")} /><span className="text-[13px] font-medium">{railName(r.rail)}</span>
+        <div className="flex items-center gap-2"><StatusDot tone={!r.configured ? "bad" : r.errorRate ? "warn" : "ok"} label={<span className="text-[13px] font-medium text-fg">{railName(r.rail)}</span>} />
           <Badge className="ml-auto" v={r.env === "live" ? "Live" : "Sandbox"} tone={r.env === "live" ? "bad" : "neutral"} /></div>
         <div className="text-xs">{r.configured ? <span className="text-ok">Configured</span> : <span className="text-bad" title={r.notConfiguredReason ?? undefined}>Not configured</span>}</div>
         <Muted>Last success {r.lastSuccess ? new Date(r.lastSuccess).toLocaleString() : "none in 14 days"}</Muted>

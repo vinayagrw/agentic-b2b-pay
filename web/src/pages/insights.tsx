@@ -9,6 +9,8 @@ import { Loading } from "./flows";
 import { PaymentsTable, railName } from "./payments";
 import { useChartColors, useClientPicker } from "./ops";
 import { HomeStrip, MoneyFlowMap } from "./txflow";
+import { KpiCard, halfDelta } from "../components/kit";
+import { Sparkline, ThemedBarChart } from "../components/charts";
 
 const axis = { fontSize: 11, fill: "var(--muted)" };
 const tip = { contentStyle: { background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }, labelStyle: { color: "var(--fg)" } };
@@ -20,10 +22,10 @@ export function OperatorHome() {
     <PageHeader title="Home" sub={`Volume, risk and revenue across all tenants, last ${k.days} days`} actions={<Button variant={k.killSwitch ? "outline" : "danger"} disabled={busy} onClick={() => run(() => api("/kill-switch", { on: !k.killSwitch }))}>{k.killSwitch ? "Release platform kill switch" : "Platform kill switch"}</Button>} />
     <ErrorNote msg={e2} />
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <Stat icon={ArrowLeftRight} label="Settled volume" value={usd(k.settledVolume)} hint={`${k.settledCount} payments, average ${usd(k.avgTicket)}`} />
-      <Stat icon={BadgeDollarSign} label="Bank net revenue" value={usd(k.netRevenue)} hint={`${usd(k.bankFees)} in bank fees`} />
-      <Stat icon={ShieldAlert} label="Blocked by policy or screening" value={k.blockedCount} hint={`${k.blockedRate} percent of ${k.payments} payments`} />
-      <Stat icon={Activity} label="In flight" value={k.inFlight} hint={k.medianSettleMinutes !== null ? `Median settle ${k.medianSettleMinutes} minutes` : "No settlements yet"} />
+      <KpiCard icon={ArrowLeftRight} label="Settled volume" value={usd(k.settledVolume)} hint={`${k.settledCount} payments, average ${usd(k.avgTicket)}`} delta={halfDelta((k.daily ?? []).map((d: any) => d.volume))} trend={k.daily?.length ? <Sparkline data={k.daily} k="volume" label="Settled volume" /> : undefined} />
+      <KpiCard icon={BadgeDollarSign} label="Bank net revenue" value={usd(k.netRevenue)} hint={`${usd(k.bankFees)} in bank fees`} />
+      <KpiCard icon={ShieldAlert} label="Blocked by policy or screening" value={k.blockedCount} hint={`${k.blockedRate} percent of ${k.payments} payments`} />
+      <KpiCard icon={Activity} label="In flight" value={k.inFlight} hint={k.medianSettleMinutes !== null ? `Median settle ${k.medianSettleMinutes} minutes` : "No settlements yet"} />
     </div>
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <Stat icon={ShieldAlert} label="Open sanctions cases" value={k.openSanctions} />
@@ -34,7 +36,7 @@ export function OperatorHome() {
     <HomeStrip />
     <MoneyFlowMap />
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-      <Card title="Settled volume by day"><div className="h-52"><ResponsiveContainer><BarChart data={k.daily}><CartesianGrid stroke={col.grid} vertical={false} /><XAxis dataKey="day" tick={{ ...axis, fill: col.muted }} tickFormatter={(d) => d.slice(5)} interval={6} /><YAxis tick={{ ...axis, fill: col.muted }} width={48} /><Tooltip {...tip} formatter={(v: any) => [usd(Number(v)), "Settled"]} /><Bar dataKey="volume" fill={col.primary} radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer></div></Card>
+      <Card title="Settled volume by day"><ThemedBarChart data={k.daily} x="day" xFormat={(d) => String(d).slice(5)} interval={6} yFormat={(v) => usd(v)} series={[{ key: "volume", label: "Settled" }]} ariaLabel={`Settled volume by day over ${k.daily.length} days`} /></Card>
       <Card title="Volume by rail" pad={false}>{k.byRail.length ? <Table>{k.byRail.map((r: any) => <tr key={r.rail}><td>{railName(r.rail)}</td><td className="text-right tabular-nums">{usd(r.volume)}</td></tr>)}</Table> : <EmptyState title="No settled payments yet" />}</Card>
     </div>
     <PaymentsTable title="Latest payments" />
@@ -49,7 +51,7 @@ export function RevenuePage() {
   return <Section>
     <PageHeader title="Revenue" sub="Bank fees charged to clients, minus what each rail costs. From settled payments only." />
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Stat label="Settled volume" value={usd(t.volume)} hint={`${t.count} payments`} /><Stat label="Bank fees" value={usd(t.bankFees)} /><Stat label="Rail costs" value={usd(t.railFees)} /><Stat label="Net revenue" value={usd(t.net)} hint={t.refunds ? `${usd(t.refunds)} refunded` : undefined} /></div>
-    {byMonth.length > 0 && <Card title="By month"><div className="h-48"><ResponsiveContainer><BarChart data={byMonth}><CartesianGrid stroke={col.grid} vertical={false} /><XAxis dataKey="month" tick={{ ...axis, fill: col.muted }} /><YAxis tick={{ ...axis, fill: col.muted }} width={48} /><Tooltip {...tip} formatter={(v: any, n: any) => [usd(Number(v)), n === "bankFees" ? "Bank fees" : "Rail costs"]} /><Bar dataKey="bankFees" fill={col.primary} /><Bar dataKey="railFees" fill={col.accent} /></BarChart></ResponsiveContainer></div></Card>}
+    {byMonth.length > 0 && <Card title="By month"><ThemedBarChart height={192} data={byMonth} x="month" yFormat={(v) => usd(v)} series={[{ key: "bankFees", label: "Bank fees" }, { key: "railFees", label: "Rail costs", color: "accent" }]} ariaLabel="Bank fees and rail costs by month" /></Card>}
     <Card title="By tenant, rail and month" pad={false}>{data.rows.length ? <Table head={["Month", "Tenant", "Bank", "Rail", "Payments", "Volume", "Rail cost", "Bank fee", "Net", "Refunded"]}>{data.rows.map((r: any) => <tr key={`${r.tenantId}${r.rail}${r.month}`}><td>{r.month}</td><td>{r.tenant}</td><td>{r.bank}</td><td>{railName(r.rail)}</td><td className="tabular-nums">{r.count}</td><td className="tabular-nums">{usd(r.volume)}</td><td className="tabular-nums">{usd(r.railFees)}</td><td className="tabular-nums">{usd(r.bankFees)}</td><td className="tabular-nums font-medium">{usd(r.net)}</td><td className="tabular-nums">{r.refunds ? usd(r.refunds) : ""}</td></tr>)}</Table> : <EmptyState icon={BadgeDollarSign} title="No revenue yet" body="Revenue shows once a payment settles on a rail." />}</Card>
     <Card title="Bank pricing" pad={false}><Table head={["Bank", "Card", "ACH", "USDC Circle", "USDC Base"]}>{data.pricing.map((p: any) => <tr key={p.bank}><td>{p.bank}</td>{["stripe_card", "stripe_ach", "circle_usdc", "onchain_usdc"].map((r) => <td key={r} className="tabular-nums">{p.pricing[r] ? `${p.pricing[r].pct} percent${p.pricing[r].fixed ? ` plus ${usd(p.pricing[r].fixed)}` : ""}` : "None"}</td>)}</tr>)}</Table></Card>
   </Section>;
@@ -77,7 +79,7 @@ export function DevelopersPage() {
     </Card>
     <Card title={<span className="flex items-center gap-2"><Webhook size={14} />Webhook endpoints</span>}>
       <div className="flex flex-col gap-2"><div className="flex flex-wrap gap-2"><Input className="min-w-72 flex-1" value={url} onChange={(e) => setUrl(e.target.value.trim())} placeholder="https://erp.example.com/hooks/b2bpay" /><Button variant="primary" disabled={busy || !url} onClick={async () => { const r = await run(() => api("/dev/webhooks", body({ url, events: types }))); if (r) { setSecret(r.secret); setUrl(""); } }}>Add endpoint</Button></div>
-        <div className="flex flex-wrap gap-1">{(hooks.data?.eventTypes ?? []).map((t: string) => { const on = types.includes(t); return <button key={t} type="button" aria-pressed={on} onClick={() => setTypes(on ? types.filter((x) => x !== t) : [...types, t])} className={on ? "rounded-full bg-primary px-2.5 py-1 text-[11px] text-white" : "rounded-full border border-border px-2.5 py-1 text-[11px] text-muted"}>{t}</button>; })}</div>
+        <div className="flex flex-wrap gap-1">{(hooks.data?.eventTypes ?? []).map((t: string) => { const on = types.includes(t); return <button key={t} type="button" aria-pressed={on} onClick={() => setTypes(on ? types.filter((x) => x !== t) : [...types, t])} className={on ? "rounded-full bg-primary px-2.5 py-1 text-[11px] text-primary-fg" : "rounded-full border border-border px-2.5 py-1 text-[11px] text-muted"}>{t}</button>; })}</div>
         <Muted>No events picked means all events. Each delivery is signed: header x-b2bpay-signature is t=timestamp,v1=HMAC SHA256 of timestamp.body with the endpoint secret. Failed deliveries retry after {(hooks.data?.backoffSec ?? []).map((s: number) => (s >= 60 ? `${s / 60} min` : `${s} s`)).join(", ")}.</Muted></div>
       {hooks.data?.endpoints.length ? <Table className="mt-3" head={["Endpoint", "Events", "Deliveries", ""]}>{hooks.data.endpoints.map((e: any) => <tr key={e.id}><td><Mono className="break-all">{e.url}</Mono>{!e.active && <Badge v="paused" tone="neutral" className="ml-1" />}</td><td><Muted>{e.events.length ? e.events.join(", ") : "All"}</Muted></td><td>{e.stats.map((s: any) => <Badge key={s.status} v={`${s.status} ${s.n}`} className="mr-1" tone={s.status === "failed" ? "bad" : s.status === "pending" ? "warn" : "ok"} />)}</td>
         <td className="flex justify-end gap-1"><Button size="sm" disabled={busy} onClick={() => run(() => api(`/dev/webhooks/${e.id}/test`, body({})))}>Send test</Button><Button size="sm" disabled={busy} onClick={() => run(() => api(`/dev/webhooks/${e.id}/active`, body({ active: !e.active })))}>{e.active ? "Pause" : "Resume"}</Button><Button size="sm" variant="ghost" disabled={busy} onClick={() => confirm("Delete this endpoint?") && run(() => api(`/dev/webhooks/${e.id}${q}`, undefined, { method: "DELETE" }))}>Delete</Button></td></tr>)}</Table> : null}

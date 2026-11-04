@@ -54,6 +54,14 @@ describe("approval rules", () => {
     expect(W.approvalsInbox(user("usr-controller-sam"), "tnt-acme").find((x) => x.id === po.id)?.canAct).toBe(true);
     expect(W.approvalsInbox(user("usr-clerk-pat"), "tnt-acme").find((x) => x.id === po.id)?.canAct).toBe(false);
   });
+  it("the inbox carries maker, rail, policy result and risk flags for the approval card", () => {
+    const po = S.createPo({ supplierId: "sup-northwind", category: "components", currency: "USD", lines: [{ sku: "NW-MTR-750", description: "Servo", qty: 30, unitPrice: 420 }], justification: "Spare motors" });
+    const row = W.approvalsInbox(user("usr-controller-sam"), "tnt-acme").find((x) => x.id === po.id)!;
+    expect(row.maker.kind).toBe("agent"); expect(row.maker.name).toBeTruthy(); expect(row.rail).toBeTruthy();
+    expect(["allow", "needs_approval", "deny"]).toContain(row.policy.outcome); expect(Array.isArray(row.riskFlags)).toBe(true);
+    expect(row.riskFlags).toContain("Large amount, 10,000 USD or more");
+    expect(W.riskFlags({ total: 50, policy: { checks: [{ rule: "Budget", pass: false, detail: "over" }] } }, { screeningStatus: "flagged" })).toEqual(["Budget: over", "Supplier flagged in screening"]);
+  });
   it("validates and reorders rules", () => {
     const u = user("usr-cfo-jane");
     expect(() => W.upsertRule(u, "tnt-acme", { name: "x", active: true, minAmount: 100, maxAmount: 50, categories: [], entities: [], levels: [{ role: "approver", count: 1 }] })).toThrow(/above the minimum/);

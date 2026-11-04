@@ -9,7 +9,7 @@ import { cn } from "../lib/utils";
 const button = cva("inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-[13px] font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-2 focus-visible:outline-primary", {
   variants: {
     variant: {
-      primary: "bg-primary text-white hover:opacity-90",
+      primary: "bg-primary text-primary-fg hover:opacity-90",
       outline: "border border-border bg-surface hover:bg-subtle",
       ghost: "hover:bg-subtle",
       danger: "bg-bad text-white hover:opacity-90",

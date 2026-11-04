@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowLeftRight, Banknote, Bot, Building2, Check, ChevronsUpDown, Code2, FileText, Gauge, Home, Inbox, KeyRound, Landmark, MonitorSmartphone, UserCog, LogOut, Moon, Palette, Scale, Settings, ShieldCheck, ShoppingCart, Sun, Truck, Users, Workflow, type LucideIcon } from "lucide-react";
+import { Activity, ArrowLeftRight, Banknote, Bot, Building2, Check, ChevronsUpDown, Code2, FileText, Gauge, Home, Inbox, KeyRound, Landmark, MonitorSmartphone, UserCog, LogOut, Moon, Palette, Scale, Search, Settings, ShieldCheck, ShoppingCart, Sun, Truck, Users, Workflow, type LucideIcon } from "lucide-react";
 import { api, useLiveEvents, useMe, type Me } from "../lib/api";
 import { applyTheme } from "../lib/theme";
 import { cn } from "../lib/utils";
+import { CommandPalette, ShortcutsOverlay, useShortcuts } from "./CommandPalette";
 import { Badge, Menu, MenuContent, MenuItem, MenuLabel, MenuSep, MenuTrigger } from "./ui";
 
 type Item = { to: string; label: string; icon: LucideIcon };
@@ -26,7 +27,7 @@ export const CLIENT_NAV: Item[] = [
 
 export function Logo({ name, logo, size = 28 }: { name: string; logo: string | null; size?: number }) {
   if (logo) return <img src={logo} alt="" style={{ width: size, height: size }} className="rounded-md object-contain" />;
-  return <span style={{ width: size, height: size }} className="grid shrink-0 place-items-center rounded-md bg-primary text-[12px] font-bold text-white">{name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</span>;
+  return <span style={{ width: size, height: size }} className="grid shrink-0 place-items-center rounded-md bg-primary text-[12px] font-bold text-primary-fg">{name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</span>;
 }
 
 function useColorMode() {
@@ -38,6 +39,7 @@ function useColorMode() {
 export function Shell({ kind }: { kind: "operator" | "client" }) {
   const { data: me } = useMe();
   const live = useLiveEvents();
+  const keys = useShortcuts();
   useEffect(() => { applyTheme(me?.theme); }, [me?.theme]);
   if (!me) return null;
   const nav = kind === "operator" ? OPERATOR_NAV : CLIENT_NAV;
@@ -48,13 +50,15 @@ export function Shell({ kind }: { kind: "operator" | "client" }) {
       <div className="flex items-center gap-1.5 px-4 py-3 text-[11px] text-muted"><Activity size={12} className={live ? "text-ok" : "text-bad"} />{live ? "Live updates on" : "Reconnecting"}</div>
     </aside>
     <div className="flex min-w-0 flex-1 flex-col">
-      <TopBar me={me} kind={kind} />
+      <TopBar me={me} kind={kind} onSearch={() => keys.setPalette(true)} />
+      <CommandPalette me={me} kind={kind} open={keys.palette} onOpenChange={keys.setPalette} />
+      <ShortcutsOverlay open={keys.help} onOpenChange={keys.setHelp} />
       <main className={cn("mx-auto w-full flex-1 px-4 py-5 md:px-6", kind === "operator" ? "max-w-[1400px]" : "max-w-[1200px]")}><Outlet /></main>
     </div>
   </div>;
 }
 
-function TopBar({ me, kind }: { me: Me; kind: "operator" | "client" }) {
+function TopBar({ me, kind, onSearch }: { me: Me; kind: "operator" | "client"; onSearch: () => void }) {
   const qc = useQueryClient(); const nav = useNavigate();
   const [mode, setMode] = useColorMode();
   const live = Object.values(me.tenant.railSettings ?? {}).some((r) => r.env === "live");
@@ -69,9 +73,10 @@ function TopBar({ me, kind }: { me: Me; kind: "operator" | "client" }) {
     <Badge v={live ? "LIVE" : "TEST"} tone={live ? "bad" : "warn"} className="tracking-wide" />
     {me.operator && kind === "client" && <Badge v="Viewing as operator" tone="primary" />}
     <span className="ml-auto" />
+    <button className="hidden h-8 items-center gap-2 rounded-md border border-border px-2.5 text-xs text-muted hover:bg-subtle sm:flex" onClick={onSearch} aria-label="Open command palette"><Search size={13} aria-hidden />Search<kbd className="rounded border border-border bg-subtle px-1 font-mono text-[10px]">Ctrl K</kbd></button>
     <Badge v={`LLM ${me.llmMode}`} tone="neutral" />
     <button className="grid h-8 w-8 place-items-center rounded-md hover:bg-subtle" aria-label="Toggle colour mode" onClick={() => setMode(mode === "dark" ? "light" : "dark")}>{mode === "dark" ? <Sun size={15} /> : <Moon size={15} />}</button>
-    <Menu><MenuTrigger asChild><button className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-subtle" aria-label="User menu"><span className="grid h-7 w-7 place-items-center rounded-full bg-accent text-[11px] font-semibold text-white">{me.user.name.split(" ").map((w) => w[0]).join("")}</span><span className="hidden text-left sm:block"><span className="block text-[12px] font-medium leading-tight">{me.user.name}</span><span className="block text-[11px] leading-tight text-muted">{(me.roleName ?? me.user.role).replace("_", " ")}</span></span></button></MenuTrigger>
+    <Menu><MenuTrigger asChild><button className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-subtle" aria-label="User menu"><span className="grid h-7 w-7 place-items-center rounded-full bg-accent text-[11px] font-semibold text-accent-fg">{me.user.name.split(" ").map((w) => w[0]).join("")}</span><span className="hidden text-left sm:block"><span className="block text-[12px] font-medium leading-tight">{me.user.name}</span><span className="block text-[11px] leading-tight text-muted">{(me.roleName ?? me.user.role).replace("_", " ")}</span></span></button></MenuTrigger>
       <MenuContent>
         <MenuLabel>{me.user.email}</MenuLabel>
         {me.operator && <MenuItem onSelect={() => { const t = me.tenants.find((x) => x.kind === (kind === "operator" ? "client" : "bank")); if (t) pick(t.id, t.kind); }}><Users size={14} />{kind === "operator" ? "Open client workspace" : "Back to operator console"}</MenuItem>}

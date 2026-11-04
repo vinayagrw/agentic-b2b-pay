@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSSE } from "./stream";
 import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export class ApiError extends Error { constructor(public status: number, msg: string) { super(msg); } }
@@ -20,19 +21,16 @@ export const useMe = () => useQuery<Me | null>({ queryKey: ["me"], queryFn: () =
 export const useAppState = () => useQuery<any>({ queryKey: ["state"], queryFn: () => api("/state") });
 export const useGet = <T = any,>(path: string, enabled = true) => useQuery<T>({ queryKey: [path], queryFn: () => api<T>(path), enabled });
 
-/** One SSE stream for the app. Any server change refreshes cached queries. */
+/** One SSE stream for the app. Any server change refreshes cached queries. Built on useSSE. */
 export function useLiveEvents() {
   const qc = useQueryClient();
-  const [live, setLive] = useState(false);
-  useEffect(() => {
-    const es = new EventSource("/api/events", { withCredentials: true });
-    let t: ReturnType<typeof setTimeout> | null = null;
-    es.addEventListener("hello", () => setLive(true));
-    es.addEventListener("change", () => { if (t) return; t = setTimeout(() => { t = null; qc.invalidateQueries(); }, 150); });
-    es.onerror = () => setLive(false);
-    return () => { es.close(); if (t) clearTimeout(t); };
-  }, [qc]);
-  return live;
+  const t = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (t.current) clearTimeout(t.current); }, []);
+  const status = useSSE("/api/events", ["hello", "change"], (m) => {
+    if (m.event !== "change" || t.current) return;
+    t.current = setTimeout(() => { t.current = null; qc.invalidateQueries(); }, 150);
+  });
+  return status === "open";
 }
 
 /** Runs a mutating call with shared busy and error state, then refreshes. */

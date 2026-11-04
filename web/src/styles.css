@@ -1,8 +1,9 @@
+@import "@fontsource-variable/inter";
 @import "tailwindcss" source(none);
 @source "./";
 
 :root {
-  --brand-primary: #1d4ed8; --brand-accent: #f59e0b;
+  --brand-primary: #1d4ed8; --brand-accent: #f59e0b; --brand-primary-fg: #ffffff; --brand-accent-fg: #0b1020;
   --bg: #f6f7f9; --surface: #ffffff; --fg: #0f172a; --muted: #64748b; --border: #e2e8f0; --subtle: #f1f5f9;
   --ok: #15803d; --bad: #b91c1c; --warn: #b45309;
   color-scheme: light;
@@ -15,13 +16,19 @@
 @theme inline {
   --color-primary: var(--brand-primary);
   --color-accent: var(--brand-accent);
+  --color-primary-fg: var(--brand-primary-fg);
+  --color-accent-fg: var(--brand-accent-fg);
   --color-bg: var(--bg); --color-surface: var(--surface); --color-fg: var(--fg); --color-muted: var(--muted);
   --color-border: var(--border); --color-subtle: var(--subtle);
   --color-ok: var(--ok); --color-bad: var(--bad); --color-warn: var(--warn);
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
 html, body { background: var(--bg); color: var(--fg); }
 body { font-family: var(--font-sans); font-size: 13px; -webkit-font-smoothing: antialiased; }
 * { border-color: var(--border); }
 pre { white-space: pre-wrap; word-break: break-all; font-size: 11px; background: var(--subtle); padding: 8px; border-radius: 6px; max-height: 320px; overflow: auto; }
+
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.skeleton { background: linear-gradient(90deg, var(--subtle) 25%, var(--border) 50%, var(--subtle) 75%); background-size: 200% 100%; animation: shimmer 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }

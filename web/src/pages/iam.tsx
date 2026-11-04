@@ -150,5 +150,5 @@ export function ScimTokens() {
 
 export function SsoButtons({ sso }: { sso: { id: string; label: string }[] }) {
   if (!sso.length) return <Muted>No identity provider is set up yet.</Muted>;
-  return <div className="flex flex-col gap-2">{sso.map((s) => <a key={s.id} href={`/api/auth/oidc/start?idp=${encodeURIComponent(s.id)}`} className="flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-[14px] font-medium text-white hover:opacity-90"><LogIn size={16} />{s.label}</a>)}</div>;
+  return <div className="flex flex-col gap-2">{sso.map((s) => <a key={s.id} href={`/api/auth/oidc/start?idp=${encodeURIComponent(s.id)}`} className="flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-[14px] font-medium text-primary-fg hover:opacity-90"><LogIn size={16} />{s.label}</a>)}</div>;
 }

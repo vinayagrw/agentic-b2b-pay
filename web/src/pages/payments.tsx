@@ -1,7 +1,7 @@
+import { SlidePanel, Skeleton, SkeletonTable, StatusDot, toneOf } from "../components/kit";
 import { useMemo, useState } from "react";
-import * as D from "@radix-ui/react-dialog";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ExternalLink, GitBranch, RefreshCw, X } from "lucide-react";
+import { ExternalLink, GitBranch, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { RAIL_LABEL, type Rail } from "@b2b/shared";
 import { api, useAct, useGet } from "../lib/api";
@@ -24,7 +24,7 @@ export function PaymentsTable({ title = "Payments" }: { title?: string }) {
   const cols = useMemo<ColumnDef<any>[]>(() => [
     { header: "Payment", accessorKey: "id", cell: (c) => <span className="flex flex-col"><Mono>{c.getValue<any>()}</Mono>{c.row.original.kind === "refund" && <Muted>Refund of {c.row.original.linkedIntentId}</Muted>}</span> },
     { header: "Amount", accessorKey: "amount", cell: (c) => <span className="tabular-nums">{usd(c.getValue<any>())}</span> },
-    { header: "Status", accessorKey: "status", cell: (c) => <Badge v={c.getValue<any>()} tone={c.getValue<any>() === "pending" || c.getValue<any>() === "submitted" ? "warn" : undefined} /> },
+    { header: "Status", accessorKey: "status", cell: (c) => <StatusDot tone={toneOf(c.getValue<any>())} label={c.getValue<any>()} pulse={["pending", "submitted"].includes(c.getValue<any>())} /> },
     { header: "Rail", id: "rail", accessorFn: (r) => r.rail ?? r.route?.rail ?? "", cell: (c) => <span className="flex items-center gap-1">{railName(c.getValue<any>())}{c.row.original.env && <Badge v={c.row.original.env === "live" ? "LIVE" : "TEST"} tone={c.row.original.env === "live" ? "bad" : "neutral"} />}</span> },
     { header: "Provider ref", accessorKey: "providerRef", cell: (c) => <Mono className="block max-w-[180px] truncate">{c.getValue<any>() ?? ""}</Mono> },
     { header: "Link", id: "link", enableSorting: false, cell: (c) => <ProviderLink pi={c.row.original} /> },
@@ -33,7 +33,7 @@ export function PaymentsTable({ title = "Payments" }: { title?: string }) {
   if (error) return <ErrorNote msg={(error as Error).message} />;
   return <Card title={title} pad={false} action={<Button size="sm" variant="ghost" disabled={busy} onClick={() => run(() => api("/payments/poll", {}))}><RefreshCw size={13} />Check status now</Button>}>
     <ErrorNote msg={e2} />
-    <DataTable data={data ?? []} columns={cols} onRow={(r: any) => setOpen(r.id)} empty={<EmptyState title="No payments yet" body="Payments show here as soon as they are submitted, and update live as rails confirm them." />} />
+    {!data ? <SkeletonTable cols={6} /> : <DataTable data={data} columns={cols} onRow={(r: any) => setOpen(r.id)} empty={<EmptyState title="No payments yet" body="Payments show here as soon as they are submitted, and update live as rails confirm them." />} />}
     <PaymentDrawer id={open} onClose={() => setOpen(null)} />
   </Card>;
 }
@@ -41,13 +41,8 @@ export function PaymentsTable({ title = "Payments" }: { title?: string }) {
 export function PaymentDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
   const { data } = useGet<any>(`/payments/${id}`, !!id);
   const pi = data?.intent;
-  return <D.Root open={!!id} onOpenChange={(o) => !o && onClose()}>
-    <D.Portal>
-      <D.Overlay className="fixed inset-0 z-40 bg-black/30" />
-      <D.Content className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[460px] flex-col gap-3 overflow-y-auto border-l border-border bg-surface p-5 shadow-xl">
-        <div className="flex items-center gap-2"><D.Title className="text-sm font-semibold">Payment {id}</D.Title><D.Close asChild><Button size="icon" variant="ghost" className="ml-auto" aria-label="Close"><X size={16} /></Button></D.Close></div>
-        <D.Description className="sr-only">Payment detail and event timeline</D.Description>
-        {!pi ? <Muted>Loading</Muted> : <>
+  return <SlidePanel open={!!id} onClose={onClose} title={`Payment ${id}`} description="Payment detail and event timeline">
+        {!pi ? <Skeleton lines={6} /> : <>
           <Table>
             <tr><td className="text-muted">Status</td><td><Badge v={pi.status} /></td></tr>
             <tr><td className="text-muted">Amount</td><td className="tabular-nums">{usd(pi.amount)}</td></tr>
@@ -73,9 +68,7 @@ export function PaymentDrawer({ id, onClose }: { id: string | null; onClose: () 
           <details><summary className="cursor-pointer text-xs text-muted">Audit records ({data.evidence.length})</summary>
             <ul className="mt-1 text-xs">{data.evidence.map((e: any) => <li key={e.id}><Mono>{e.event}</Mono> <Muted>{e.createdAt.slice(11, 19)}</Muted></li>)}</ul></details>
         </>}
-      </D.Content>
-    </D.Portal>
-  </D.Root>;
+  </SlidePanel>;
 }
 
 /** Rail readiness strip. Rails without keys show Not configured and the router skips them. */

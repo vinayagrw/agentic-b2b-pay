@@ -121,6 +121,14 @@ export function reorderRules(user: P.User, tenantId: string, ids: string[]) {
   sql.transaction(() => ids.forEach((id, n) => { const r = rules.find((x) => x.id === id)!; S.saveRule({ ...r, position: n + 1 }); }))();
   P.audit(user.id, "rule", tenantId, "rule.reordered", { order: ids }); return S.listRules(tenantId);
 }
+/** Plain risk flags for the approver, from the order, its policy checks and the supplier record. */
+export function riskFlags(p: { total: number; policy: { checks: { rule: string; pass: boolean; detail: string }[] } }, sup?: { screeningStatus?: string; onboarding?: { status?: string } } | null) {
+  const f: string[] = p.policy.checks.filter((c) => !c.pass).map((c) => `${c.rule}: ${c.detail}`);
+  if (sup?.screeningStatus === "flagged") f.push("Supplier flagged in screening");
+  if (sup?.onboarding?.status && !["verified", "approved"].includes(sup.onboarding.status)) f.push(`Supplier onboarding is ${sup.onboarding.status}`);
+  if (p.total >= 10000) f.push("Large amount, 10,000 USD or more");
+  return f;
+}
 /** The approvals inbox: pending POs with the current level and whether this user can act. */
 export function approvalsInbox(user: P.User, tenantId: string) {
   const users = P.listUsers();
@@ -130,7 +138,8 @@ export function approvalsInbox(user: P.User, tenantId: string) {
     const can = S.canApprove(p, user);
     return { id: p.id, status: p.status, total: p.total, category: p.category, createdAt: p.createdAt, justification: p.justification, supplier: sup?.name ?? p.supplierId, agent: agent?.name ?? p.agentId, lines: p.lines,
       reasons: p.policy.reasons, approval: p.approval ? { ...p.approval, levels: p.approval.levels.map((l) => ({ ...l, approvals: l.approvals.map((a) => ({ ...a, name: name(a.userId) })) })), rejectedBy: p.approval.rejectedBy ? { ...p.approval.rejectedBy, name: name(p.approval.rejectedBy.userId) } : undefined } : null,
-      canAct: can.ok, why: can.why };
+      maker: { kind: "agent", name: agent?.name ?? p.agentId }, rail: sup?.preferredRail ?? null, policy: { outcome: p.policy.outcome, checks: p.policy.checks },
+      riskFlags: riskFlags(p, sup), canAct: can.ok, why: can.why };
   }).filter((p) => p.approval || p.status === "pending_approval");
 }
 

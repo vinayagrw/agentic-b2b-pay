@@ -7,6 +7,7 @@ import { Badge, Button, Card, EmptyState, ErrorNote, Input, Mono, Muted, PageHea
 import { Section } from "../components/Shell";
 import { Loading, EvidenceLog } from "./flows";
 import { railName } from "./payments";
+import { useChartColors } from "../components/charts";
 
 /** Operator pages act on one business client at a time. */
 export function useClientPicker() {
@@ -17,12 +18,7 @@ export function useClientPicker() {
   const pick = <Select aria-label="Business client" value={t?.id ?? ""} onChange={(e) => { setId(e.target.value); try { localStorage.setItem("ops-tenant", e.target.value); } catch { /* private mode */ } }}>{clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select>;
   return { tenantId: t?.id, tenant: t, pick };
 }
-/** Recharts writes colours as SVG attributes, where CSS variables do not resolve. Read the theme values instead. */
-export function useChartColors() {
-  const { data: me } = useGet<any>("/me");
-  const css = (v: string, d: string) => { try { return getComputedStyle(document.documentElement).getPropertyValue(v).trim() || d; } catch { return d; } };
-  return { primary: me?.theme?.primary ?? css("--brand-primary", "#1d4ed8"), accent: me?.theme?.accent ?? css("--brand-accent", "#f59e0b"), grid: css("--border", "#e2e8f0"), muted: css("--muted", "#64748b") };
-}
+export { useChartColors } from "../components/charts";
 const axis = { fontSize: 11, fill: "var(--muted)" };
 const tip = { contentStyle: { background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }, labelStyle: { color: "var(--fg)" } };
 const k = (n: number) => (Math.abs(n) >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toFixed(0));
