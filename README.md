@@ -319,6 +319,17 @@ Rendered copy: [architecture SVG](docs/diagrams/architecture.svg). Workspaces ar
 
 ---
 
+## Signed purchase mandates (AP2 style)
+
+When the buyer agent proposes a purchase, the platform creates two signed records.
+
+- **Intent mandate**, signed by the authorising user: who, maximum amount, currency, supplier, category, expiry and rail constraints.
+- **Cart mandate**, signed by the buyer agent: the exact lines, amount, supplier and a rail hint. When the invoice matches, the agent signs a new cart with the invoice lines and the old one is superseded.
+
+Signatures use Ed25519 from `node:crypto`. Each user and agent gets its own key pair, generated server side. Private keys sit in `data/keys/mandates` (gitignored), public keys in the `signing_keys` table. The model never sees a key.
+
+Before any payment is sent the policy engine (`evaluateMandates` in `bff/src/modules/policy.ts`) checks both signatures, that the cart points at the intent, that the intent has not expired, that the cart fits inside the intent (amount, currency, supplier) and that the cart hash equals the payment about to be sent. Any failure blocks the payment with the failed rule named. Mandates are stored by migration `008_ap2_mandates.sql` and every signature lands in the evidence hash chain. The payment detail page shows both mandates, who signed them, their hashes and a plain words status.
+
 ## Safety
 
 > [!IMPORTANT]

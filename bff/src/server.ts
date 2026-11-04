@@ -308,6 +308,7 @@ export async function buildApp() {
   app.post("/ops/cases/:id/close", async (req: any) => O.closeCase(who(req), req.params.id, String(b(req).resolution ?? "")));
   // Step 6: revenue, KPIs, dispute evidence, developer keys and webhooks
   app.get("/ops/revenue", async (req) => { who(req); return A.revenue(); });
+  app.get("/payments/:id/mandates", async (req: any) => { const i = scoped(scopeOf(req)).intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); return S.mandatesView(i.id); });
   app.get("/flows/:id", async (req: any) => FV.flowSummary(req.params.id, scopeOf(req)));
   app.get("/transactions", async (req: any) => FV.transactions(scopeOf(req), req.query ?? {}));
   app.get("/transactions/export.csv", async (req: any, reply) => reply.type("text/csv").header("content-disposition", `attachment; filename="transactions.csv"`).send(FV.transactionsCsv(scopeOf(req), req.query ?? {})));

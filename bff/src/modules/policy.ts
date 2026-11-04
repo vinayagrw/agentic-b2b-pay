@@ -1,5 +1,7 @@
 import type { PolicyDecision, Category } from "@b2b/shared";
 import type { Agent, Mandate } from "./store.js";
+/** AP2 mandate checks: both signatures, cart inside intent, cart hash equals the payment. */
+export { verifyMandatePair as evaluateMandates } from "./ap2.js";
 
 export type PolicyInput = {
   agent: Agent; mandate: Mandate; killSwitch: boolean;

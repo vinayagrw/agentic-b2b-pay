@@ -18,6 +18,8 @@ import { mpcSign, SIGNERS } from "./modules/custody.js";
 import { buyerDraft, readInvoice, explainRoute, renderInvoiceText } from "./agents.js";
 import { pickRule, type ApprovalRule } from "./modules/rules.js";
 import { publish } from "./hooks.js";
+import * as AP2 from "./modules/ap2.js";
+import { evaluateMandates } from "./modules/policy.js";
 
 export class HttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 const must = <T>(v: T | undefined, what: string): T => { if (!v) throw new HttpError(404, `${what} not found`); return v; };
@@ -109,9 +111,31 @@ export function createPo(draft: PoDraft, agentId?: string) {
   db.pos.push(po);
   ev("po", po.id, "policy.evaluated", { outcome: decision.outcome, reasons: decision.reasons, total, rule: approval?.ruleName ?? null });
   if (decision.outcome === "needs_approval") db.alerts.push({ at: po.createdAt, kind: "approval", detail: `${po.id}: ${decision.reasons.join(", ")}`, tenantId });
+  if (po.status !== "rejected") issueMandates(po, mandate, sup);
   if (po.status === "approved") publish(tenantId, "purchase_order.approved", { id: po.id, total });
   if (po.status === "approved") pushPoToErp(po, sup);
   save(); return po;
+}
+/** AP2: the authorising user signs the Intent, the buyer agent signs the Cart. Keys stay server side. */
+function issueMandates(po: PurchaseOrder, mandate: import("./modules/store.js").Mandate, sup: Supplier) {
+  const exp = Math.min(Date.now() + 30 * 864e5, new Date(mandate.validTo).getTime());
+  const intent = AP2.signIntent({ poId: po.id, tenantId: tenantOf(po), principalUserId: mandate.principalUserId, agentId: po.agentId, maxAmount: round(po.total * 1.02), currency: "USD", supplierId: sup.id, category: po.category, expiresAt: new Date(exp).toISOString(), constraints: { allowedRails: mandate.allowedRails, category: po.category } });
+  ev("po", po.id, "ap2.intent_signed", { mandate: intent.id, signer: intent.signerId, maxAmount: intent.body.maxAmount, expiresAt: intent.body.expiresAt, hash: intent.hash });
+  signCartFor(po, intent, AP2.normLines(po.lines), po.total, sup);
+}
+function signCartFor(po: PurchaseOrder, intent: AP2.SignedMandate<AP2.IntentBody>, lines: AP2.MandateLine[], amount: number, sup: Supplier) {
+  const cart = AP2.signCart({ poId: po.id, tenantId: tenantOf(po), agentId: po.agentId, intentHash: intent.hash, supplierId: sup.id, currency: "USD", amount: round(amount), lines, railHint: sup.preferredRail ?? null });
+  ev("po", po.id, "ap2.cart_signed", { mandate: cart.id, signer: cart.signerId, amount: cart.body.amount, lines: lines.length, hash: cart.hash });
+  return cart;
+}
+/** Mandates for a payment with a fresh verification result, for the payment detail page. */
+export function mandatesView(intentId: string) {
+  const pi = must(db.intents.find((x) => x.id === intentId), "payment");
+  const inv = must(db.invoices.find((i) => i.id === pi.invoiceId), "invoice");
+  const pair = AP2.currentPair(inv.poId);
+  const result = evaluateMandates(pair.intent, pair.cart, { poId: inv.poId, supplierId: inv.supplierId, currency: pi.currency, amount: pi.amount, lines: inv.extract.lines });
+  const show = (m?: AP2.SignedMandate) => m && { id: m.id, kind: m.kind, signerId: m.signerId, signerKind: m.signerKind, hash: m.hash, createdAt: m.createdAt, body: m.body, keyFingerprint: AP2.keyFingerprint(AP2.publicKeyOf(m.signerId)), signatureValid: AP2.verifySigned(m) };
+  return { intent: show(pair.intent) ?? null, cart: show(pair.cart) ?? null, ...result };
 }
 function pushPoToErp(po: PurchaseOrder, sup: Supplier) {
   const { ref, event } = erpCreatePo(po, sup, db.seq); po.erpRef = ref; erp(event); ev("po", po.id, "erp.po_created", { system: sup.erp, ref });
@@ -185,6 +209,8 @@ export function matchInvoice(invId: string) {
   inv.match = m; inv.matchStatus = m.status;
   if (m.status === "matched") {
     inv.erpApproval = "approved";
+    const pair = AP2.currentPair(po.id);
+    if (pair.intent) signCartFor(po, pair.intent, AP2.normLines(inv.extract.lines), inv.amount, supplier(po.supplierId));
     db.journals.push(tj(tenantOf(po), makeJournal(nextId("jnl"), `Invoice ${inv.number} accrued`, inv.id, [{ account: po.category === "logistics" ? "5100 Freight expense" : "1300 Inventory", debit: inv.amount }, { account: "2000 Accounts payable", credit: inv.amount }])));
     erp({ system: supplier(po.supplierId).erp, kind: "invoice.approved", at: new Date().toISOString(), payload: { invoice: inv.number, po: po.erpRef, amount: inv.amount } });
   }
@@ -237,6 +263,10 @@ export async function payInvoice(invId: string, idempotencyKey: string, opts: { 
   ev("payment", intent.id, "intent.created", { invoice: inv.id, amount: inv.amount, idempotencyKey });
   const stop = (status: "denied" | "blocked", why: string) => { mark(intent, status, "platform", why); intent.blockedReason = why; ev("payment", intent.id, `payment.${status}`, { reason: why }); save(); return { intent, replay: false }; };
   if (db.killSwitch || agent.status !== "active") return stop("denied", db.killSwitch ? "Kill switch on" : "Agent suspended");
+  const pair = AP2.currentPair(po.id);
+  const mv = evaluateMandates(pair.intent, pair.cart, { poId: po.id, supplierId: sup.id, currency: intent.currency, amount: inv.amount, lines: inv.extract.lines });
+  ev("payment", intent.id, "ap2.mandates_verified", { ok: mv.ok, intent: pair.intent?.hash ?? null, cart: pair.cart?.hash ?? null, failed: mv.checks.filter((c) => !c.pass).map((c) => c.rule) });
+  if (!mv.ok) return stop("blocked", mv.reason);
 
   const route = routePayment({ amount: inv.amount, urgency: opts.urgency ?? "standard", mandateRails: mandate.allowedRails, supplierRails: sup.acceptedRails, supplierPreferred: sup.preferredRail, supplierHasWallet: !!sup.walletAddress, supplierScreening: sup.screeningStatus, supplierCountry: so.country, candidates: await withBalances(railCandidates(TENANT, inv.amount)) });
   intent.route = route; mark(intent, "routed", "platform", route.reason);

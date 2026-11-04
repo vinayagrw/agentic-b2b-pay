@@ -168,7 +168,7 @@ export function save() { write(db); emit(); }
 /** Reload state from the current connection, used after useDb() in tests. */
 export function reload() { db = load(); return db; }
 /** Tables outside the domain object that a reset clears. Later migrations add to this list. */
-export const RESET_TABLES = ["idempotency_keys", "provider_events", "cases", "approval_rules", "agent_keys", "onboarding_tokens", "recon_exceptions", "sweeps", "api_keys", "webhook_endpoints", "webhook_deliveries", "events"];
+export const RESET_TABLES = ["idempotency_keys", "provider_events", "cases", "approval_rules", "agent_keys", "onboarding_tokens", "recon_exceptions", "sweeps", "api_keys", "webhook_endpoints", "webhook_deliveries", "events", "purchase_mandates"];
 export function reset(fresh: Db = seed()) {
   db = fresh;
   const have = new Set((sql.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map((r) => r.name));
