@@ -392,12 +392,13 @@ export async function buildApp() {
     reply.hijack();
     reply.raw.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
     const send = (event: string, data: unknown) => reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const ac = new AbortController(); reply.raw.on("close", () => ac.abort()); let streamed = false;
     try {
-      const r = await CP.ask(p.ctx, p.question, (s) => send(s.event, s.data), { threadId: p.threadId });
-      for (const w of r.answer.match(/\S+\s*/g) ?? []) send("token", { text: w });
+      const r = await CP.ask(p.ctx, p.question, (s) => { if (s.event === "token") streamed = true; send(s.event, s.data); }, { threadId: p.threadId, signal: ac.signal, stream: true });
+      if (!streamed) for (const w of r.answer.match(/\S+\s*/g) ?? []) send("token", { text: w });
       send("done", r);
-    } catch (e: any) { send("failed", { error: String(e.message ?? e) }); }
-    reply.raw.end();
+    } catch (e: any) { if (!ac.signal.aborted) send("failed", { error: String(e.message ?? e) }); }
+    if (!reply.raw.writableEnded) reply.raw.end();
   });
   app.get("/payments/:id/why", async (req: any) => X.explainPayment(req.params.id, scopeOf(req)));
   app.get("/payments/:id/why/export.json", async (req: any, reply) => { const w = X.explainPayment(req.params.id, scopeOf(req)); return reply.header("content-disposition", `attachment; filename="why-${w.paymentId}.json"`).send({ ...w, records: S.evidenceView(undefined, null).records.filter((e) => [w.paymentId, w.poId, w.invoiceId].includes(e.subjectId)) }); });

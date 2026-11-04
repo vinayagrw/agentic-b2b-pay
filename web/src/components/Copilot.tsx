@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Bot, Camera, Database, Download, Gift, History, Mic, MicOff, Pencil, Plus, Search, Send, ShieldAlert, Sun, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { Bot, Camera, Database, Download, Gift, History, Mic, MicOff, Pencil, Plus, RotateCcw, Search, Send, Square, ShieldAlert, Sun, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { api, useAct } from "../lib/api";
 import { useStream } from "../lib/stream";
 import { foldStream, recordFromPath, snapProblem, speechCtor, SNAP_TYPES, TOOL_NAMES, type Answer, type Chart, type Offer, type Proposal, type Thread } from "../lib/copilot";
@@ -26,8 +26,9 @@ export function CopilotPanel({ open, onClose, seed }: { open: boolean; onClose: 
     if (!open) return;
     api<{ questions: string[] }>(`/copilot/suggest?route=${encodeURIComponent(route)}&recordId=${encodeURIComponent(recordId ?? "")}`).then((r) => setSuggest(r.questions)).catch(() => setSuggest([]));
   }, [open, route, recordId]);
-  const ask = async (text: string) => {
+  const ask = async (text: string, replace = false) => {
     const t = text.trim(); if (!t || url) return;
+    if (replace) setHistory((h) => h.slice(0, -1));
     setErr(""); setQ(""); setVoice(false); setAsked(t); setView("chat"); stream.clear();
     try { const { id } = await api<{ id: string }>("/copilot/ask", { question: t, threadId, route, recordId, voice }); setUrl(`/api/copilot/stream/${id}`); } catch (e: any) { setErr(e.message); setAsked(""); }
   };
@@ -38,13 +39,16 @@ export function CopilotPanel({ open, onClose, seed }: { open: boolean; onClose: 
   }, [f.done, f.failed]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [history.length, f.text]);
   const openThread = async (id: string) => { try { const t = await api<Thread>(`/copilot/threads/${id}`); setHistory(t.answers ?? []); setThreadId(t.id); setView("chat"); } catch (e: any) { setErr(e.message); } };
+  const stop = () => { setUrl(null); if (asked) setQ(asked); setAsked(""); stream.clear(); };
+  const last = history[history.length - 1];
+  const edit = () => { if (!last) return; setQ(last.question); setHistory((h) => h.slice(0, -1)); };
   const fresh = () => { setHistory([]); setThreadId(null); setView("chat"); setErr(""); };
   return <SlidePanel open={open} onClose={onClose} width={560} title={<span className="flex items-center gap-2"><Bot size={15} aria-hidden />Copilot</span>} description={recordId ? `Looking at ${recordId}` : "Ask about spend, payments, suppliers, approvals, ledger and FX"}
     footer={<form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); ask(q); }}>
       <SnapButton disabled={!!url} onDraft={(d) => setSnaps((x) => [...x, d])} onError={setErr} />
       <MicButton disabled={!!url} onText={(t) => { setQ(t); setVoice(true); }} />
       <Input aria-label="Ask the copilot" value={q} onChange={(e) => { setQ(e.target.value); if (!e.target.value) setVoice(false); }} placeholder={recordId ? `Ask about ${recordId} or anything else` : "Ask about spend, approvals, ledger or FX"} disabled={!!url} className="flex-1" />
-      <Button type="submit" variant="primary" disabled={!!url || !q.trim()} aria-label="Send question"><Send size={14} /></Button></form>}>
+      {url ? <Button type="button" variant="outline" onClick={stop} aria-label="Stop answer" title="Stop"><Square size={14} /></Button> : <Button type="submit" variant="primary" disabled={!q.trim()} aria-label="Send question"><Send size={14} /></Button>}</form>}>
     <div className="flex flex-wrap items-center gap-1.5">
       <Button size="sm" variant={view === "chat" ? "primary" : "outline"} onClick={() => setView("chat")}>Chat</Button>
       <Button size="sm" variant={view === "threads" ? "primary" : "outline"} onClick={() => setView("threads")}><History size={13} aria-hidden className="mr-1" />Threads</Button>
@@ -57,6 +61,7 @@ export function CopilotPanel({ open, onClose, seed }: { open: boolean; onClose: 
         <span className="text-[11px] font-medium uppercase tracking-wide text-muted">Suggested for this page</span>
         <div className="flex flex-wrap gap-1.5">{suggest.map((s) => <button key={s} onClick={() => ask(s)} className="rounded-full border border-border px-2.5 py-1 text-left text-xs hover:bg-subtle">{s}</button>)}</div></div>}
       {history.map((a) => <Turn key={a.id} a={a} onClose={onClose} />)}
+      {last && !url && <div className="flex justify-end gap-1.5"><Button size="sm" variant="outline" onClick={edit}><Pencil size={13} aria-hidden className="mr-1" />Edit question</Button><Button size="sm" variant="outline" onClick={() => ask(last.question, true)}><RotateCcw size={13} aria-hidden className="mr-1" />Regenerate</Button></div>}
       {snaps.map((d) => <SnapCard key={d.id} d={d} />)}
       {asked && <div className="flex flex-col gap-2" aria-live="polite">
         <Bubble me>{asked}</Bubble>
