@@ -27,6 +27,14 @@ const DIGEST = "What changed today?";
 const num = (n: number) => (Math.abs(n) >= 1000 ? n.toLocaleString("en-US", { maximumFractionDigits: 0 }) : String(Math.round(n * 100) / 100));
 
 /** Copilot chat in a slide panel. It knows the page you are on, keeps threads on the server, and only proposes actions that need your click. */
+const CHART_SAMPLES = [
+  "Show spend by supplier by month as a line chart",
+  "Payments by rail this quarter as a donut",
+  "Invoices by status as a stacked bar",
+  "Payment count by week for the last 30 days as an area chart",
+  "Top suppliers by amount as a table",
+];
+
 export function CopilotPanel({ open, onClose, seed }: { open: boolean; onClose: () => void; seed?: string }) {
   const loc = useLocation(); const route = loc.pathname; const recordId = recordFromPath(route);
   const [q, setQ] = useState(""); const [url, setUrl] = useState<string | null>(null);
@@ -82,7 +90,9 @@ export function CopilotPanel({ open, onClose, seed }: { open: boolean; onClose: 
       <p className="text-xs text-muted">Answers use read-only tools on your tenant only. The copilot can suggest an action, but nothing happens until you click it, and the normal permission and approval checks still apply.</p>
       {!history.length && !asked && <div className="flex flex-col gap-1.5" aria-label="Suggested questions">
         <span className="text-[11px] font-medium uppercase tracking-wide text-muted">Suggested for this page</span>
-        <div className="flex flex-wrap gap-1.5">{suggest.map((s) => <button key={s} onClick={() => ask(s)} className="rounded-full border border-border px-2.5 py-1 text-left text-xs hover:bg-subtle">{s}</button>)}</div></div>}
+        <div className="flex flex-wrap gap-1.5">{suggest.map((s) => <button key={s} onClick={() => ask(s)} className="rounded-full border border-border px-2.5 py-1 text-left text-xs hover:bg-subtle">{s}</button>)}</div>
+        <span className="mt-2 text-[11px] font-medium uppercase tracking-wide text-muted">Try a chart</span>
+        <div className="flex flex-wrap gap-1.5" aria-label="Chart samples">{CHART_SAMPLES.map((s) => <button key={s} onClick={() => ask(s)} className="rounded-full border border-dashed border-border px-2.5 py-1 text-left text-xs hover:bg-subtle">{s}</button>)}</div></div>}
       {history.map((a) => <Turn key={a.id} a={a} onClose={onClose} />)}
       {last && !url && <div className="flex justify-end gap-1.5"><Button size="sm" variant="outline" onClick={edit}><Pencil size={13} aria-hidden className="mr-1" />Edit question</Button><Button size="sm" variant="outline" onClick={() => ask(last.question, true)}><RotateCcw size={13} aria-hidden className="mr-1" />Regenerate</Button></div>}
       {snaps.map((d) => <SnapCard key={d.id} d={d} />)}
