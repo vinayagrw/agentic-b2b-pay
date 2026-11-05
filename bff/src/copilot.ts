@@ -18,6 +18,7 @@ import * as W from "./workspace.js";
 import * as T from "./tables.js";
 import { z } from "zod";
 import * as SK from "./skills.js";
+import * as CARDS from "./cards.js";
 
 export type Source = { tool: string; ids: string[]; links: { id: string; href: string }[] };
 export type ToolResult = { tool: string; args: Record<string, string>; summary: string; rows: unknown[]; source: Source; error?: string };
@@ -51,6 +52,12 @@ export const TOOLS: Tool[] = [
     const rows = [...by.values()].sort((a, b) => b.total - a.total);
     const summary = rows.length ? rows.slice(0, 5).map((r) => `${r.supplier} ${money(r.total)} over ${r.payments.length} payment${r.payments.length === 1 ? "" : "s"}`).join(", ") : "No settled spend yet";
     return { summary, rows, source: src("spendBySupplier", rows.flatMap((r) => r.payments.slice(0, 3).map((id) => ({ id, href: `${c.prefix}/payments/${id}` })))) };
+  } },
+  { name: "cardSpend", description: "Virtual cards with type, status, owner, limit, spent and remaining this period, plus approved and declined authorizations", args: [], run: (c) => {
+    const tenants = c.scope ? [c.scope] : P.listTenants().filter((t) => t.kind === "client").map((t) => t.id);
+    const rows = tenants.flatMap((t) => CARDS.listCards(t).map((k) => { const au = CARDS.authsFor(t, k.id); return { cardId: k.id, label: k.label, type: k.typeText, status: k.status, owner: k.owner, last4: k.last4, limit: k.limit, spent: k.spent, remaining: k.remaining, currency: k.currency, approved: au.filter((a) => a.approved).length, declined: au.filter((a) => !a.approved).length }; }));
+    const summary = rows.length ? rows.slice(0, 6).map((r) => `${r.label} (${r.type}, ${r.status}) spent ${money(r.spent)} of ${money(r.limit)}`).join(", ") : "No virtual cards yet";
+    return { summary, rows, source: src("cardSpend", rows.slice(0, 6).map((r) => ({ id: r.cardId, href: c.prefix === "/app" ? `/app/cards/${r.cardId}` : "/operator/payments" }))) };
   } },
   { name: "paymentsByStatus", description: "Count and total of payments per status", args: [], run: (c) => {
     const st = scoped(c.scope);
@@ -283,7 +290,8 @@ export function mockPlan(q: string, c: Partial<Ctx> = {}): { name: string; args:
   if (/draft.*(rule|policy)|(rule|policy).*draft|approval rule|polic/.test(s)) add("approvalRules");
   if (/risk|fraud|flagged|suspicious/.test(s) && !plan.some((p) => p.name === "riskScore")) add("riskInbox");
   if (/forecast|runway|cash flow|next (week|month)|upcoming/.test(s)) add("cashForecast");
-  if (/mandate|limit|agent/.test(s) && !/pause|suspend|resume/.test(s)) add("mandates");
+  if (/\bcards?\b|card spend|virtual card/.test(s)) add("cardSpend");
+  if (/mandate|limit|agent/.test(s) && !plan.some((p) => p.name === "cardSpend") && !/pause|suspend|resume/.test(s)) add("mandates");
   if (/lock/.test(s)) add("fxLocksAndRates");
   if (op && /tenant|client|customer/.test(s)) add("tenants");
   if (op && /toggle|sandbox|live mode|rail setting/.test(s)) add("railToggles");

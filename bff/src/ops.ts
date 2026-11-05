@@ -11,6 +11,7 @@ import { callClaude, cleanText } from "./llm.js";
 import * as P from "./platform.js";
 import * as S from "./service.js";
 import * as W from "./workspace.js";
+import * as CARDS from "./cards.js";
 
 const ev = (t: string, id: string, e: string, p: unknown) => appendEvidence(db.evidence, t, id, e, p);
 const now = () => new Date().toISOString();
@@ -81,6 +82,12 @@ export function runRecon(tenantId: string, at = new Date()) {
     rows.push({ settlementId: st.id, intentId: pi.id, rail: st.rail, providerRef: st.railRef, txHash: st.txHash, amount: pi.amount, journalId: j?.id ?? null, journalAmount: j ? amt : null, status });
     if (status === "unmatched") add({ id: `unmatched:${st.id}`, kind: "unmatched", ref: st.id, intentId: pi.id, title: `Settlement ${st.id} has no ledger journal`, expected: pi.amount, actual: null });
     if (status === "amount_mismatch") add({ id: `amount_mismatch:${st.id}`, kind: "amount_mismatch", ref: st.id, intentId: pi.id, title: `Journal ${j!.id} posts ${amt.toFixed(2)} for a ${pi.amount.toFixed(2)} settlement`, expected: pi.amount, actual: amt });
+  }
+  // Card captures: each approved authorization must have its capture journal.
+  for (const r of CARDS.reconRows(tenantId)) {
+    rows.push(r);
+    if (r.status === "unmatched") add({ id: `unmatched:${r.settlementId}`, kind: "unmatched", ref: r.settlementId, intentId: null, title: `Card capture ${r.settlementId} has no ledger journal`, expected: r.amount, actual: null });
+    if (r.status === "amount_mismatch") add({ id: `amount_mismatch:${r.settlementId}`, kind: "amount_mismatch", ref: r.settlementId, intentId: null, title: `Card capture ${r.settlementId} journal posts ${r.journalAmount} for ${r.amount}`, expected: r.amount, actual: r.journalAmount });
   }
   const orphans = sql.prepare("SELECT provider, event_id, type, received_at FROM provider_events WHERE intent_id IS NULL AND type LIKE 'payment_intent.%'").all() as any[];
   for (const o of orphans) if (tenantId === "tnt-acme") add({ id: `unmatched:${o.provider}:${o.event_id}`, kind: "unmatched", ref: o.event_id, intentId: null, title: `${o.provider} webhook ${o.type} matches no payment`, expected: null, actual: null });

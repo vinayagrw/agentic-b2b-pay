@@ -38,6 +38,7 @@ import rateLimit from "@fastify/rate-limit";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import * as SP from "./sparky.js";
 import * as CH from "./chatops.js";
+import * as CARDS from "./cards.js";
 import { buildMcpServer } from "./mcp.js";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -121,7 +122,7 @@ export async function buildApp() {
   });
   const b = (req: any) => (req.body ?? {}) as any;
   // Every route needs a signed-in user unless listed as public. Each route maps to one permission, checked here by requirePermission.
-  const PUBLIC = new Set(["/health", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle", "/mcp", "/integrations/slack/actions", "/integrations/teams/actions"]);
+  const PUBLIC = new Set(["/health", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle", "/webhooks/stripe-issuing", "/mcp", "/integrations/slack/actions", "/integrations/teams/actions"]);
   const ROUTE_PERMS: Record<string, I.Permission> = {
     "POST /reset": "platform.reset", "POST /kill-switch": "agents.manage", "POST /agents": "agents.manage", "POST /agents/:id/verify": "agents.manage", "POST /agents/:id/suspend": "agents.manage", "POST /agents/:id/resume": "agents.manage",
     "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /refunds": "payments.refund",
@@ -138,7 +139,7 @@ export async function buildApp() {
     "GET /cases/:id/evidence-pack": "audit.read", "GET /payments/:id/why/export.json": "audit.read", "GET /payments/:id/why/export.md": "audit.read",
     "GET /identity/configs": "identity.manage", "POST /identity/configs": "identity.manage", "GET /iam/users": "roles.manage", "GET /iam/roles": "roles.manage", "POST /iam/roles": "roles.manage", "PUT /iam/roles/:id": "roles.manage", "DELETE /iam/roles/:id": "roles.manage", "POST /iam/users/:id/role": "roles.manage",
     "POST /sessions/:id/revoke": "workspace.read", "POST /risk/:paymentId/decide": "risk.review", "POST /views": "workspace.read", "DELETE /views/:id": "workspace.read", "GET /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens/:id/revoke": "developers.keys",
-    "POST /copilot/outcome": "workspace.read", "POST /copilot/skills/:slug": "workspace.read", "POST /workspace/suppliers/:id/portal-link": "suppliers.invite", "GET /ops/agent-view": "treasury.read", "GET /ops/copilot-metrics": "treasury.read", "GET /ops/offers": "treasury.read", "POST /ops/offers/:tenantId": "settings.live_toggle",
+    "POST /copilot/outcome": "workspace.read", "POST /copilot/skills/:slug": "workspace.read", "POST /workspace/suppliers/:id/portal-link": "suppliers.invite", "GET /ops/agent-view": "treasury.read", "GET /ops/copilot-metrics": "treasury.read", "GET /ops/offers": "treasury.read", "POST /ops/offers/:tenantId": "settings.live_toggle", "POST /cards/:id/decide": "payments.approve",
   };
   /** The permission a route needs. Developer routes need developers.keys, other reads need workspace.read, other writes need flow.operate. */
   const permFor = (method: string, url: string): I.Permission => ROUTE_PERMS[`${method} ${url}`] ?? (url.startsWith("/dev/") ? "developers.keys" : method === "GET" ? "workspace.read" : "flow.operate");
@@ -484,6 +485,16 @@ export async function buildApp() {
     if (src === "slack" && (CH.slackLive() || CH.slackSigningOn())) throw new P.AuthError(401, "Slack buttons must come from Slack");
     return CH.act(src, token, String(x.chatUserId ?? ""));
   });
+  // Virtual cards. Test mode only. No route returns a full card number or CVC.
+  app.get("/cards", async (req) => { const { t } = ctx(req); return { cards: CARDS.listCards(t), issuer: await CARDS.issuerInfo(), stepUpThresholdUsd: SU.thresholdUsd() }; });
+  app.post("/cards", async (req: any) => { const { u, t } = ctx(req); return CARDS.issueCard(u, t, req.sessionId ?? null, b(req)); });
+  app.get("/cards/:id", async (req: any) => { const { t } = ctx(req); return CARDS.cardDetail(t, req.params.id); });
+  app.post("/cards/:id/decide", async (req: any) => { const { u, t } = ctx(req); return CARDS.decideIssue(u, t, req.sessionId ?? null, req.params.id, !!b(req).approve); });
+  app.post("/cards/:id/limit", async (req: any) => { const { u, t } = ctx(req); return CARDS.changeLimit(u, t, req.sessionId ?? null, req.params.id, Number(b(req).limit)); });
+  app.post("/cards/:id/reveal", async (req: any) => { const { u, t } = ctx(req); return CARDS.reveal(u, t, req.sessionId ?? null, req.params.id); });
+  app.post("/cards/:id/simulate", async (req: any) => { const { u, t } = ctx(req); return CARDS.simulate(u, t, req.params.id, b(req)); });
+  app.post("/cards/:id/:action", async (req: any) => { const { u, t } = ctx(req); const a = req.params.action; if (!["freeze", "unfreeze", "cancel"].includes(a)) throw new S.HttpError(404, "unknown action"); return CARDS.setState(u, t, req.params.id, a); });
+  app.post("/webhooks/stripe-issuing", async (req: any, reply) => reply.header("Stripe-Version", "2024-06-20").send(CARDS.stripeWebhook(req.rawBody ?? Buffer.alloc(0), req.headers)));
   app.get("/ops/offers", async (req) => { if (!P.isOperator(who(req))) throw new P.AuthError(403, "Operators only"); return SP.offerSettings(); });
   app.post("/ops/offers/:tenantId", async (req: any) => SP.setOffers(who(req), req.params.tenantId, !!b(req).enabled));
   app.get("/supplier-portal/:token", async (req: any) => ({ ...SP.supplierData(req.params.token), suggest: SP.SUPPLIER_SUGGEST }));

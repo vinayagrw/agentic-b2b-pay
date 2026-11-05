@@ -1,6 +1,7 @@
 import { db, scoped, tenantOf, type PaymentIntent } from "./modules/store.js";
 import * as P from "./platform.js";
 import * as S from "./service.js";
+import * as CARDS from "./cards.js";
 import { allAdapters, railReadiness } from "./rails/index.js";
 
 /** Step state on the flow diagram. All derived from stored records, never guessed. */
@@ -100,10 +101,12 @@ export type TxQuery = { status?: string; rail?: string; tenant?: string; from?: 
 /** Payments as table rows with filters, search and sort. */
 export function transactions(scope: string | null, f: TxQuery = {}) {
   const d = scoped(scope); const tenants = new Map(P.listTenants().map((t) => [t.id, t.name]));
-  let rows = d.intents.map((i) => {
+  let rows: { id: string; kind: string; createdAt: string; status: string; amount: number; rail: string; env: string; tenantId: string; tenant: string; supplier: string; invoice: string; providerRef: string; reason: string }[] = d.intents.map((i) => {
     const inv = db.invoices.find((x) => x.id === i.invoiceId); const sup = inv && db.suppliers.find((s) => s.id === inv.supplierId);
     return { id: i.id, kind: i.kind ?? "payment", createdAt: i.createdAt ?? "", status: i.status, amount: i.amount, rail: i.rail ?? i.route?.rail ?? "", env: i.env ?? "", tenantId: tenantOf(i), tenant: tenants.get(tenantOf(i)) ?? tenantOf(i), supplier: sup?.name ?? "", invoice: inv?.number ?? "", providerRef: i.providerRef ?? "", reason: i.blockedReason ?? "" };
   });
+  // Card authorizations and captures from virtual cards.
+  rows = [...rows, ...CARDS.txRows(scope)];
   const num = (v: unknown) => (v === undefined || v === "" ? null : Number(v));
   const min = num(f.min), max = num(f.max);
   if (f.status) { const set = new Set(String(f.status).split(",")); rows = rows.filter((r) => set.has(r.status)); }
