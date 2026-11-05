@@ -140,8 +140,13 @@ export function createPo(draft: PoDraft, agentId?: string) {
   if (po.status !== "rejected") issueMandates(po, mandate, sup);
   if (po.status === "approved") publish(tenantId, "purchase_order.approved", { id: po.id, total });
   if (po.status === "approved") pushPoToErp(po, sup);
-  save(); return po;
+  save();
+  if (po.status === "pending_approval") for (const f of pendingSinks) { try { f(po); } catch { /* a notifier must not break the order path */ } }
+  return po;
 }
+/** Listeners told when a new order waits for approval, used by chat notifications. */
+const pendingSinks: ((po: PurchaseOrder) => void)[] = [];
+export const onPendingApproval = (f: (po: PurchaseOrder) => void) => { pendingSinks.push(f); };
 /** AP2: the authorising user signs the Intent, the buyer agent signs the Cart. Keys stay server side. */
 function issueMandates(po: PurchaseOrder, mandate: import("./modules/store.js").Mandate, sup: Supplier) {
   const exp = Math.min(Date.now() + 30 * 864e5, new Date(mandate.validTo).getTime());

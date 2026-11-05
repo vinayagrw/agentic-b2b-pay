@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS tenant_chat (tenant_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, slack INTEGER NOT NULL DEFAULT 1, teams INTEGER NOT NULL DEFAULT 1, updated_by TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS chat_identities (provider TEXT NOT NULL, external_id TEXT NOT NULL, user_id TEXT NOT NULL, tenant_id TEXT NOT NULL, display_name TEXT, linked_at TEXT NOT NULL, PRIMARY KEY (provider, external_id));
+CREATE TABLE IF NOT EXISTS chat_messages (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, po_id TEXT NOT NULL, provider TEXT NOT NULL, delivery TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', state_text TEXT, acted_by TEXT, acted_at TEXT, card TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS chat_messages_tenant ON chat_messages (tenant_id, created_at);
+CREATE TABLE IF NOT EXISTS chat_action_tokens (token_hash TEXT PRIMARY KEY, message_id TEXT NOT NULL, po_id TEXT NOT NULL, action TEXT NOT NULL, provider TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL);

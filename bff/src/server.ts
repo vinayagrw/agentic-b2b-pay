@@ -37,6 +37,7 @@ import * as LV from "./live.js";
 import rateLimit from "@fastify/rate-limit";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import * as SP from "./sparky.js";
+import * as CH from "./chatops.js";
 import { buildMcpServer } from "./mcp.js";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -62,7 +63,7 @@ export async function buildApp() {
     try { done(null, JSON.parse(body.toString("utf8"))); } catch (e: any) { e.statusCode = 400; done(e, undefined); }
   });
   // SAML posts the response as a form.
-  app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body: string, done) => done(null, Object.fromEntries(new URLSearchParams(body))));
+  app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (req: any, body: string, done) => { req.rawBody = body; done(null, Object.fromEntries(new URLSearchParams(body))); });
   await app.register(cookie, { secret: config.SESSION_SECRET });
   // Rate limits: per API key for bearer calls, per session for the browser, per IP otherwise.
   const bearerOf = (req: any) => /^Bearer (\S+)$/.exec(String(req.headers?.authorization ?? ""))?.[1];
@@ -120,7 +121,7 @@ export async function buildApp() {
   });
   const b = (req: any) => (req.body ?? {}) as any;
   // Every route needs a signed-in user unless listed as public. Each route maps to one permission, checked here by requirePermission.
-  const PUBLIC = new Set(["/health", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle", "/mcp"]);
+  const PUBLIC = new Set(["/health", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle", "/mcp", "/integrations/slack/actions", "/integrations/teams/actions"]);
   const ROUTE_PERMS: Record<string, I.Permission> = {
     "POST /reset": "platform.reset", "POST /kill-switch": "agents.manage", "POST /agents": "agents.manage", "POST /agents/:id/verify": "agents.manage", "POST /agents/:id/suspend": "agents.manage", "POST /agents/:id/resume": "agents.manage",
     "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /refunds": "payments.refund",
@@ -466,6 +467,23 @@ export async function buildApp() {
   app.post("/workspace/suppliers/:id/portal-link", async (req: any) => { const { u, t } = ctx(req); return SP.createPortalLink(u, t, req.params.id); });
   app.get("/ops/agent-view", async (req) => { if (!P.isOperator(who(req))) throw new P.AuthError(403, "Operators only"); return SP.opsView(); });
   app.get("/ops/copilot-metrics", async (req) => { if (!P.isOperator(who(req))) throw new P.AuthError(403, "Operators only"); return SP.adoptionMetrics(); });
+  // Chat approvals: settings, mock outbox, linked identities and the inbound action endpoints.
+  app.get("/integrations/chat/settings", async (req) => CH.settings(ctx(req).t));
+  app.post("/integrations/chat/settings", async (req) => { const { u, t } = ctx(req); const x = b(req); return CH.setSettings(u, t, { enabled: x.enabled, slack: x.slack, teams: x.teams }); });
+  app.get("/integrations/chat/outbox", async (req) => ({ messages: CH.outbox(ctx(req).t), settings: CH.settings(ctx(req).t) }));
+  app.get("/integrations/chat/identities", async (req) => ({ identities: CH.identities(ctx(req).t) }));
+  app.post("/integrations/slack/actions", async (req: any, reply) => {
+    if (!CH.slackSigningOn() || !CH.verifySlack(String(req.rawBody ?? ""), req.headers)) return reply.status(401).send({ error: "bad signature" });
+    let payload: any; try { payload = JSON.parse(String(b(req).payload ?? "")); } catch { return reply.status(400).send({ error: "bad payload" }); }
+    return CH.slackAction(payload);
+  });
+  // Teams Workflows forwards the card data and the responder id. Slack tokens are accepted here only in mock mode, for the preview page.
+  app.post("/integrations/teams/actions", async (req: any) => {
+    const x = b(req); const token = String(x.token ?? ""); let src: CH.Provider = "teams";
+    try { src = CH.checkToken(token).provider; } catch { /* act reports the token error */ }
+    if (src === "slack" && (CH.slackLive() || CH.slackSigningOn())) throw new P.AuthError(401, "Slack buttons must come from Slack");
+    return CH.act(src, token, String(x.chatUserId ?? ""));
+  });
   app.get("/ops/offers", async (req) => { if (!P.isOperator(who(req))) throw new P.AuthError(403, "Operators only"); return SP.offerSettings(); });
   app.post("/ops/offers/:tenantId", async (req: any) => SP.setOffers(who(req), req.params.tenantId, !!b(req).enabled));
   app.get("/supplier-portal/:token", async (req: any) => ({ ...SP.supplierData(req.params.token), suggest: SP.SUPPLIER_SUGGEST }));

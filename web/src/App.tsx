@@ -17,6 +17,7 @@ const IAM = { IdentityPage: lz(iam, (m) => m.IdentityPage), RolesPage: lz(iam, (
 const FlowPage = lz(tx, (m) => m.FlowPage); const TransactionsPage = lz(tx, (m) => m.TransactionsPage);
 const EntityLedgerPage = lz(() => import("./pages/entities"), (m) => m.EntityLedgerPage);
 const SupplierPortal = lz(() => import("./pages/sparky"), (m) => m.SupplierPortal);
+const ChatApprovals = lz(() => import("./pages/chat"), (m) => m.ChatApprovals);
 const RiskInbox = lz(() => import("./pages/risk"), (m) => m.RiskInboxPage);
 export const PageSkeleton = () => <div className="flex flex-col gap-4" aria-busy="true" aria-label="Loading page"><Skeleton className="h-7 w-48" /><div className="rounded-xl border border-border bg-surface"><SkeletonTable rows={6} cols={5} /></div></div>;
 const S = (el: React.ReactNode) => <Suspense fallback={<PageSkeleton />}>{el}</Suspense>;
@@ -44,7 +45,7 @@ export function App() {
     </Route>
     <Route path="/app" element={<Gate kind="client" />}>
       <Route index element={S(<C.ClientHome />)} /><Route path="purchase-orders" element={S(<C.PurchaseOrders />)} /><Route path="invoices" element={S(<C.Invoices />)} />
-      <Route path="approvals" element={S(<C.Approvals />)} /><Route path="risk" element={S(<RiskInbox />)} /><Route path="agents" element={S(<C.Agents />)} /><Route path="suppliers" element={S(<C.Suppliers />)} />
+      <Route path="approvals" element={S(<C.Approvals />)} /><Route path="chat-approvals" element={S(<ChatApprovals />)} /><Route path="risk" element={S(<RiskInbox />)} /><Route path="agents" element={S(<C.Agents />)} /><Route path="suppliers" element={S(<C.Suppliers />)} />
       <Route path="payments" element={S(<C.Payments />)} /><Route path="payments/:id" element={S(<FlowPage />)} /><Route path="transactions" element={S(<TransactionsPage operator={false} />)} /><Route path="rules" element={S(<C.Rules />)} /><Route path="ledger" element={S(<EntityLedgerPage />)} /><Route path="developers" element={S(<O.Developers />)} /><Route path="roles" element={S(<IAM.RolesPage />)} /><Route path="sessions" element={S(<IAM.SessionsPage />)} />
     </Route>
     <Route path="*" element={<Navigate to="/" replace />} />
