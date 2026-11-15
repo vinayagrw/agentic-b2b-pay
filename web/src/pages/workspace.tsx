@@ -213,7 +213,7 @@ function SupplierRow({ s, me }: { s: any; me: any }) {
   return <li className="px-4 py-3">
     <div className="flex flex-wrap items-center gap-3"><div className="min-w-0 flex-1"><div className="font-medium">{s.name}</div><Muted>{s.id} . {s.acceptedRails.length ? s.acceptedRails.map((r: Rail) => RAIL_LABEL[r]).join(", ") : "No payout method yet"}</Muted></div>
       <Badge v={s.status} tone={s.status === "verified" ? "ok" : s.status === "rejected" ? "bad" : s.status === "submitted" ? "primary" : "warn"} />
-      {s.pendingChanges.length > 0 && <Badge v={`${s.pendingChanges.length} payee change waiting`} tone="warn" />}
+      {s.pendingBankChanges > 0 && <Badge v={`${s.pendingBankChanges} bank change waiting`} tone="warn" />}
       {["client_admin", "ap_clerk"].includes(role) && <Button size="sm" variant="ghost" disabled={busy} onClick={async () => { const r = await run(() => api(`/workspace/suppliers/${s.id}/portal-link`, {})); if (r) setLink(`${location.origin}${r.link}`); }}>Portal link</Button>}
       <Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>{open ? "Close" : "Details"}</Button></div>
     {link && !open && <div className="mt-2"><Reveal secret={link} what="supplier portal link" onDone={() => setLink("")} /></div>}
@@ -235,8 +235,6 @@ function SupplierRow({ s, me }: { s: any; me: any }) {
       {s.status === "verified" && can(me, "suppliers.payee_change") && <div className="flex flex-col gap-2"><div><Button size="sm" variant={change === "bank" ? "primary" : "outline"} onClick={() => setChange(change === "bank" ? "" : "bank")}>Change bank details</Button></div>
         {change === "bank" && <BankChangeForm supplierId={s.id} onDone={() => setChange("")} />}</div>}
       <BankChangesWaiting supplierId={s.id} />
-      {s.pendingChanges.map((c: any) => <div key={c.id} className="flex flex-wrap items-center gap-2 text-xs"><Badge v="waiting for checker" tone="warn" />{c.payload.field === "bank" ? `Bank ending ${c.payload.bank.last4}` : <Mono>{c.payload.wallet.address}</Mono>}<Muted>requested by {c.requestedBy}</Muted>
-        {role === "approver" && c.requestedBy !== me.user.id && <><Button size="sm" variant="primary" disabled={busy} onClick={() => run(() => api(`/changes/${c.id}/decide`, { approve: true }))}>Approve change</Button><Button size="sm" disabled={busy} onClick={() => run(() => api(`/changes/${c.id}/decide`, { approve: false }))}>Reject</Button></>}</div>)}
       <ErrorNote msg={error} />
     </div>}
   </li>;

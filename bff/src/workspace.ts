@@ -266,33 +266,10 @@ export function suppliersView(tenantId: string) {
   return db.suppliers.filter((s) => tenantOf(s) === tenantId).map((s) => {
     const o = s.onboarding;
     return { ...s, status: o?.status ?? "verified", onboarding: o ? { ...o, token: undefined, bank: o.bank ? { last4: o.bank.last4, bankName: o.bank.bankName, holderName: o.bank.holderName, tokenId: o.bank.tokenId } : null, wallet: o.wallet ? { address: o.wallet.address, verifiedAt: o.wallet.verifiedAt } : null } : null,
-      pendingChanges: P.listChanges("pending", tenantId).filter((c) => c.kind === "supplier.payee" && c.payload.supplierId === s.id) };
+      pendingBankChanges: (sql.prepare("SELECT COUNT(*) n FROM bank_change_requests WHERE tenant_id = ? AND supplier_id = ? AND status = 'pending'").get(tenantId, s.id) as { n: number }).n };
   });
 }
 
-/** Bank and wallet changes on a verified supplier: the maker requests, an approver checks. */
-P.registerChangeKind("supplier.payee", {
-  role: "approver",
-  validate: (p) => {
-    const s = db.suppliers.find((x) => x.id === p.supplierId); if (!s) throw new P.AuthError(404, "supplier not found");
-    if (s.onboarding && s.onboarding.status !== "verified") throw new P.AuthError(409, "Supplier is not verified yet");
-    if (p.field === "bank" && !p.bank?.tokenId) throw new P.AuthError(422, "Bank change needs a tokenized account");
-    if (p.field === "wallet" && !p.wallet?.signature) throw new P.AuthError(422, "Wallet change needs a signed ownership proof");
-    if (!["bank", "wallet"].includes(p.field)) throw new P.AuthError(422, "field must be bank or wallet");
-  },
-  apply: (p) => {
-    const s = db.suppliers.find((x) => x.id === p.supplierId)!;
-    if (p.field === "bank") { s.bankDetailsRef = p.bank.tokenId; s.acceptedRails = [...new Set([...s.acceptedRails, "stripe_ach", "stripe_card"])] as Supplier["acceptedRails"]; if (s.onboarding) s.onboarding.bank = p.bank; }
-    else { s.walletAddress = p.wallet.address; s.acceptedRails = [...new Set([...s.acceptedRails, "circle_usdc", "onchain_usdc"])] as Supplier["acceptedRails"]; if (s.onboarding) s.onboarding.wallet = p.wallet; }
-    ev("supplier", s.id, "payee.changed", { field: p.field, value: p.field === "bank" ? `bank ending ${p.bank.last4}` : p.wallet.address }); save(); return s;
-  },
-});
-export async function requestPayeeChange(user: P.User, tenantId: string, supplierId: string, input: any) {
-  const s = inTenant(db.suppliers.find((x) => x.id === supplierId), tenantId, "supplier");
-  if (input.field === "bank") { const b = Bank.parse(input.bank); return P.requestChange(user, "supplier.payee", { supplierId: s.id, field: "bank", bank: await tokenize(b) }, tenantId); }
-  if (input.field === "wallet") return P.requestChange(user, "supplier.payee", { supplierId: s.id, field: "wallet", wallet: await proveWallet(s, String(input.address ?? ""), String(input.signature ?? "")) }, tenantId);
-  throw err(422, "field must be bank or wallet");
-}
 export const walletMessageFor = (tenantId: string, supplierId: string, address: string) => {
   const s = inTenant(db.suppliers.find((x) => x.id === supplierId), tenantId, "supplier");
   if (!isAddress(address)) throw err(422, "That is not a valid wallet address"); return { message: walletMessage(s, address) };

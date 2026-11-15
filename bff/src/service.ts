@@ -630,33 +630,6 @@ export async function refund(intentId: string, amount: number, reason: string) {
   save(); return r;
 }
 
-/** Payee master data changes only via ERP adapter, four eyes and callback verification. Never from LLM output. */
-export function requestPayeeChange(input: { supplierId: string; field: "walletAddress" | "bankDetailsRef"; newValue: string; source: string; requestedBy: string }) {
-  if (input.source !== "erp") { ev("supplier", input.supplierId, "payee_change.rejected", { reason: "Source is not ERP master data", source: input.source }); save(); throw new HttpError(403, "Payee details can only change through the ERP adapter"); }
-  supplier(input.supplierId);
-  const c = { id: nextId("pc"), supplierId: input.supplierId, field: input.field, newValue: input.newValue, source: "erp" as const, requestedBy: input.requestedBy, approvals: [], callbackVerified: false, status: "pending" as const, createdAt: new Date().toISOString() };
-  db.payeeChanges.push(c); ev("supplier", c.supplierId, "payee_change.requested", c); save(); return c;
-}
-export function approvePayeeChange(id: string, approver: string) {
-  const c = must(db.payeeChanges.find((x) => x.id === id), "payee change");
-  if (c.status !== "pending") throw new HttpError(409, `Change is ${c.status}`);
-  if (approver === c.requestedBy) throw new HttpError(403, "Four eyes: requester cannot approve");
-  if (!c.approvals.includes(approver)) (c.approvals as string[]).push(approver);
-  ev("supplier", c.supplierId, "payee_change.approved", { id, approver }); tryApply(c); save(); return c;
-}
-export function callbackPayeeChange(id: string, confirmedByPhone: boolean) {
-  const c = must(db.payeeChanges.find((x) => x.id === id), "payee change");
-  c.callbackVerified = confirmedByPhone;
-  if (!confirmedByPhone) c.status = "rejected";
-  ev("supplier", c.supplierId, "payee_change.callback", { id, confirmedByPhone }); tryApply(c); save(); return c;
-}
-function tryApply(c: import("./modules/store.js").PayeeChange) {
-  if (c.status === "pending" && c.approvals.length >= 2 && c.callbackVerified) {
-    const s = supplier(c.supplierId); (s as any)[c.field] = c.newValue; c.status = "applied";
-    ev("supplier", c.supplierId, "payee_change.applied", { field: c.field });
-  }
-}
-
 export function ledgerView() {
   const settlements = db.settlements.map((s) => ({ id: s.id, paymentIntentId: s.paymentIntentId, amount: (() => { const i = db.intents.find((x) => x.id === s.paymentIntentId)!; return i.fx?.realised?.apFunctional ?? i.amount; })() }));
   return { journals: db.journals, trialBalance: trialBalance(db.journals), reconciliation: reconcile(settlements, db.journals) };

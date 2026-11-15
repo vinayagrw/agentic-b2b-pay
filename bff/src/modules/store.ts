@@ -35,10 +35,9 @@ export type Db = {
   orgs: Org[]; agents: Agent[]; mandates: Mandate[]; suppliers: Supplier[]; catalog: CatalogItem[];
   pos: PurchaseOrder[]; receipts: GoodsReceipt[]; invoices: Invoice[]; intents: PaymentIntent[];
   settlements: Settlement[]; journals: Journal[]; evidence: EvidenceRecord[]; erp: ErpEvent[];
-  payeeChanges: PayeeChange[]; refunds: RefundIntent[]; alerts: { at: string; kind: string; detail: string; tenantId?: string }[];
+  refunds: RefundIntent[]; alerts: { at: string; kind: string; detail: string; tenantId?: string }[];
   killSwitch: boolean; seq: number;
 };
-export type PayeeChange = { id: string; supplierId: string; field: "walletAddress" | "bankDetailsRef"; newValue: string; source: "erp"; requestedBy: string; approvals: string[]; callbackVerified: boolean; status: "pending" | "applied" | "rejected"; createdAt: string };
 export type RefundIntent = { id: string; originalIntentId: string; amount: number; reason: string; rail: Rail; status: "settled" | "pending" | "failed" | "rejected"; railRef?: string; txHash?: string | null; createdAt: string };
 
 export const SANCTIONED_WALLETS = ["0xBAD0000000000000000000000000000000000BAD"];
@@ -113,7 +112,7 @@ export function seed(): Db {
       { sku: "VD-VLV-HYD", supplierId: "sup-vandijk", description: "Hydraulic valve DN25", category: "components", unitPrice: 85, keywords: ["valve", "valves", "hydraulic"] },
       { sku: "FB-STL-304", supplierId: "sup-fabrikam", description: "Stainless steel sheet 304 per ton", category: "components", unitPrice: 3100, keywords: ["steel", "stainless", "sheet"] },
     ],
-    pos: [EU_PO(now), ...DUTY_POS(now)], receipts: [], invoices: [EU_INV(now)], intents: [], settlements: [], journals: [], evidence: [], erp: [], payeeChanges: [], refunds: [], alerts: [],
+    pos: [EU_PO(now), ...DUTY_POS(now)], receipts: [], invoices: [EU_INV(now)], intents: [], settlements: [], journals: [], evidence: [], erp: [], refunds: [], alerts: [],
     killSwitch: false, seq: 1000,
   };
 }
@@ -121,7 +120,7 @@ export function seed(): Db {
 export const TENANT = "tnt-acme";
 export const tenantOf = (x: { tenantId?: string } | undefined | null) => x?.tenantId ?? TENANT;
 const intentStatus = (s: PaymentIntent["status"]) => (s === "settled" || s === "pending" || s === "submitted" ? s : s === "routed" || s === "created" ? "submitted" : "failed");
-const KV_KEYS = ["orgs", "catalog", "receipts", "erp", "payeeChanges", "refunds", "alerts", "killSwitch", "seq"] as const;
+const KV_KEYS = ["orgs", "catalog", "receipts", "erp", "refunds", "alerts", "killSwitch", "seq"] as const;
 
 const LEGACY_RAIL: Record<string, Rail> = { card: "stripe_card", ach: "stripe_ach", rtp: "stripe_ach", usdc: "onchain_usdc" };
 const railOf = (r: string) => (LEGACY_RAIL[r] ?? r) as Rail;
@@ -160,7 +159,7 @@ function load(): Db {
   const k = Object.fromEntries(kv.map((r) => [r.key, JSON.parse(r.value)]));
   const rows = (t: string, order = "rowid") => (sql.prepare(`SELECT data FROM ${t} ORDER BY ${order}`).all() as { data: string }[]).map((r) => JSON.parse(r.data));
   return upgrade({
-    orgs: k.orgs ?? [], catalog: k.catalog ?? [], receipts: k.receipts ?? [], erp: k.erp ?? [], payeeChanges: k.payeeChanges ?? [], refunds: k.refunds ?? [], alerts: k.alerts ?? [],
+    orgs: k.orgs ?? [], catalog: k.catalog ?? [], receipts: k.receipts ?? [], erp: k.erp ?? [], refunds: k.refunds ?? [], alerts: k.alerts ?? [],
     killSwitch: !!k.killSwitch, seq: k.seq ?? 1000,
     agents: rows("agents"), mandates: rows("mandates"), suppliers: rows("suppliers"), pos: rows("pos"), invoices: rows("invoices"),
     intents: rows("payment_intents"), settlements: rows("rail_events"), journals: rows("journals"), evidence: rows("audit", "seq"),
@@ -215,6 +214,6 @@ export function scoped(tenantId: string | null): Db {
   const subj = new Set([...poIds, ...piIds, ...f(db.invoices).map((i) => i.id), ...f(db.agents).map((a) => a.id), ...supIds]);
   return { ...db, orgs: db.orgs.filter((o) => tenantOf(o) === tenantId || sups.some((s) => s.orgId === o.id)), agents: f(db.agents), mandates: f(db.mandates), suppliers: sups, catalog: f(db.catalog), pos,
     receipts: db.receipts.filter((r) => poIds.has(r.poId)), invoices: f(db.invoices), intents, settlements: db.settlements.filter((s) => piIds.has(s.paymentIntentId)), journals: f(db.journals),
-    evidence: db.evidence.filter((e) => subj.has(e.subjectId)), payeeChanges: db.payeeChanges.filter((c) => supIds.has(c.supplierId)), refunds: db.refunds.filter((r) => piIds.has(r.originalIntentId)), erp: db.erp, alerts: db.alerts.filter((a) => tenantOf(a) === tenantId) };
+    evidence: db.evidence.filter((e) => subj.has(e.subjectId)), refunds: db.refunds.filter((r) => piIds.has(r.originalIntentId)), erp: db.erp, alerts: db.alerts.filter((a) => tenantOf(a) === tenantId) };
 }
 export function nextId(prefix: string) { db.seq += 1; return `${prefix}-${db.seq}`; }

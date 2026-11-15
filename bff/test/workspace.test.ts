@@ -116,15 +116,6 @@ describe("supplier onboarding", () => {
     expect(s.onboarding!.status).toBe("verified"); expect(s.walletAddress).toBe(acct.address); expect(s.bankDetailsRef).toBe("btok_test_6789");
     expect(s.acceptedRails).toContain("onchain_usdc"); expect(db.mandates.find((m) => m.id === "mdt-1")!.allowedSuppliers).toContain(s.id);
   });
-  it("payee changes after verification need an approver as checker", async () => {
-    const inv = W.inviteSupplier(user("usr-clerk-pat"), "tnt-acme", { name: "Tidewater Valves", email: "ap@tidewater.example" });
-    W.saveKyb(inv.token, kyb); await W.saveBank(inv.token, { holderName: "Tidewater", routingNumber: "110000000", accountNumber: "000123456789" }); W.submitOnboarding(inv.token);
-    W.reviewSupplier(user("usr-cfo-jane"), "tnt-acme", inv.supplier.id, true);
-    const c = await W.requestPayeeChange(user("usr-clerk-pat"), "tnt-acme", inv.supplier.id, { field: "bank", bank: { holderName: "Tidewater", routingNumber: "110000000", accountNumber: "000999990001" } });
-    expect(() => P.decideChange(user("usr-cfo-jane"), c.id, true)).toThrow(/approver/);
-    P.decideChange(user("usr-controller-sam"), c.id, true);
-    expect(db.suppliers.find((s) => s.id === inv.supplier.id)!.bankDetailsRef).toBe("btok_test_0001");
-  });
   it("the public portal needs a valid token and the payment path refuses unverified suppliers", async () => {
     const app = await buildApp();
     expect((await app.inject({ url: "/onboard/not-a-token" })).statusCode).toBe(404);

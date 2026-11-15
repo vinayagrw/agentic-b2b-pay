@@ -130,13 +130,13 @@ export async function buildApp() {
   const ROUTE_PERMS: Record<string, I.Permission> = {
     "POST /reset": "platform.reset", "POST /kill-switch": "agents.manage", "POST /agents": "agents.manage", "POST /agents/:id/verify": "agents.manage", "POST /agents/:id/suspend": "agents.manage", "POST /agents/:id/resume": "agents.manage",
     "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /refunds": "payments.refund",
-    "POST /erp/vendor-master/changes": "erp.vendor_master", "POST /erp/vendor-master/changes/:id/approve": "payments.approve", "POST /erp/vendor-master/changes/:id/callback": "payments.approve",
+    "POST /erp/vendor-master/changes": "erp.vendor_master", 
     "GET /rails/balances": "rails.balances", "GET /users": "users.read", "PATCH /tenants/:id/branding": "settings.branding", "POST /tenants/:id/logo": "settings.branding",
     "POST /changes": "changes.request", "POST /copilot/ask": "workspace.read", "POST /copilot/answer": "workspace.read", "POST /copilot/threads/:id": "workspace.read", "DELETE /copilot/threads/:id": "workspace.read", "POST /copilot/feedback": "workspace.read", "POST /copilot/memories": "workspace.read", "PATCH /copilot/memories/:id": "workspace.read", "DELETE /copilot/memories/:id": "workspace.read", "DELETE /copilot/memories": "workspace.read", "DELETE /copilot/answers/:id": "workspace.read", "POST /changes/:id/decide": "changes.decide",
     "POST /workspace/agents": "agents.manage", "PUT /workspace/agents/:id/mandate": "agents.manage", "POST /workspace/agents/:id/keys": "agents.manage", "POST /workspace/agents/:id/:action": "agents.manage",
     "POST /workspace/rules": "rules.edit", "PUT /workspace/rules/:id": "rules.edit", "DELETE /workspace/rules/:id": "rules.edit", "POST /workspace/rules/order": "rules.edit",
     "POST /workspace/suppliers/invite": "suppliers.invite", "POST /workspace/suppliers/:id/link": "suppliers.invite", "POST /workspace/suppliers/:id/review": "suppliers.review", "POST /workspace/suppliers/:id/hold": "suppliers.review", "POST /workspace/suppliers/:id/terms": "suppliers.review", "POST /invoices/:id/early-pay": "changes.request",
-    "POST /workspace/suppliers/:id/payee-change": "suppliers.payee_change", "POST /workspace/suppliers/:id/wallet-message": "workspace.read",
+    "POST /workspace/suppliers/:id/wallet-message": "workspace.read",
     "GET /ops/treasury": "treasury.read", "POST /ops/treasury/sweep": "treasury.sweep", "POST /ops/recon/run": "treasury.sweep", "GET /ops/recon": "treasury.read", "POST /ops/recon/exceptions/:id/resolve": "treasury.sweep",
     "GET /ops/recon/export.csv": "treasury.read", "GET /ops/compliance": "compliance.read", "POST /ops/cases/:id/sar/draft": "compliance.case.file", "PUT /ops/cases/:id/sar": "compliance.case.file",
     "POST /ops/cases/:id/sar/file": "compliance.case.file", "POST /ops/cases/:id/close": "compliance.case.file", "GET /ops/revenue": "treasury.read", "GET /ops/sankey": "treasury.read", "GET /ops/kpis": "treasury.read", "GET /live/pulse": "treasury.read",
@@ -318,9 +318,7 @@ export async function buildApp() {
     return S.payInvoice(req.params.id, String(key), { urgency: b(req).urgency, approvers: b(req).approvers, fxLockId: b(req).fxLockId ? String(b(req).fxLockId) : undefined });
   });
   app.post("/refunds", async (req) => { const u = who(req); const pi = db.intents.find((i) => i.id === b(req).paymentIntentId); if (!pi || !P.canAccessTenant(u, pi.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "payment not found"); const r = await S.refund(pi.id, Number(b(req).amount), String(b(req).reason ?? "refund")); P.audit(u.id, "refund", r.id, "refund.requested_by", { amount: r.amount }); return r; });
-  app.post("/erp/vendor-master/changes", async (req) => S.requestPayeeChange({ ...b(req), source: b(req).source ?? "erp" }));
-  app.post("/erp/vendor-master/changes/:id/approve", async (req: any) => S.approvePayeeChange(req.params.id, String(b(req).approver)));
-  app.post("/erp/vendor-master/changes/:id/callback", async (req: any) => S.callbackPayeeChange(req.params.id, !!b(req).confirmed));
+  app.post("/erp/vendor-master/changes", async (req: any) => { const { u, t } = ctx(req); return BC.requestFromErp(u, t, b(req)); });
   app.get("/settlements/:id", async (req: any) => db.settlements.find((s) => s.id === req.params.id) ?? { error: "not found" });
   app.get("/ledger/journals", async () => S.ledgerView());
   // Legal entities and FX. A client sees only its own entities, locks and books.
@@ -369,7 +367,6 @@ export async function buildApp() {
   app.get("/terms/discounts", async (req) => { const t = scopeOf(req); return { rows: TM.discountRows(t), options: TM.payOptions(t), note: TM.SAVINGS_NOTE }; });
   app.post("/invoices/:id/early-pay", async (req: any) => { const { u, t } = ctx(req); return TM.requestEarlyPay(u, t, String(req.params.id)); });
   app.post("/workspace/suppliers/:id/hold", async (req: any) => { const { u, t } = ctx(req); return W.setSupplierHold(u, t, req.params.id, b(req).hold !== false, String(b(req).reason ?? "")); });
-  app.post("/workspace/suppliers/:id/payee-change", async (req: any) => { const { u, t } = ctx(req); return W.requestPayeeChange(u, t, req.params.id, b(req)); });
   app.post("/workspace/suppliers/:id/wallet-message", async (req: any) => { const { t } = ctx(req); return W.walletMessageFor(t, req.params.id, String(b(req).address ?? "")); });
   // Step 5: treasury, reconciliation, compliance cases. Operator console, per tenant.
   const opCtx = (req: any) => { const u = who(req); const id = String(req.query?.tenantId ?? b(req).tenantId ?? ""); const t = P.getTenant(id); if (!t || t.kind !== "client") throw new P.AuthError(422, "Pass tenantId of a business client"); if (!I.inEntityScope(u, t.id)) throw new P.AuthError(403, `${t.id} is outside your role entity scope`); return { u, t: t.id }; };

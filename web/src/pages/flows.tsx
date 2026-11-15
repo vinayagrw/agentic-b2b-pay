@@ -7,9 +7,10 @@ import { Ban, Play, ShieldAlert, Sparkles } from "lucide-react";
 import { api, useAppState, useGet, useMe, useAct } from "../lib/api";
 import { usd } from "../lib/utils";
 import { RAIL_LABEL, TARIFF_NOTE, landedCost, dutyDue, fullDuty, exclusionCovers, hasDutyFields, type Rail, type PoLine } from "@b2b/shared";
+import { BankChangesWaiting } from "../components/BankChange";
 import { Badge, Button, Card, EmptyState, ErrorNote, Input, Json, Label, Mono, Muted, Select, Table, Textarea } from "../components/ui";
 
-const EMPTY = { pos: [], invoices: [], intents: [], settlements: [], refunds: [], receipts: [], agents: [], mandates: [], suppliers: [], payeeChanges: [], alerts: [], erp: [], evidence: [], journals: [], signers: [], killSwitch: false };
+const EMPTY = { pos: [], invoices: [], intents: [], settlements: [], refunds: [], receipts: [], agents: [], mandates: [], suppliers: [], alerts: [], erp: [], evidence: [], journals: [], signers: [], killSwitch: false };
 /** The BFF scopes /state to the active client tenant. */
 export function useScopedState() {
   const q = useAppState();
@@ -116,22 +117,20 @@ export function ApprovalInbox({ st }: { st: any }) {
 }
 
 export function PayeeChanges({ st }: { st: any }) {
-  const [f, setF] = useState({ supplierId: "sup-northwind", field: "walletAddress", newValue: "0x7777000000000000000000000000000000007777", requestedBy: "usr-clerk-pat" });
-  const { run, busy, error } = useAct();
+  const [f, setF] = useState({ supplierId: "sup-northwind", holderName: "Northwind Components LLC", bankName: "Commerzbank", country: "DE", iban: "DE44500105175407324931" });
+  const { run, busy, error } = useAct(); const nav = useNavigate(); const [bump, setBump] = useState(0);
+  const send = async () => { const { supplierId, ...bank } = f; const r = await run(() => api("/erp/vendor-master/changes", { supplierId, kind: "bank", bank, channelNote: "Sent from the ERP vendor master" })); if (r) setBump(bump + 1); };
   return <Card title="Payee detail changes">
-    <Muted>Bank and wallet details only change from the ERP vendor master. Each change needs two approvers other than the requester and a phone callback.</Muted>
+    <Muted>A bank change from the ERP vendor master waits as a bank change request. A second person calls the supplier back and approves it. Payments stay on hold until the cooling-off time ends.</Muted>
     <div className="mt-3 flex flex-wrap gap-2">
       <Select value={f.supplierId} onChange={(e) => setF({ ...f, supplierId: e.target.value })}>{st.suppliers.map((s: any) => <option key={s.id}>{s.id}</option>)}</Select>
-      <Select value={f.field} onChange={(e) => setF({ ...f, field: e.target.value })}><option>walletAddress</option><option>bankDetailsRef</option></Select>
-      <Input className="min-w-60 flex-1" value={f.newValue} onChange={(e) => setF({ ...f, newValue: e.target.value })} />
-      <Button variant="primary" disabled={busy || !st.suppliers.length} onClick={() => run(() => api("/erp/vendor-master/changes", { ...f, source: "erp" }))}>Request via ERP</Button>
+      <Input value={f.holderName} onChange={(e) => setF({ ...f, holderName: e.target.value })} placeholder="Account holder" />
+      <Input className="min-w-60 flex-1" value={f.iban} onChange={(e) => setF({ ...f, iban: e.target.value.trim() })} placeholder="IBAN" />
+      <Button variant="primary" disabled={busy || !st.suppliers.length} onClick={send}>Send from ERP</Button>
+      <Button variant="outline" onClick={() => nav("/app/bank-changes")}>Open bank changes</Button>
     </div>
     <ErrorNote msg={error} />
-    {!!st.payeeChanges.length && <Table className="mt-3">{st.payeeChanges.map((c: any) => <tr key={c.id}><td><Mono>{c.id}</Mono></td><td>{c.supplierId} {c.field}</td><td><Mono>{c.newValue}</Mono></td><td>{c.approvals.length} of 2</td><td>callback <Badge v={String(c.callbackVerified)} /></td><td><Badge v={c.status} /></td>
-      <td className="flex gap-1">{c.status === "pending" && <>
-        <Button size="sm" disabled={busy} onClick={() => run(() => api(`/erp/vendor-master/changes/${c.id}/approve`, { approver: "usr-controller-sam" }))}>Approve as Sam</Button>
-        <Button size="sm" disabled={busy} onClick={() => run(() => api(`/erp/vendor-master/changes/${c.id}/approve`, { approver: "usr-treasurer-lee" }))}>Approve as Lee</Button>
-        <Button size="sm" disabled={busy} onClick={() => run(() => api(`/erp/vendor-master/changes/${c.id}/callback`, { confirmed: true }))}>Callback done</Button></>}</td></tr>)}</Table>}
+    <div className="mt-3"><BankChangesWaiting key={bump} /></div>
   </Card>;
 }
 

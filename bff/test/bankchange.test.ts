@@ -199,3 +199,16 @@ describe("supplier bank-detail change check", () => {
     expect(CP.mockPlan("any supplier bank detail changes waiting?").map((p) => p.name)).toContain("bankChanges");
   });
 });
+
+describe("ERP vendor master changes go through the bank-change check", () => {
+  it("creates a pending request with the ERP channel and applies nothing", async () => {
+    const app = await buildApp(); const jane = await login(app, "usr-cfo-jane"); const pat = await login(app, "usr-clerk-pat"); const before = northwind().bankDetailsRef;
+    const { channel, channelNote, ...rest } = bank();
+    const r = await app.inject({ method: "POST", url: "/erp/vendor-master/changes", headers: { cookie: jane }, payload: { supplierId: "sup-northwind", ...rest, channel: "email", channelNote: "Vendor master sync" } });
+    expect(r.statusCode).toBe(200); expect(r.json().status).toBe("pending"); expect(r.json().channel).toBe("erp");
+    expect(northwind().bankDetailsRef).toBe(before);
+    expect((await app.inject({ method: "POST", url: "/erp/vendor-master/changes", headers: { cookie: pat }, payload: { supplierId: "sup-northwind", ...rest } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "POST", url: `/erp/vendor-master/changes/${r.json().id}/approve`, headers: { cookie: jane }, payload: {} })).statusCode).toBe(404);
+    expect((await app.inject({ method: "POST", url: "/workspace/suppliers/sup-northwind/payee-change", headers: { cookie: pat }, payload: {} })).statusCode).toBe(404);
+  });
+});

@@ -2,7 +2,7 @@
  * Supplier bank-detail change check. A change asked for on the supplier page becomes a pending request first.
  * The old and new values are sealed. Only the last 4 characters leave this module, in the API, the UI and the evidence log.
  * One exception: an approved wallet address is written to the supplier record in full, because the pay flow needs it.
- * The older payee-change and ERP vendor-master routes do not come through here. paymentHold still holds payments for the cooling-off time after they apply a change.
+ * Changes pushed from the ERP vendor master come through here too, with the ERP channel, so they get the same call-back, cooling-off and second-person check.
  * A second person must approve with a fresh authenticator code, after a recorded call-back to the phone number on the supplier record.
  * While a request waits, and for a cooling-off time after approval, payments to that supplier are held with a clear reason.
  */
@@ -26,7 +26,7 @@ type Row = { id: string; tenant_id: string; supplier_id: string; kind: Kind; sta
 
 const DAY = 864e5;
 const now = () => new Date().toISOString();
-const CHANNEL_TEXT: Record<string, string> = { email: "Asked by email", portal: "Asked in the supplier portal", phone: "Asked by phone", other: "Asked another way" };
+const CHANNEL_TEXT: Record<string, string> = { email: "Asked by email", portal: "Asked in the supplier portal", phone: "Asked by phone", other: "Asked another way", erp: "Sent from the ERP vendor master" };
 /** Rough USD rates, only to judge if an open invoice is large. Payments use the FX module. */
 const USD_RATE: Record<string, number> = { USD: 1, EUR: 1.08, GBP: 1.27 };
 const last4 = (s: string) => s.slice(-4);
@@ -46,7 +46,7 @@ const mask = (f: Full): Masked => f.kind === "wallet"
 
 const BankInput = z.object({ holderName: z.string().trim().min(2).max(80), bankName: z.string().trim().min(2).max(80), country: z.string().trim().length(2), iban: z.string().optional(), routingNumber: z.string().optional(), accountNumber: z.string().optional() });
 export const RequestInput = z.object({ kind: z.enum(["bank", "wallet"]).default("bank"), bank: BankInput.optional(), wallet: z.object({ address: z.string().trim().regex(/^0x[0-9a-fA-F]{40}$/, "Enter a 0x wallet address") }).optional(),
-  channel: z.enum(["email", "portal", "phone", "other"]), channelNote: z.string().trim().max(500).default("") });
+  channel: z.enum(["email", "portal", "phone", "other", "erp"]), channelNote: z.string().trim().max(500).default("") });
 function fullOf(x: z.infer<typeof RequestInput>): Full {
   if (x.kind === "wallet") { if (!x.wallet) throw new BankChangeError(422, "Enter the new wallet address"); return { kind: "wallet", address: x.wallet.address }; }
   const b = x.bank; if (!b) throw new BankChangeError(422, "Enter the new bank details");
@@ -164,6 +164,12 @@ export function setPhone(u: P.User, tenantId: string, supplierId: string, raw: u
 
 // Request, call-back and decision
 
+/** A change pushed from the ERP vendor master. It becomes a normal pending request with the ERP channel. */
+export function requestFromErp(u: P.User, tenantId: string, raw: any) {
+  I.requirePermission(u, "erp.vendor_master", { tenantId });
+  return request(u, tenantId, String(raw?.supplierId ?? ""), { ...raw, channel: "erp" });
+}
+
 /** The maker asks for a change. Nothing is applied here. */
 export function request(u: P.User, tenantId: string, supplierId: string, raw: unknown) {
   I.requirePermission(u, "suppliers.payee_change", { tenantId });
@@ -239,7 +245,7 @@ export function paymentHold(tenantId: string, supplierId: string, at = Date.now(
   const name = db.suppliers.find((s) => s.id === supplierId)?.name ?? supplierId;
   const rows = sql.prepare("SELECT status, hold_until FROM bank_change_requests WHERE tenant_id = ? AND supplier_id = ? AND status IN ('pending','approved')").all(tenantId, supplierId) as { status: string; hold_until: string | null }[];
   if (rows.some((r) => r.status === "pending")) return `Payment held. A bank detail change for ${name} is waiting for a second person to check it.`;
-  // Changes applied by the older payee-change and ERP routes leave no request row. Their evidence events start the same cooling-off time. Our own approvals carry a request id and use hold_until on the row.
+  // Changes recorded before this check existed leave no request row. Their evidence events start the same cooling-off time. Our own approvals carry a request id and use hold_until on the row.
   const hours = settings(tenantId).coolingOffHours;
   const legacy = db.evidence.filter((e) => e.subjectType === "supplier" && e.subjectId === supplierId && LEGACY_EVENTS.includes(e.event) && !(e.payload as any)?.request).map((e) => new Date(Date.parse(e.createdAt) + hours * 3_600_000).toISOString());
   const until = [...rows.filter((r) => r.hold_until).map((r) => r.hold_until!), ...legacy].filter((t) => Date.parse(t) > at).sort().at(-1);

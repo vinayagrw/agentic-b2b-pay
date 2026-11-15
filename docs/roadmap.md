@@ -98,9 +98,8 @@ Impact is 1 to 5. Effort is S (under 2 weeks), M (2 to 6 weeks), L (over 6 weeks
 
 1. Net the early-pay discount from the real payment.
 2. Check the bank-change hold when a mandate-bound virtual card is charged.
-3. Move the old payee-change API behind the bank-change check.
-4. Connect chat approvals to a real Slack or Teams test workspace.
-5. A form to enter duty fields and supplier terms in the UI.
+3. Connect chat approvals to a real Slack or Teams test workspace.
+4. A form to enter duty fields and supplier terms in the UI.
 
 ## Top 5 to build next
 

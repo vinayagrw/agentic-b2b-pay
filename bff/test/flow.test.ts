@@ -100,16 +100,6 @@ describe("prompt injection and payee control", () => {
     const outcomes = [S.createPo(draft), S.createPo(draft), S.createPo(draft)].map((p) => p.status);
     expect(outcomes).toContain("pending_approval");
     expect(outcomes.filter((o) => o === "approved").length).toBeLessThan(3);
-    // a payee change from a non ERP source is rejected
-    expect(() => S.requestPayeeChange({ supplierId: "sup-northwind", field: "walletAddress", newValue: "0xBEEF", source: "llm", requestedBy: "agt-buyer-1" })).toThrow(/ERP/);
-  });
-  it("ERP payee change needs four eyes and callback", () => {
-    const c = S.requestPayeeChange({ supplierId: "sup-contoso", field: "bankDetailsRef", newValue: "bank-ref-NEW", source: "erp", requestedBy: "usr-a" });
-    expect(() => S.approvePayeeChange(c.id, "usr-a")).toThrow(/Four eyes/);
-    S.approvePayeeChange(c.id, "usr-b"); S.approvePayeeChange(c.id, "usr-c");
-    expect(db.suppliers.find((s) => s.id === "sup-contoso")!.bankDetailsRef).toBe("bank-ref-002");
-    S.callbackPayeeChange(c.id, true);
-    expect(db.suppliers.find((s) => s.id === "sup-contoso")!.bankDetailsRef).toBe("bank-ref-NEW");
   });
   it("custody quorum not met blocks stablecoin send", async () => {
     const d = (await S.draftPo("Need 100 nitrile gloves")).value;

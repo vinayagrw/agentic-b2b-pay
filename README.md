@@ -139,7 +139,7 @@ These Stripe test mode PaymentIntents were read back from Stripe and matched to 
 | 6 | Compliance gate | KYB, sanctions, OFAC wallet list, KYT, Travel Rule record | `modules/compliance.ts` |
 | 7 | Custody | Local 2 of 3 threshold signing before a stablecoin send | `modules/custody.ts` |
 | 8 | Ledger and reconciliation | Double entry journals, trial balance, camt.053 export | `modules/ledger.ts` |
-| 9 | ERP sync | Local SAP and Coupa adapters, payee changes with four eyes and callback | `modules/erp.ts` |
+| 9 | ERP sync | Local SAP and Coupa adapters, ERP vendor master changes become bank change requests with call-back and a second person | `modules/erp.ts` |
 | 10 | Evidence | Hash chained audit trail for every decision | `modules/evidence.ts` |
 | 11 | Virtual cards | One-time, vendor-locked, recurring and agent cards with limits | `cards.ts` |
 | 12 | Mandate-bound virtual card | One card for one approved order, tied to the signed mandate | `cards.ts` |
@@ -388,7 +388,7 @@ Each client tenant has several legal entities, each with a functional currency a
 Known limits, stated plainly:
 
 - Mandate-bound virtual card. Stripe webhook charges match the supplier by merchant name only. There is no bank-change hold check at charge time.
-- Bank-change check. The older payee-change API still applies changes without the call-back step, though the cooling-off hold still covers it. Wallet changes have no signature proof in this flow. "Wallet never used before" looks at platform records only, not on-chain history. There is no UI to edit a supplier's call-back phone.
+- Bank-change check. Every bank change goes through it, including changes sent from the ERP vendor master. Wallet changes have no signature proof in this flow. "Wallet never used before" looks at platform records only, not on-chain history. There is no UI to edit a supplier's call-back phone.
 - Dispute evidence. The record uses the current mandate pair only. There is no list page of all paid orders.
 - Early pay. An approved plan is recorded on the invoice, but the payment still sends the full amount. There is no UI form to edit supplier terms.
 - Tariff. Duty fields come through the API or seed only. Seeded customs entry dates are fixed, so they age out of the 12 week window.
