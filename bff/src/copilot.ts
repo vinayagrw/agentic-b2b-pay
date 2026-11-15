@@ -151,12 +151,12 @@ export const TOOLS: Tool[] = [
     }
     let bal = start; let eb = start; const rows = weeks.map((w) => { bal = round(bal - w.outflow); eb = round(eb - w.early); return { week: w.week, from: w.from, outflow: w.outflow, balance: bal, items: w.items.length, payEarlyOutflow: w.early, payEarlyBalance: eb }; });
     const summary = `Starting USD ledger cash ${money(start)}. ` + rows.map((r) => `${r.week} out ${money(r.outflow)}, balance ${money(r.balance)}`).join(", ") + (later ? `. ${money(later)} is due after 4 weeks` : "")
-      + (saved ? `. Pay early option: taking every open early-pay discount saves ${money(saved)} (demo figure) and moves that cash out sooner, week 4 balance ${money(rows[3].payEarlyBalance)} against ${money(rows[3].balance)} when paying on the due date` : "");
+      + (saved ? `. Pay early option: taking every open early-pay discount saves ${TM.totalsText(TM.payOptions(c.scope, today).byCurrency, "saved") || money(saved)} (demo figure) and moves that cash out sooner, week 4 balance ${money(rows[3].payEarlyBalance)} against ${money(rows[3].balance)} when paying on the due date` : "");
     return { summary, rows, source: src("cashForecast", weeks.flatMap((w) => w.items.slice(0, 3)).map((id) => ({ id, href: id.startsWith("pi-") ? `${c.prefix}/payments/${id}` : c.prefix === "/app" ? "/app/invoices" : "/operator/treasury" }))) };
   } },
   { name: "discountsAvailable", description: "Early-pay discounts on unpaid invoices: terms, pay-by date, saving (demo figure) and status, plus pay-early against pay-on-due totals", args: [], run: (c) => {
     const rows = TM.discountRows(c.scope); const o = TM.payOptions(c.scope); const live = rows.filter((r) => r.status !== "missed");
-    const summary = live.length ? `${live.length} open early-pay discounts. ` + live.slice(0, 6).map((r) => `${r.number} from ${r.supplier}: pay by ${r.payBy} to save ${r.discount.toFixed(2)} ${r.currency} (${r.terms}, ${r.status})`).join(", ") + `. Pay early: ${o.payEarly.outflow.toFixed(2)} out, ${o.payEarly.saved.toFixed(2)} saved. Pay on due date: ${o.payOnDue.outflow.toFixed(2)} out, nothing saved. ${TM.SAVINGS_NOTE}`
+    const summary = live.length ? `${live.length} open early-pay discounts. ` + live.slice(0, 6).map((r) => `${r.number} from ${r.supplier}: pay by ${r.payBy} to save ${r.discount.toFixed(2)} ${r.currency} (${r.terms}, ${r.status})`).join(", ") + `. Pay early: ${TM.totalsText(o.byCurrency, "payEarly")}. Pay on due date: ${TM.totalsText(o.byCurrency, "payOnDue")}, nothing saved. Each currency is added on its own. ${TM.SAVINGS_NOTE}`
       : rows.length ? `No early-pay discount is open. ${rows.length} passed their pay-by date.` : "No unpaid invoice has an early-pay discount in its terms";
     return { summary, rows, source: src("discountsAvailable", rows.map((r) => ({ id: r.invoiceId, href: c.prefix === "/app" ? "/app/invoices" : "/operator/payments" }))) };
   } },

@@ -23,12 +23,17 @@ export function discountRows(scope: string | null, today = day()): DiscountRow[]
     return [{ invoiceId: i.id, number: i.number, supplierId: i.supplierId, supplier: supName(i.supplierId), amount: i.amount, currency: i.currency ?? "USD", terms: termsLabel(i.terms), dueDate: i.dueDate, payBy: e.payBy, pct: e.pct, discount: e.discount, net: e.net, daysLeft: e.daysLeft, status, match: i.matchStatus }];
   }).sort((a, b) => a.payBy.localeCompare(b.payBy));
 }
-/** Pay-early against pay-on-due for the open discounts. Amounts in different currencies are added as they are, like the forecast. */
+export type CurrencyTotal = { currency: string; invoices: number; payOnDue: number; payEarly: number; saved: number };
+/** Pay-early against pay-on-due for the open discounts, one total per currency. Currencies are never added together and nothing is converted. */
 export function payOptions(scope: string | null, today = day()) {
   const rows = discountRows(scope, today).filter((r) => r.status !== "missed");
-  const full = r2(rows.reduce((a, r) => a + r.amount, 0)); const saved = r2(rows.reduce((a, r) => a + r.discount, 0));
-  return { invoices: rows.length, payOnDue: { outflow: full, saved: 0, lastDate: rows.map((r) => r.dueDate).sort().at(-1) ?? null }, payEarly: { outflow: r2(full - saved), saved, firstPayBy: rows[0]?.payBy ?? null }, note: SAVINGS_NOTE };
+  const by = new Map<string, CurrencyTotal>();
+  for (const r of rows) { const t = by.get(r.currency) ?? { currency: r.currency, invoices: 0, payOnDue: 0, payEarly: 0, saved: 0 }; t.invoices += 1; t.payOnDue = r2(t.payOnDue + r.amount); t.saved = r2(t.saved + r.discount); t.payEarly = r2(t.payOnDue - t.saved); by.set(r.currency, t); }
+  const byCurrency = [...by.values()].sort((a, b) => a.currency.localeCompare(b.currency));
+  return { invoices: rows.length, byCurrency, lastDueDate: rows.map((r) => r.dueDate).sort().at(-1) ?? null, firstPayBy: rows[0]?.payBy ?? null, note: SAVINGS_NOTE };
 }
+/** "411.60 USD out, 8.40 USD saved and 1674.50 EUR out, 25.50 EUR saved". */
+export const totalsText = (ts: CurrencyTotal[], pick: "payEarly" | "payOnDue" | "saved") => ts.map((t) => pick === "saved" ? `${t.saved.toFixed(2)} ${t.currency}` : pick === "payEarly" ? `${t.payEarly.toFixed(2)} ${t.currency} out, ${t.saved.toFixed(2)} ${t.currency} saved` : `${t.payOnDue.toFixed(2)} ${t.currency} out`).join(" and ");
 /** What one invoice costs the forecast under each option: the full amount on the due date, or the net amount on the pay-by date while the discount is open. */
 export function forecastLegs(i: Invoice, today = day()) {
   const e = earlyPayOf(i, today);

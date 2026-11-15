@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { can } from "../lib/perm";
 import { canIssueForOrder, money } from "../lib/cards";
-import { payByLine, termsText, STATUS_TEXT, statusTone, canAskEarlyPay, DEMO_NOTE, type DiscountRow, type PayOptions } from "../lib/terms";
+import { payByLine, termsText, STATUS_TEXT, statusTone, canAskEarlyPay, DEMO_NOTE, payEarlyLines, payOnDueLines, pendingEarlyPay, earlyPayDecision, type DiscountRow, type PayOptions, type EarlyPayChange } from "../lib/terms";
 import { Ban, Play, ShieldAlert, Sparkles } from "lucide-react";
 import { api, useAppState, useGet, useMe, useAct } from "../lib/api";
 import { usd } from "../lib/utils";
@@ -147,22 +147,31 @@ export function InvoiceDesk({ st }: { st: any }) {
 /** Open early-pay discounts, with pay early against pay on the due date. Asking sends a change that a second client admin approves. */
 export function EarlyPayCard() {
   const { data } = useGet<{ rows: DiscountRow[]; options: PayOptions; note: string }>("/terms/discounts");
+  const { data: changes } = useGet<EarlyPayChange[]>("/changes?status=pending");
   const { data: me } = useMe(); const { run, busy, error } = useAct();
   const allowed = can(me, "changes.request");
   if (!data?.rows.length) return null;
-  const o = data.options;
+  const o = data.options; const waiting = pendingEarlyPay(changes);
+  const rowOf = (c: EarlyPayChange) => data.rows.find((r) => r.invoiceId === c.payload.invoiceId);
   return <Card title="Pay early and save" pad={false}>
     <div className="grid gap-3 px-4 pt-3 sm:grid-cols-2">
-      <div><Label>Pay early</Label><div className="text-sm tabular-nums">{money(o.payEarly.outflow)} out, {money(o.payEarly.saved)} saved</div><Muted>{o.payEarly.firstPayBy ? `First pay-by date ${o.payEarly.firstPayBy}` : "No discount is open"}</Muted></div>
-      <div><Label>Pay on the due date</Label><div className="text-sm tabular-nums">{money(o.payOnDue.outflow)} out, nothing saved</div><Muted>{o.payOnDue.lastDate ? `Last due date ${o.payOnDue.lastDate}` : "Nothing due"}</Muted></div>
+      <div><Label>Pay early</Label>{payEarlyLines(o).map((t) => <div key={t} className="text-sm tabular-nums">{t}</div>)}<Muted>{o.firstPayBy ? `First pay-by date ${o.firstPayBy}` : "No discount is open"}</Muted></div>
+      <div><Label>Pay on the due date</Label>{payOnDueLines(o).map((t) => <div key={t} className="text-sm tabular-nums">{t}</div>)}<Muted>{o.lastDueDate ? `Last due date ${o.lastDueDate}` : "Nothing due"}</Muted></div>
     </div>
-    <div className="px-4 pb-2"><Muted>{DEMO_NOTE} Totals add each invoice in its own currency.</Muted><ErrorNote msg={error} /></div>
+    <div className="px-4 pb-2"><Muted>{DEMO_NOTE} Each currency has its own total. Nothing is converted.</Muted><ErrorNote msg={error} /></div>
     <Table head={["Invoice", "Supplier", "Terms", "Pay by", "Saving (demo)", "Status", ""]}>{data.rows.map((r) => <tr key={r.invoiceId}>
       <td>{r.number}<div><Mono className="text-muted">{r.invoiceId}</Mono></div></td><td>{r.supplier}</td><td>{r.terms}</td>
       <td>{r.payBy}<div><Muted>{r.status === "missed" ? `Due ${r.dueDate}` : `${r.daysLeft} days left, due ${r.dueDate}`}</Muted></div></td>
       <td className="tabular-nums">{money(r.discount, r.currency)}<div><Muted>{money(r.net, r.currency)} in place of {money(r.amount, r.currency)}</Muted></div></td>
       <td><Badge v={STATUS_TEXT[r.status]} tone={statusTone(r.status)} /></td>
-      <td className="text-right">{canAskEarlyPay(r, allowed) && <Button size="sm" disabled={busy} onClick={() => { if (confirm(`Ask to pay ${r.number} early? A second client admin must approve. No money moves now.`)) void run(() => api(`/invoices/${r.invoiceId}/early-pay`, {})); }}>Ask to pay early</Button>}</td></tr>)}</Table>
+      <td className="text-right">{canAskEarlyPay(r, allowed) && <Button size="sm" disabled={busy} onClick={() => { if (confirm(`Ask to pay ${r.number} early? A second client admin must approve it here. No money moves now.`)) void run(() => api(`/invoices/${r.invoiceId}/early-pay`, {})); }}>Ask to pay early</Button>}</td></tr>)}</Table>
+    {!!waiting.length && <>
+      <div className="px-4 pt-3"><Label>Requests waiting for a second client admin</Label><Muted>The person who asked cannot approve. Sign in as a second client admin account to decide. Approval records the plan and moves no money.</Muted></div>
+      <Table head={["Request", "Invoice", "Saving (demo)", "Asked by", ""]}>{waiting.map((c) => { const r = rowOf(c); const d = earlyPayDecision(c, me); return <tr key={c.id}>
+        <td><Mono>{c.id}</Mono></td><td>{r?.number ?? c.payload.invoiceId}{r && <div><Muted>{r.supplier}, pay by {r.payBy}</Muted></div>}</td>
+        <td className="tabular-nums">{r ? money(r.discount, r.currency) : ""}</td><td>{c.requestedBy}</td>
+        <td className="text-right">{d.ok ? <span className="inline-flex gap-1"><Button size="sm" variant="primary" disabled={busy} onClick={() => run(() => api(`/changes/${c.id}/decide`, { approve: true }))}>Approve</Button><Button size="sm" disabled={busy} onClick={() => run(() => api(`/changes/${c.id}/decide`, { approve: false }))}>Reject</Button></span> : <Muted>{d.why}</Muted>}</td></tr>; })}</Table>
+    </>}
   </Card>;
 }
 

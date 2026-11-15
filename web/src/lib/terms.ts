@@ -3,7 +3,22 @@ import { earlyPayOf, termsLabel, type PaymentTerms } from "@b2b/shared";
 import { money } from "./cards";
 
 export type DiscountRow = { invoiceId: string; number: string; supplierId: string; supplier: string; amount: number; currency: string; terms: string; dueDate: string; payBy: string; pct: number; discount: number; net: number; daysLeft: number; status: "open" | "approved" | "requested" | "missed"; match: string };
-export type PayOptions = { invoices: number; payOnDue: { outflow: number; saved: number; lastDate: string | null }; payEarly: { outflow: number; saved: number; firstPayBy: string | null }; note: string };
+export type CurrencyTotal = { currency: string; invoices: number; payOnDue: number; payEarly: number; saved: number };
+export type PayOptions = { invoices: number; byCurrency: CurrencyTotal[]; lastDueDate: string | null; firstPayBy: string | null; note: string };
+/** One line per currency. Currencies are never added together. */
+export const payEarlyLines = (o: Pick<PayOptions, "byCurrency">) => o.byCurrency.map((t) => `${money(t.payEarly, t.currency)} out, ${money(t.saved, t.currency)} saved`);
+export const payOnDueLines = (o: Pick<PayOptions, "byCurrency">) => o.byCurrency.map((t) => `${money(t.payOnDue, t.currency)} out, nothing saved`);
+export const savedText = (o: Pick<PayOptions, "byCurrency">) => o.byCurrency.map((t) => money(t.saved, t.currency)).join(" and ");
+export type EarlyPayChange = { id: string; kind: string; status: string; requestedBy: string; createdAt: string; payload: { invoiceId?: string } };
+/** Early pay requests that still wait for a decision. */
+export const pendingEarlyPay = (changes: EarlyPayChange[] | undefined) => (changes ?? []).filter((c) => c.kind === "payment.early_pay" && c.status === "pending");
+/** Who may decide a request: a client admin who did not ask for it. Returns the reason in plain words when the answer is no. */
+export function earlyPayDecision(c: Pick<EarlyPayChange, "requestedBy">, me: { user: { id: string; role: string } } | null | undefined): { ok: boolean; why: string } {
+  if (!me) return { ok: false, why: "Sign in to decide" };
+  if (me.user.role !== "client_admin") return { ok: false, why: "Only a client admin can approve" };
+  if (c.requestedBy === me.user.id) return { ok: false, why: "You asked for this. A second client admin account must approve." };
+  return { ok: true, why: "" };
+}
 export const DEMO_NOTE = "Savings are demo figures. The payment still runs for the full invoice amount.";
 export const STATUS_TEXT: Record<DiscountRow["status"], string> = { open: "Discount open", requested: "Waiting for a second admin", approved: "Early pay approved", missed: "Discount passed" };
 export const statusTone = (s: DiscountRow["status"]): "ok" | "warn" | "neutral" => s === "approved" ? "ok" : s === "missed" ? "neutral" : "warn";

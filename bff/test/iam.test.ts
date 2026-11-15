@@ -142,7 +142,7 @@ describe("SCIM 2.0", () => {
     const H = { authorization: `Bearer ${tok.token}`, "content-type": "application/scim+json" };
     expect((await app.inject({ url: "/scim/v2/Users" })).statusCode).toBe(401);
     const list = (await app.inject({ url: "/scim/v2/Users", headers: H })).json();
-    expect(list.totalResults).toBe(4); expect(list.Resources.every((u: any) => u.userName.endsWith("@acme.demo"))).toBe(true);
+    expect(list.totalResults).toBe(5); expect(list.Resources.every((u: any) => u.userName.endsWith("@acme.demo"))).toBe(true);
     const created = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: H, payload: JSON.stringify({ schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], userName: "nia@acme.demo", name: { givenName: "Nia", familyName: "Ross" } }) });
     expect(created.statusCode).toBe(201); const nia = created.json();
     expect((await app.inject({ url: `/scim/v2/Users?filter=${encodeURIComponent('userName eq "nia@acme.demo"')}`, headers: H })).json().totalResults).toBe(1);

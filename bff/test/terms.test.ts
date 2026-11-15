@@ -13,7 +13,6 @@ beforeEach(() => { reset(); P.seedPlatform(); S.bootstrap(); });
 const today = () => new Date().toISOString().slice(0, 10);
 const login = async (app: any, userId: string) => { const r = await app.inject({ method: "POST", url: "/auth/login", payload: { userId } }); return `sid=${r.cookies.find((x: any) => x.name === "sid").value}`; };
 const ctx = (id: string, scope: string | null, extra: Partial<CP.Ctx> = {}): CP.Ctx => ({ user: P.getUser(id)!, scope, prefix: scope ? "/app" : "/operator", ...extra });
-const admin2: P.User = { id: "usr-acme-admin2", tenantId: "tnt-acme", role: "client_admin", name: "Second admin", email: "x@acme.demo" };
 /** A 420 USD Northwind invoice dated today. Northwind terms are 2 percent in 10 days, net 30. */
 const nwInvoice = async () => {
   const po = S.createPo({ supplierId: "sup-northwind", category: "components", currency: "USD", lines: [{ sku: "NW-MTR-750", description: "Servo", qty: 1, unitPrice: 420 }], justification: "Spare" });
@@ -56,7 +55,20 @@ describe("discounts available", () => {
     expect(TM.discountRows("tnt-globex")).toHaveLength(0);
     expect(TM.discountRows("tnt-acme", addDays(today(), 11))[0].status).toBe("missed");
     const o = TM.payOptions("tnt-acme");
-    expect(o.payOnDue).toMatchObject({ outflow: 420, saved: 0 }); expect(o.payEarly).toMatchObject({ outflow: 411.6, saved: 8.4 }); expect(o.note).toMatch(/demo figures/);
+    expect(o.byCurrency).toEqual([{ currency: "USD", invoices: 1, payOnDue: 420, payEarly: 411.6, saved: 8.4 }]); expect(o.note).toMatch(/demo figures/);
+  });
+  it("keeps one total per currency and never adds EUR to USD", async () => {
+    const seed = db.invoices.find((i) => i.id === "inv-eu-seed")!; seed.invoiceDate = today(); seed.dueDate = addDays(today(), 30);
+    await nwInvoice();
+    const o = TM.payOptions("tnt-acme");
+    expect(o.invoices).toBe(2);
+    expect(o.byCurrency).toEqual([{ currency: "EUR", invoices: 1, payOnDue: 1700, payEarly: 1674.5, saved: 25.5 }, { currency: "USD", invoices: 1, payOnDue: 420, payEarly: 411.6, saved: 8.4 }]);
+    expect(JSON.stringify(o)).not.toMatch(/2120|2086\.1|33\.9/);
+    const d = CP.runTool(ctx("usr-cfo-jane", "tnt-acme"), "discountsAvailable").summary;
+    expect(d).toMatch(/Pay early: 1674\.50 EUR out, 25\.50 EUR saved and 411\.60 USD out, 8\.40 USD saved/); expect(d).toMatch(/Pay on due date: 1700\.00 EUR out and 420\.00 USD out/); expect(d).not.toMatch(/[\u2014;]/);
+    const f = CP.runTool(ctx("usr-cfo-jane", "tnt-acme"), "cashForecast").summary;
+    expect(f).toMatch(/saves 25\.50 EUR and 8\.40 USD \(demo figure\)/); expect(f).not.toMatch(/\$33\.90/);
+    const t = await O.treasury("tnt-acme"); expect(t.earlyPay.byCurrency.map((x: any) => x.currency)).toEqual(["EUR", "USD"]);
   });
   it("answers through the copilot tool and the discounts route", async () => {
     paidSeed(); const inv = await nwInvoice();
@@ -67,7 +79,7 @@ describe("discounts available", () => {
     const a = await CP.ask(ctx("usr-cfo-jane", "tnt-acme"), "Which discounts are available if we pay early?");
     expect(a.tools.map((t) => t.tool)).toContain("discountsAvailable"); expect(a.answer).not.toMatch(/[—;]/);
     const app = await buildApp(); const g = await app.inject({ method: "GET", url: "/terms/discounts", headers: { cookie: await login(app, "usr-cfo-jane") } });
-    expect(g.statusCode).toBe(200); expect(g.json().rows[0].invoiceId).toBe(inv.id); expect(g.json().options.payEarly.saved).toBe(8.4);
+    expect(g.statusCode).toBe(200); expect(g.json().rows[0].invoiceId).toBe(inv.id); expect(g.json().options.byCurrency[0]).toMatchObject({ currency: "USD", saved: 8.4 });
     const gg = await app.inject({ method: "GET", url: "/terms/discounts", headers: { cookie: await login(app, "usr-globex-gina") } });
     expect(gg.json().rows).toHaveLength(0);
   });
@@ -92,7 +104,7 @@ describe("forecasts with pay early and pay on due date", () => {
     expect(t.forecast[25].outflow).toBe(420); expect(t.forecast[10].earlyOutflow).toBe(411.6); expect(t.forecast[25].earlyOutflow).toBe(0);
     expect(t.forecast[9].earlyBalance).toBe(t.forecast[9].balance);
     expect(Math.round((t.forecast[30].earlyBalance - t.forecast[30].balance) * 100) / 100).toBe(8.4);
-    expect(t.earlyPay.payEarly.saved).toBe(8.4); expect(t.earlyPay.rows).toHaveLength(1);
+    expect(t.earlyPay.byCurrency[0].saved).toBe(8.4); expect(t.earlyPay.rows).toHaveLength(1);
   });
 });
 
@@ -102,7 +114,7 @@ describe("pay early and save", () => {
     expect(SP.earlyPayProposals(ctx("usr-cfo-jane", "tnt-acme"), "show open invoices")).toHaveLength(0);
     const [p] = SP.earlyPayProposals(ctx("usr-cfo-jane", "tnt-acme"), "can we pay early and save?");
     expect(p).toMatchObject({ kind: "pay_early", path: "/changes", target: inv.id, allowed: true, body: { kind: "payment.early_pay", payload: { invoiceId: inv.id } } });
-    expect(p.label).toMatch(/^Pay early and save 8\.40 USD/); expect(p.detail).toMatch(/demo figures/); expect(p.detail).toMatch(/second client admin/); expect(`${p.label} ${p.detail} ${p.reason}`).not.toMatch(/[—;]/);
+    expect(p.label).toMatch(/^Pay early and save 8\.40 USD/); expect(p.detail).toMatch(/demo figures/); expect(p.detail).toMatch(/second client admin approves the plan on the Invoices page/); expect(p.detail).not.toMatch(/in Changes/); expect(`${p.label} ${p.detail} ${p.reason}`).not.toMatch(/[—;]/);
     expect(SP.earlyPayProposals(ctx("usr-clerk-pat", "tnt-acme"), "pay early")[0].allowed).toBe(false);
     expect(SP.earlyPayProposals(ctx("usr-globex-gina", "tnt-globex"), "pay early")).toHaveLength(0);
     const a = await CP.ask(ctx("usr-cfo-jane", "tnt-acme"), "Which discounts can we take if we pay early?");
@@ -119,7 +131,14 @@ describe("pay early and save", () => {
     expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/early-pay`, headers: { cookie: jane }, payload: {} })).statusCode).toBe(409);
     expect((await app.inject({ method: "POST", url: `/changes/${ch.json().id}/decide`, headers: { cookie: jane }, payload: { approve: true } })).statusCode).toBe(403);
     expect(db.invoices.find((i) => i.id === inv.id)!.earlyPay).toBeUndefined();
-    P.decideChange(admin2, ch.json().id, true);
+    const amara = await login(app, "usr-acme-amara"); const gina = await login(app, "usr-globex-gina");
+    const list = await app.inject({ method: "GET", url: "/changes?status=pending", headers: { cookie: amara } });
+    expect(list.json().filter((c: any) => c.kind === "payment.early_pay").map((c: any) => c.id)).toEqual([ch.json().id]);
+    expect((await app.inject({ method: "GET", url: "/changes?status=pending", headers: { cookie: gina } })).json()).toHaveLength(0);
+    expect((await app.inject({ method: "POST", url: `/changes/${ch.json().id}/decide`, headers: { cookie: gina }, payload: { approve: true } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "POST", url: `/changes/${ch.json().id}/decide`, headers: { cookie: pat }, payload: { approve: true } })).statusCode).toBe(403);
+    const ok = await app.inject({ method: "POST", url: `/changes/${ch.json().id}/decide`, headers: { cookie: amara }, payload: { approve: true } });
+    expect(ok.statusCode).toBe(200); expect(ok.json().change).toMatchObject({ status: "approved", approvedBy: "usr-acme-amara" });
     expect(db.invoices.find((i) => i.id === inv.id)!.earlyPay).toMatchObject({ status: "approved", payBy: addDays(today(), 10), pct: 2, discount: 8.4, requestedBy: "usr-cfo-jane" });
     expect(TM.discountRows("tnt-acme")[0].status).toBe("approved");
     expect(db.evidence.some((e) => e.event === "invoice.early_pay_approved" && e.subjectId === inv.id)).toBe(true);
@@ -135,5 +154,31 @@ describe("pay early and save", () => {
     expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/early-pay`, headers: { cookie: jane }, payload: {} })).statusCode).toBe(409);
     inv.terms = { netDays: 30 };
     expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/early-pay`, headers: { cookie: jane }, payload: {} })).statusCode).toBe(422);
+  });
+});
+
+describe("older client admin change kinds stay inside the caller's tenant", () => {
+  it("forces the tenant on payment.reroute and payment.schedule sent through POST /changes", async () => {
+    const app = await buildApp(); const gina = await login(app, "usr-globex-gina"); const jane = await login(app, "usr-cfo-jane"); const amara = await login(app, "usr-acme-amara");
+    const nw = db.suppliers.find((s) => s.id === "sup-northwind")!; const before = nw.preferredRail; const rail = nw.acceptedRails.find((r) => r !== before) ?? before;
+    const post = (cookie: string, body: object) => app.inject({ method: "POST", url: "/changes", headers: { cookie }, payload: body });
+    // Gina is a Globex admin. She names Acme in the payload and leaves out the top-level tenant.
+    expect((await post(gina, { kind: "payment.reroute", payload: { tenantId: "tnt-acme", supplierId: "sup-northwind", rail } })).statusCode).toBe(404);
+    expect((await post(gina, { kind: "payment.reroute", payload: { tenantId: "tnt-acme", supplierId: "sup-northwind", rail }, tenantId: "tnt-acme" })).statusCode).toBe(403);
+    const po = db.pos.find((x) => (x.tenantId ?? "tnt-acme") === "tnt-acme")!;
+    expect((await post(gina, { kind: "payment.schedule", payload: { tenantId: "tnt-acme", supplierId: po.supplierId, cadence: "monthly", nextDate: "2027-01-05", amount: 10, templatePoId: po.id } })).statusCode).toBe(404);
+    expect(P.listChanges("pending")).toHaveLength(0); expect(SP.listSchedules("tnt-acme")).toHaveLength(0); expect(nw.preferredRail).toBe(before);
+    // The same request from an Acme admin is stored with the Acme tenant, and only another Acme admin can approve it.
+    const ch = await post(jane, { kind: "payment.reroute", payload: { tenantId: "tnt-globex", supplierId: "sup-northwind", rail } });
+    expect(ch.statusCode).toBe(200); expect(ch.json()).toMatchObject({ tenantId: "tnt-acme", payload: { tenantId: "tnt-acme" } });
+    expect((await app.inject({ method: "POST", url: `/changes/${ch.json().id}/decide`, headers: { cookie: gina }, payload: { approve: true } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "POST", url: `/changes/${ch.json().id}/decide`, headers: { cookie: amara }, payload: { approve: true } })).statusCode).toBe(200);
+    expect(db.suppliers.find((s) => s.id === "sup-northwind")!.preferredRail).toBe(rail);
+  });
+  it("refuses to decide a client admin change that has no tenant", () => {
+    const nw = db.suppliers.find((s) => s.id === "sup-northwind")!;
+    const ch = P.requestChange(P.getUser("usr-cfo-jane")!, "payment.reroute", { tenantId: "tnt-acme", supplierId: nw.id, rail: nw.acceptedRails[0] }, null);
+    expect(() => P.decideChange(P.getUser("usr-globex-gina")!, ch.id, true)).toThrow(/no tenant/);
+    expect(() => P.decideChange(P.getUser("usr-acme-amara")!, ch.id, true)).toThrow(/no tenant/);
   });
 });

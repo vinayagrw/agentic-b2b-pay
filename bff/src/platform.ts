@@ -33,6 +33,7 @@ export const SEED_USERS: User[] = [
   { id: "usr-op-omar", tenantId: null, name: "Omar Haddad", email: "omar@operator.demo", role: "operator_admin" },
   { id: "usr-audit-ava", tenantId: null, name: "Ava Chen", email: "ava@operator.demo", role: "auditor" },
   { id: "usr-cfo-jane", tenantId: "tnt-acme", name: "Jane Okafor", email: "jane@acme.demo", role: "client_admin" },
+  { id: "usr-acme-amara", tenantId: "tnt-acme", name: "Amara Diallo", email: "amara@acme.demo", role: "client_admin" },
   { id: "usr-controller-sam", tenantId: "tnt-acme", name: "Sam Rivera", email: "sam@acme.demo", role: "approver" },
   { id: "usr-treasurer-lee", tenantId: "tnt-acme", name: "Lee Park", email: "lee@acme.demo", role: "approver" },
   { id: "usr-clerk-pat", tenantId: "tnt-acme", name: "Pat Morgan", email: "pat@acme.demo", role: "ap_clerk" },
@@ -122,6 +123,8 @@ const HANDLERS: Record<string, Handler> = {
   },
 };
 export function registerChangeKind(kind: string, h: Handler) { HANDLERS[kind] = h; }
+/** The role that must approve a change kind, or null for an unknown kind. */
+export const changeRole = (kind: string): string | null => HANDLERS[kind]?.role ?? null;
 
 export function requestChange(user: User, kind: string, payload: any, tenantId: string | null = null): PendingChange {
   const h = HANDLERS[kind]; if (!h) throw new AuthError(422, `unknown change kind ${kind}`);
@@ -142,6 +145,7 @@ export function decideChange(user: User, id: string, approve: boolean) {
   if (c.status !== "pending") throw new AuthError(409, `change is already ${c.status}`);
   if (c.requestedBy === user.id) throw new AuthError(403, "The maker cannot approve their own change");
   if (user.role !== c.requiredRole) throw new AuthError(403, `Needs role ${c.requiredRole}`);
+  if (c.requiredRole === "client_admin" && !c.tenantId) throw new AuthError(409, "This change has no tenant, so nobody can decide it. Ask for it again.");
   if (c.tenantId && !canAccessTenant(user, c.tenantId)) throw new AuthError(403, "Wrong tenant");
   const status = approve ? "approved" : "rejected";
   let result: unknown = null;
