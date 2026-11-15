@@ -115,8 +115,11 @@ function room(line: Line, amount: number, own = 0) {
   if (r2(e.outstanding + toUsd(amount, line.currency)) > e.cap) throw new CreditError(422, `This draw is over the bank exposure cap. The bank can lend ${e.headroom.toFixed(2)} USD more across all its clients`);
 }
 export const DrawInput = z.object({ amount: z.coerce.number().positive("The amount must be above zero"), purpose: z.string().trim().min(3, "Say what the draw is for").max(200) });
-/** Asks for a draw. Nothing is booked until a second person approves it. */
+/** Maker-checker needs two people. A key made by the approver would count as a second party, so keys cannot act on a draw at all. */
+const personOnly = (u: P.User, what: string) => { if (!P.isPerson(u)) throw new CreditError(403, `Only a signed-in person can ${what}. Agent keys and API keys cannot.`); };
+/** Asks for a draw. Nothing is booked until a second person approves it. Agent keys and API keys cannot ask. */
 export function requestDraw(u: P.User, tenantId: string, raw: unknown) {
+  personOnly(u, "ask for a draw");
   I.requirePermission(u, "flow.operate", { tenantId });
   const line = getLine(tenantId); if (!line) throw new CreditError(409, "Your bank has not set up a credit line yet");
   if (line.status !== "active") throw new CreditError(409, "The credit line is frozen by the bank");
@@ -133,6 +136,7 @@ const book = (tenantId: string, entityId: string, memo: string, ref: string, lin
 };
 /** Approves or rejects a draw. The maker cannot decide their own draw. Over the threshold the approver needs a fresh authenticator code. */
 export function decideDraw(u: P.User, tenantId: string, sessionId: string | null, id: string, approve: boolean) {
+  personOnly(u, "approve or reject a draw");
   const d = getDraw(tenantId, id);
   if (d.status !== "pending_approval") throw new CreditError(409, `This draw is already ${d.status.replace("_", " ")}`);
   if (d.requestedBy === u.id) throw new CreditError(403, "The person who asked for the draw cannot approve it");
@@ -155,8 +159,9 @@ export function interestFor(principal: number, aprPct: number, fundedAt: string,
   const days = Math.max(1, Math.ceil((at - Date.parse(fundedAt)) / 864e5));
   return { days, interest: r2(principal * (aprPct / 100) * (days / 365)) };
 }
-/** Repays part or all of a funded draw. Books principal and interest out of cash. It lowers what is owed, so one person can do it. */
+/** Repays part or all of a funded draw. Books principal and interest out of cash. It lowers what is owed, so one person can do it. Keys cannot. */
 export function repay(u: P.User, tenantId: string, id: string, raw: unknown, at = Date.now()) {
+  personOnly(u, "repay a draw");
   I.requirePermission(u, "payments.pay", { tenantId });
   const d = getDraw(tenantId, id);
   if (d.status !== "funded") throw new CreditError(409, d.status === "repaid" ? "This draw is already repaid" : "Only a funded draw can be repaid");

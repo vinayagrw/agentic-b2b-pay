@@ -144,7 +144,7 @@ function signalsFor(u: P.User, tenantId: string, sup: Supplier, f: Full, old: Pa
 
 const PHONE_EVENT = "supplier.callback_phone_changed";
 /** Agent keys and API keys are not people. They cannot ask for a change or set the call-back phone. */
-const isPerson = (u: P.User) => !/^(agent|apikey):/.test(u.id);
+const isPerson = P.isPerson;
 const hasPending = (supplierId: string) => sql.prepare("SELECT requested_by FROM bank_change_requests WHERE supplier_id = ? AND status = 'pending'").all(supplierId) as { requested_by: string }[];
 /** Sets the phone number used for call-backs. Needs suppliers.review. Locked while a change waits, so the number cannot be swapped to pass the call-back. */
 export function setPhone(u: P.User, tenantId: string, supplierId: string, raw: unknown) {

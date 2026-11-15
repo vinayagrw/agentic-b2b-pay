@@ -74,6 +74,8 @@ export const getTenant = (id: string) => { const r = sql.prepare("SELECT * FROM 
 export const listUsers = () => (sql.prepare("SELECT * FROM users ORDER BY tenant_id IS NOT NULL, tenant_id, role").all() as any[]).map(toUser);
 export const getUser = (id: string) => { const r = sql.prepare("SELECT * FROM users WHERE id = ?").get(id); return r ? toUser(r) : null; };
 export const isOperator = (u: User) => u.tenantId === null;
+/** True for a signed-in person. Agent keys and API keys resolve to synthetic users whose id starts with "agent:" or "apikey:". */
+export const isPerson = (u: User) => !/^(agent|apikey):/.test(u.id);
 
 /** Tenants a user may act in. Operators see all, client users see their own. */
 export function tenantsFor(u: User) { const all = listTenants(); return isOperator(u) ? all : all.filter((t) => t.id === u.tenantId); }

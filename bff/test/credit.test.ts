@@ -7,6 +7,7 @@ import * as CR from "../src/credit.js";
 import * as CP from "../src/copilot.js";
 import { buildApp } from "../src/server.js";
 import { stepUp } from "./helpers/security.js";
+import * as W from "../src/workspace.js";
 
 beforeEach(() => { useDb(":memory:"); reload(); reset(); P.seedPlatform(); S.bootstrap(); });
 const user = (id: string) => P.getUser(id)!;
@@ -67,6 +68,36 @@ describe("simulated credit line", () => {
     const page = (await app.inject({ url: "/credit", headers: { cookie: patC } })).json();
     expect(page.lender).toBe("Simulated lender"); expect(page.usage).toMatchObject({ outstanding: 20500, available: 29500 });
     expect(db.evidence.some((e: any) => e.event === "credit.draw_funded" && e.payload?.steppedUp === true)).toBe(true);
+    await app.close();
+  });
+
+  it("refuses API keys and agent keys as maker, checker or payer, so one person cannot draw alone", async () => {
+    const app = await buildApp();
+    const lr = await app.inject({ method: "POST", url: "/auth/login", payload: { userId: "usr-cfo-jane" } });
+    const janeC = `sid=${lr.cookies.find((x: any) => x.name === "sid")!.value}`;
+    const made = await app.inject({ method: "POST", url: "/dev/keys", headers: { cookie: janeC }, payload: { label: "Draw bot", role: "ap_clerk" } });
+    expect(made.statusCode).toBe(200);
+    const apiKey = Object.values(made.json()).find((v) => typeof v === "string" && v.startsWith("bpk_")) as string;
+    expect(apiKey).toBeTruthy();
+    const reg = W.registerAgent(user("usr-cfo-jane"), "tnt-acme", { name: "Spares bot", erpRole: "buyer.requisitioner", protocols: ["mcp"], mandate: { perTxnMax: 500, monthlyLimit: 600, allowedCategories: ["mro"], allowedRails: ["stripe_ach"], validTo: new Date(Date.now() + 30 * 864e5).toISOString() } as any });
+    const funded = fund(3000); const waiting = draw(400);
+    const before = { draws: CR.drawsFor("tnt-acme").length, journals: db.journals.length };
+    for (const key of [apiKey, reg.key.key]) {
+      const h = { authorization: `Bearer ${key}` };
+      // The bearer really signs in as an AP clerk: reading the line works.
+      expect((await app.inject({ method: "GET", url: "/credit", headers: h })).statusCode).toBe(200);
+      const ask = await app.inject({ method: "POST", url: "/credit/draws", headers: h, payload: { amount: 1000, purpose: "Key made draw" } });
+      expect(ask.statusCode).toBe(403); expect(ask.json().error ?? ask.json().message).toMatch(/Only a signed-in person can ask for a draw. Agent keys and API keys cannot./);
+      expect((await app.inject({ method: "POST", url: `/credit/draws/${waiting.id}/decide`, headers: h, payload: { approve: true } })).statusCode).toBe(403);
+      expect((await app.inject({ method: "POST", url: `/credit/draws/${funded.id}/repay`, headers: h, payload: {} })).statusCode).toBe(403);
+    }
+    expect(CR.drawsFor("tnt-acme").length).toBe(before.draws); expect(db.journals.length).toBe(before.journals);
+    expect(CR.drawsFor("tnt-acme").some((d) => /^(apikey|agent):/.test(d.requestedBy))).toBe(false);
+    expect(CR.getDraw("tnt-acme", waiting.id).status).toBe("pending_approval"); expect(CR.getDraw("tnt-acme", funded.id).outstanding).toBe(3000);
+    expect(CR.repaymentsFor("tnt-acme")).toEqual([]);
+    // Module level too, for callers that skip the route.
+    expect(() => CR.requestDraw({ id: "apikey:k1", tenantId: "tnt-acme", name: "k", email: "", role: "ap_clerk" } as P.User, "tnt-acme", { amount: 10, purpose: "Key draw" })).toThrow(/Only a signed-in person/);
+    expect(() => CR.decideDraw({ id: "agent:a1", tenantId: "tnt-acme", name: "a", email: "", role: "client_admin" } as P.User, "tnt-acme", null, waiting.id, true)).toThrow(/Only a signed-in person/);
     await app.close();
   });
 
