@@ -8,8 +8,8 @@ describe("exceptionActions", () => {
   it("offers all actions to an approver who did not send it", () => {
     expect(exceptionActions(exc, me("usr-sam", ["payments.approve", "flow.operate"]))).toEqual(["hold", "accept", "credit", "resubmit"]);
   });
-  it("hides accept from the person who sent it", () => {
-    expect(exceptionActions(exc, me("usr-pat", ["payments.approve", "flow.operate"]))).toEqual(["hold", "credit", "resubmit"]);
+  it("hides accept and credit note from the person who sent it", () => {
+    expect(exceptionActions(exc, me("usr-pat", ["payments.approve", "flow.operate"]))).toEqual(["hold", "resubmit"]);
   });
   it("a clerk can hold and resubmit only", () => {
     expect(exceptionActions(exc, me("usr-x", ["flow.operate"]))).toEqual(["hold", "resubmit"]);

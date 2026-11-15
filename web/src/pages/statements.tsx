@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Upload } from "lucide-react";
 import { api, useAct, useGet, useMe } from "../lib/api";
-import { can } from "../lib/perm";
+import { can, noAccessText } from "../lib/perm";
 import { Badge, Button, Card, EmptyState, ErrorNote, Input, Mono, Muted, PageHeader, Select, Table } from "../components/ui";
 import { Section } from "../components/Shell";
 import { Loading } from "./flows";
@@ -54,5 +54,9 @@ export function BankStatements({ tenantId }: { tenantId?: string }) {
 }
 
 export function ClientReconciliation() {
-  return <Section><PageHeader title="Reconciliation" sub="Upload a bank statement to check each payment left the bank as expected." /><BankStatements /></Section>;
+  const { data: me } = useMe();
+  const head = <PageHeader title="Reconciliation" sub="Upload a bank statement to check each payment left the bank as expected." />;
+  if (!me) return <Section>{head}<Loading /></Section>;
+  if (!can(me, "statements.read")) return <Section>{head}<EmptyState title="No access" body={noAccessText("statements.read")} /></Section>;
+  return <Section>{head}<BankStatements /></Section>;
 }

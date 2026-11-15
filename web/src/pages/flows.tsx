@@ -120,16 +120,17 @@ export function ApprovalInbox({ st }: { st: any }) {
 export function PayeeChanges({ st }: { st: any }) {
   const [f, setF] = useState({ supplierId: "sup-northwind", holderName: "Northwind Components LLC", bankName: "Commerzbank", country: "DE", iban: "DE44500105175407324931" });
   const { run, busy, error } = useAct(); const nav = useNavigate(); const [bump, setBump] = useState(0);
+  const { data: me } = useMe(); const canErp = can(me, "erp.vendor_master");
   const send = async () => { const { supplierId, ...bank } = f; const r = await run(() => api("/erp/vendor-master/changes", { supplierId, kind: "bank", bank, channelNote: "Sent from the ERP vendor master" })); if (r) setBump(bump + 1); };
   return <Card title="Payee detail changes">
     <Muted>A bank change from the ERP vendor master waits as a bank change request. A second person calls the supplier back and approves it. Payments stay on hold until the cooling-off time ends.</Muted>
-    <div className="mt-3 flex flex-wrap gap-2">
+    {canErp ? <div className="mt-3 flex flex-wrap gap-2">
       <Select value={f.supplierId} onChange={(e) => setF({ ...f, supplierId: e.target.value })}>{st.suppliers.map((s: any) => <option key={s.id}>{s.id}</option>)}</Select>
       <Input value={f.holderName} onChange={(e) => setF({ ...f, holderName: e.target.value })} placeholder="Account holder" />
       <Input className="min-w-60 flex-1" value={f.iban} onChange={(e) => setF({ ...f, iban: e.target.value.trim() })} placeholder="IBAN" />
       <Button variant="primary" disabled={busy || !st.suppliers.length} onClick={send}>Send from ERP</Button>
       <Button variant="outline" onClick={() => nav("/app/bank-changes")}>Open bank changes</Button>
-    </div>
+    </div> : <div className="mt-3"><Button variant="outline" onClick={() => nav("/app/bank-changes")}>Open bank changes</Button></div>}
     <ErrorNote msg={error} />
     <div className="mt-3"><BankChangesWaiting key={bump} /></div>
   </Card>;
