@@ -247,7 +247,7 @@ export const IssueInput = z.object({
   type: z.enum(["one_time", "vendor_locked", "recurring", "agent"]), label: z.string().trim().min(2).max(60),
   limit: z.coerce.number().positive().max(1_000_000), currency: z.enum(["USD", "EUR", "GBP"]).default("USD"),
   expiryMonths: z.coerce.number().int().min(1).max(60).default(12),
-  supplierId: z.string().optional(), merchant: z.string().trim().max(80).optional(), mcc: z.string().regex(/^\d{4}$/).optional(), merchantId: z.string().trim().max(64).optional(),
+  supplierId: z.string().optional(), merchant: z.string().trim().max(80).optional(), mcc: z.string().regex(/^\d{4}$/).optional(),
   poId: z.string().optional(), agentId: z.string().optional(), ownerUserId: z.string().optional(),
 });
 async function activate(c: Card) {
@@ -277,7 +277,7 @@ export async function issueCard(u: P.User, tenantId: string, sessionId: string |
   }
   const exp = new Date(); exp.setUTCMonth(exp.getUTCMonth() + x.expiryMonths);
   const c: Card = { id: nextId("card"), tenantId, type: x.type, status: "pending_approval", issuer: (await issuer()).kind, providerRef: null, cardholderRef: null, last4: "", expMonth: exp.getUTCMonth() + 1, expYear: exp.getUTCFullYear(),
-    limit: r2(limit), currency: x.currency, allowedMerchants: merchants, allowedMccs: mccs, supplierId: sup?.id ?? null, poId: x.poId ?? null, ownerType, ownerId, label: x.label, createdBy: u.id, approvedBy: null, createdAt: now(), updatedAt: now(), bindingHash: null, cartAmount: null, cartMandateId: null, merchantId: x.merchantId ?? sup?.cardMerchantId ?? null };
+    limit: r2(limit), currency: x.currency, allowedMerchants: merchants, allowedMccs: mccs, supplierId: sup?.id ?? null, poId: x.poId ?? null, ownerType, ownerId, label: x.label, createdBy: u.id, approvedBy: null, createdAt: now(), updatedAt: now(), bindingHash: null, cartAmount: null, cartMandateId: null, merchantId: sup?.cardMerchantId ?? null };
   return finishIssue(u, sessionId, c);
 }
 /** Shared end of issuing: a large limit waits for a second approver, a small one is issued at once. */

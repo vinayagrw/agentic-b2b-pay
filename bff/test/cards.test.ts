@@ -136,10 +136,21 @@ describe("mandate-bound virtual card", () => {
     const d = auth(card.id, sup.name, card.cartAmount!); expect(d.decision.approved).toBe(false); expect(d.decision.code).toBe("bank_change_hold"); expect(d.card.status).toBe("active");
   });
 
+  it("ignores a merchant id typed by the maker and uses the supplier record", async () => {
+    const po = await order(); const sup = db.suppliers.find((s) => s.id === po.supplierId)!; delete sup.cardMerchantId;
+    const c = await issue({ type: "vendor_locked", limit: 50, supplierId: sup.id, merchantId: "mid-evil" });
+    expect(c.merchantId).toBeNull();
+    sup.cardMerchantId = "mid-777"; const c2 = await issue({ type: "vendor_locked", limit: 50, supplierId: sup.id, merchantId: "mid-evil" });
+    expect(c2.merchantId).toBe("mid-777");
+  });
+
   it("matches the merchant by id when known and falls back to the name", async () => {
     const po = await order(); const sup = db.suppliers.find((s) => s.id === po.supplierId)!; sup.cardMerchantId = "mid-777";
     const card = (await C.issueForOrder(pat(), "tnt-acme", null, po.id)).card; expect(card.merchantId).toBe("mid-777");
     expect(auth(card.id, sup.name, card.cartAmount!, { merchantId: "mid-999" }).decision.code).toBe("wrong_merchant");
+    expect(auth(card.id, "Some Other Name", card.cartAmount!).decision.code).toBe("wrong_merchant");
+    const poN = await order(); const cN = (await C.issueForOrder(pat(), "tnt-acme", null, poN.id)).card; expect(cN.merchantId).toBe("mid-777");
+    expect(auth(cN.id, sup.name, cN.cartAmount!).decision.approved).toBe(true);
     expect(auth(card.id, "Some Other Name", card.cartAmount!, { merchantId: "mid-777" }).decision.approved).toBe(true);
     const po2 = await order(); delete sup.cardMerchantId; const c2 = (await C.issueForOrder(pat(), "tnt-acme", null, po2.id)).card; expect(c2.merchantId).toBeNull();
     expect(auth(c2.id, "Some Other Name", c2.cartAmount!, { merchantId: "mid-777" }).decision.code).toBe("wrong_merchant");
