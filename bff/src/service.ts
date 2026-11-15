@@ -171,7 +171,8 @@ export function mandatesView(intentId: string) {
   const inv = must(db.invoices.find((i) => i.id === pi.invoiceId), "invoice");
   const pair = AP2.currentPair(inv.poId);
   const result = evaluateMandates(pair.intent, pair.cart, { poId: inv.poId, supplierId: inv.supplierId, currency: pi.currency, amount: pi.amount, lines: inv.extract.lines });
-  return { poId: inv.poId, intent: showMandate(pair.intent), cart: showMandate(pair.cart), ...result };
+  const po = db.pos.find((p) => p.id === inv.poId);
+  return { poId: inv.poId, paid: !!po && orderPaid(po), intent: showMandate(pair.intent), cart: showMandate(pair.cart), ...result };
 }
 const showMandate = (m?: AP2.SignedMandate) => m ? { id: m.id, kind: m.kind, signerId: m.signerId, signerKind: m.signerKind, hash: m.hash, createdAt: m.createdAt, body: m.body, keyFingerprint: AP2.keyFingerprint(AP2.publicKeyOf(m.signerId)), signatureValid: AP2.verifySigned(m) } : null;
 const luhn = (d: string) => { let sum = 0; for (let i = d.length - 1, alt = false; i >= 0; i--, alt = !alt) { let n = +d[i]; if (alt) { n *= 2; if (n > 9) n -= 9; } sum += n; } return sum % 10 === 0; };
@@ -201,10 +202,6 @@ function maskPans<T>(v: T): T {
   if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskPans(x)])) as T;
   return v;
 }
-/**
- * Dispute evidence for one paid order: the signed Intent and Cart mandates, the agent identity, who approved and when,
- * the card decision and reason, and the audit events in time order. Scope is the caller's client tenant, or null for an operator.
- */
 /** True when an order was paid by rail, by invoice or by a mandate-bound card. */
 export function orderPaid(po: PurchaseOrder) { return po.status === "paid" || db.invoices.some((i) => i.poId === po.id && i.paid) || !!paidByCard(tenantOf(po), po.id); }
 /** Paid orders in a tenant, newest first, for the evidence list page. */
@@ -212,6 +209,10 @@ export function evidenceOrders(scope: string | null) {
   return db.pos.filter((p) => (!scope || tenantOf(p) === scope) && orderPaid(p)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map((p) => ({ id: p.id, supplier: db.suppliers.find((s) => s.id === p.supplierId)?.name ?? p.supplierId, total: p.total, currency: p.currency ?? "USD", status: p.status, createdAt: p.createdAt, method: paidByCard(tenantOf(p), p.id) ? "card" as const : "rail" as const }));
 }
+/**
+ * Dispute evidence for one paid order: the signed Intent and Cart mandates, the agent identity, who approved and when,
+ * the card decision and reason, and the audit events in time order. Scope is the caller's client tenant, or null for an operator.
+ */
 export function disputeEvidence(scope: string | null, poId: string) {
   const po = db.pos.find((p) => p.id === poId && (!scope || tenantOf(p) === scope));
   if (!po) throw new HttpError(404, "purchase order not found");

@@ -162,4 +162,25 @@ describe("dispute evidence leftovers", () => {
     const g = CP.runTool({ user: P.getUser("usr-globex-gina")!, scope: "tnt-globex", prefix: "/app" }, "disputeEvidence", { poId: po.id });
     expect(g.error).toMatch(/not found|permission|not allowed/i); expect(g.rows.length).toBe(0);
   });
+  it("copilot source link points to a real page for operators", async () => {
+    const { po } = await paidByCard();
+    const CP = await import("../src/copilot.js");
+    const r = CP.runTool({ user: P.getUser("usr-op-olivia")!, scope: null, prefix: "/operator" } as any, "disputeEvidence", { poId: po.id });
+    expect(JSON.stringify(r.source)).toContain("/operator/payments"); expect(JSON.stringify(r.source)).not.toContain("/operator/evidence");
+    const a = CP.runTool({ user: pat(), scope: "tnt-acme", prefix: "/app" }, "disputeEvidence", { poId: po.id });
+    expect(JSON.stringify(a.source)).toContain("/app/evidence");
+  });
+  it("mock planner routes a dispute question with a PO id to disputeEvidence", async () => {
+    const CP = await import("../src/copilot.js");
+    expect(CP.mockPlan("I need chargeback evidence for PO-123")).toEqual([{ name: "disputeEvidence", args: { poId: "po-123" } }]);
+    expect(CP.mockPlan("build a dispute pack for po-9").map((x) => x.name)).toContain("disputeEvidence");
+    expect(CP.mockPlan("show evidence history").map((x) => x.name)).not.toContain("disputeEvidence");
+  });
+  it("mandates view says paid for an order paid only by card", async () => {
+    const { po } = await paidByCard();
+    expect(S.orderPaid(po)).toBe(true);
+    const inv = db.invoices.find((i) => i.poId === po.id); const pi = inv && db.intents.find((x) => x.invoiceId === inv.id);
+    if (pi) expect(S.mandatesView(pi.id).paid).toBe(true);
+    const open = S.createPo((await S.draftPo("Need 5 sealed 6204 bearings")).value); expect(S.orderPaid(open)).toBe(false);
+  });
 });

@@ -185,7 +185,7 @@ export const TOOLS: Tool[] = [
   { name: "disputeEvidence", description: "Dispute evidence summary for one paid order: mandates, agent, approvals, payment and chain check", args: ["poId"], run: (c, a) => {
     const e = S.disputeEvidence(c.scope, String(a.poId ?? ""));
     const row = { poId: e.order.id, supplier: e.order.supplier, total: e.order.total, currency: e.order.currency, method: e.payment.method, intentSigned: !!e.mandates.intent?.signatureValid, cartSigned: !!e.mandates.cart?.signatureValid, olderMandates: e.mandates.history.length, agent: e.agent?.name ?? "none", approvals: e.approvals.decisions.length, events: e.timeline.length, chainValid: e.chain.valid };
-    return { rows: [row], summary: `Order ${row.poId} for ${row.supplier}, ${row.total} ${row.currency}, paid by ${row.method}. ${row.approvals} approval decisions, ${row.events} evidence events, chain ${row.chainValid ? "valid" : "broken"}.`, source: src("disputeEvidence", [{ id: row.poId, href: `${c.prefix}/evidence` }]) };
+    return { rows: [row], summary: `Order ${row.poId} for ${row.supplier}, ${row.total} ${row.currency}, paid by ${row.method}. ${row.approvals} approval decisions, ${row.events} evidence events, chain ${row.chainValid ? "valid" : "broken"}.`, source: src("disputeEvidence", [{ id: row.poId, href: c.prefix === "/operator" ? "/operator/payments" : "/app/evidence" }]) };
   } },
   { name: "supplierProfile", description: "One supplier: status, hold, screening, rails, spend, open invoices and recent payments", args: ["supplierId"], run: (c, a) => {
     const st = scoped(c.scope); const s = st.suppliers.find((x) => x.id === a.supplierId); if (!s) throw new S.HttpError(404, "supplier not found");
@@ -348,7 +348,9 @@ export function mockPlan(q: string, c: Partial<Ctx> = {}): { name: string; args:
   else if (/\brails?\b|health|outage|stripe|circle|usdc|\bach\b/.test(s)) add("railHealth");
   if (op && /kill|switch|paused agent/.test(s)) add("killSwitchState");
   if (op && /\bsla\b|breach|overdue|late|stuck/.test(s)) add("slaBreaches");
-  if (/audit|evidence|history|who (changed|did|approved)/.test(s)) add("auditSearch", { ...(idIn(q, "(?:pi|po|sup|agt|inv|chg|rule)", c) ? { subjectId: idIn(q, "(?:pi|po|sup|agt|inv|chg|rule)", c)! } : {}) });
+  const dpo = /dispute|chargeback|evidence/.test(s) ? idIn(q, "po", c) : undefined;
+  if (dpo) add("disputeEvidence", { poId: dpo });
+  else if (/audit|evidence|history|who (changed|did|approved)/.test(s)) add("auditSearch", { ...(idIn(q, "(?:pi|po|sup|agt|inv|chg|rule)", c) ? { subjectId: idIn(q, "(?:pi|po|sup|agt|inv|chg|rule)", c)! } : {}) });
   if (op && /queue|escalat|ops overview|tasks|bank ops/.test(s)) { add("opsQueues"); add("riskEscalations"); }
   if (/recurring|repeat|schedule|subscription/.test(s)) add("recurringPayments");
   if (/alternative|another rail|other rail|instead|later date|reroute/.test(s)) { add("railHealth"); if (pi) add("whyPayment", { paymentId: pi }); if (sup) add("supplierProfile", { supplierId: sup }); }
