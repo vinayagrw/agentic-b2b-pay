@@ -61,6 +61,28 @@ export function ownInvoice(u: any, invId: unknown) {
   try { ownPo(u, inv.poId); } catch { throw new S.HttpError(404, "invoice not found"); }
   return inv;
 }
+/** 404 unless the caller can see the tenant and it is in their entity scope. */
+const inScope = (u: any, tenantId: string | null | undefined) => P.canAccessTenant(u, tenantId ?? "tnt-acme") && I.inEntityScope(u, tenantId ?? "tnt-acme");
+export function ownPayment(u: any, id: unknown) {
+  const pi = db.intents.find((i) => i.id === id);
+  if (!pi || !inScope(u, pi.tenantId)) throw new S.HttpError(404, "payment not found");
+  return pi;
+}
+export function ownSupplier(u: any, id: unknown) {
+  const sup = db.suppliers.find((x) => x.id === id);
+  if (!sup || !inScope(u, sup.tenantId)) throw new S.HttpError(404, "supplier not found");
+  return sup;
+}
+export function ownCase(u: any, id: unknown) {
+  const c = S.getCase(String(id));
+  if (!c || !inScope(u, c.tenantId)) throw new S.HttpError(404, "case not found");
+  return c;
+}
+/** Fresh authenticator code for payments above the approval step-up threshold. Agents have no session, so they cannot pay above it. */
+export function payStepUp(u: any, sessionId: string | null | undefined, invId: unknown) {
+  const inv = db.invoices.find((i) => i.id === invId); if (!inv) return;
+  const usd = S.invoiceUsd(inv); if (SU.needsStepUp(usd)) SU.requireFresh(u, sessionId ?? null, usd);
+}
 const needUser = (u: any) => { if (!u) throw new P.AuthError(401, "Sign in required"); return u; };
 /** Same guards as POST /invoices/:id/pay: payments.pay, tenant and entity scope, maker-checker. */
 export function payGuard(u: any, invId: unknown) {
@@ -70,7 +92,7 @@ export function payGuard(u: any, invId: unknown) {
 }
 
 /** Who an MCP call acts as: the agent behind the bearer key, or the demo buyer agent for a signed-in person. */
-export type McpCtx = { agentId: string; tenantId: string };
+export type McpCtx = { agentId: string; tenantId: string; sessionId?: string | null };
 /** Resolves the agent from an agk_ bearer key and runs KYA on every call. Wrong key 401, killed, paused or unverified 403. */
 export function mcpAgent(key: string): { user: P.User; ctx: McpCtx } {
   const hit = W.agentKeyLookup(key);
@@ -87,11 +109,11 @@ export function mcpAgent(key: string): { user: P.User; ctx: McpCtx } {
 
 export const TOOLS = [
   { name: "draft_purchase_order", description: "Turn a natural language need into a PO draft", input: { need: "string" }, run: (a: any, _u?: any, c?: McpCtx) => S.draftPo(String(a.need), c?.tenantId) },
-  { name: "create_purchase_order", description: "Submit PO draft, runs policy engine", input: { draft: "PoDraft" }, run: (a: any, u?: any, c?: McpCtx) => { const d = PoDraft.parse(a.draft); const sup = db.suppliers.find((x) => x.id === d.supplierId); if (!sup || !P.canAccessTenant(needUser(u), sup.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "supplier not found"); return S.createPo(d, c?.agentId); } },
-  { name: "evaluate_policy", description: "Dry run policy for supplier, category and amount", input: { supplierId: "string", category: "string", amount: "number" }, run: (a: any, u?: any, c?: McpCtx) => { const agentId = c?.agentId ?? "agt-buyer-1"; const sup = db.suppliers.find((x) => x.id === a.supplierId); if (!sup || (u && !P.canAccessTenant(u, sup.tenantId ?? "tnt-acme"))) throw new S.HttpError(404, "supplier not found"); return S.policyFor(agentId, a.supplierId, a.category, Number(a.amount)).decision; } },
+  { name: "create_purchase_order", description: "Submit PO draft, runs policy engine", input: { draft: "PoDraft" }, run: (a: any, u?: any, c?: McpCtx) => { const d = PoDraft.parse(a.draft); ownSupplier(needUser(u), d.supplierId); return S.createPo(d, c?.agentId); } },
+  { name: "evaluate_policy", description: "Dry run policy for supplier, category and amount", input: { supplierId: "string", category: "string", amount: "number" }, run: (a: any, u?: any, c?: McpCtx) => { const agentId = c?.agentId ?? "agt-buyer-1"; ownSupplier(needUser(u), a.supplierId); return S.policyFor(agentId, a.supplierId, a.category, Number(a.amount)).decision; } },
   { name: "submit_invoice", description: "Supplier agent submits invoice text for a PO", input: { poId: "string", text: "string" }, run: (a: any, u?: any) => { ownPo(needUser(u), a.poId); return S.submitInvoice(a.poId, a.text); } },
   { name: "match_invoice", description: "Run 3-way match", input: { invoiceId: "string" }, run: (a: any, u?: any) => { ownInvoice(needUser(u), a.invoiceId); return S.matchInvoice(a.invoiceId); } },
-  { name: "execute_payment", description: "Route, screen, sign and settle a matched invoice", input: { invoiceId: "string", idempotencyKey: "string" }, run: (a: any, u?: any) => { if (!a.idempotencyKey) throw new S.HttpError(400, "idempotencyKey required"); payGuard(u, a.invoiceId); return S.payInvoice(a.invoiceId, String(a.idempotencyKey)); } },
+  { name: "execute_payment", description: "Route, screen, sign and settle a matched invoice", input: { invoiceId: "string", idempotencyKey: "string" }, run: (a: any, u?: any, c?: McpCtx) => { if (!a.idempotencyKey) throw new S.HttpError(400, "idempotencyKey required"); payGuard(u, a.invoiceId); payStepUp(u, c?.sessionId, a.invoiceId); return S.payInvoice(a.invoiceId, String(a.idempotencyKey)); } },
   { name: "get_evidence", description: "Evidence chain for a subject", input: { subjectId: "string" }, run: (a: any, u?: any) => S.evidenceView(a.subjectId, P.isOperator(needUser(u)) ? null : u.tenantId ?? "tnt-acme") },
 ];
 
@@ -343,7 +365,7 @@ export async function buildApp() {
     const { name, arguments: args } = b(req); const t = TOOLS.find((x) => x.name === name); if (!t) throw new S.HttpError(404, `unknown tool ${name}`);
     const key = bearerOf(req);
     if (key?.startsWith("agk_")) { const m = (req as any).mcpAgent ?? mcpAgent(key); return { content: await (t.run as any)(args ?? {}, m.user, m.ctx) }; }
-    const u = who(req); return { content: await (t.run as any)(args ?? {}, u, { agentId: S.buyerAgent(u.tenantId ?? "tnt-acme")?.id ?? "agt-buyer-1", tenantId: u.tenantId ?? "tnt-acme" }) };
+    const u = who(req); return { content: await (t.run as any)(args ?? {}, u, { agentId: S.buyerAgent(u.tenantId ?? "tnt-acme")?.id ?? "agt-buyer-1", tenantId: u.tenantId ?? "tnt-acme", sessionId: (req as any).sessionId ?? null }) };
   });
   // A2A style agent card
   app.get("/.well-known/agent.json", async () => ({ name: "B2B pay gateway", protocols: ["mcp", "a2a"], skills: TOOLS.map((t) => t.name), url: "http://localhost:8790" }));
@@ -374,12 +396,12 @@ export async function buildApp() {
   app.post("/invoices/:id/pay", async (req: any) => {
     const key = req.headers["idempotency-key"]; if (!key) throw new S.HttpError(400, "Idempotency-Key header required");
     const u = who(req); const inv = db.invoices.find((i) => i.id === req.params.id); const po = inv && db.pos.find((p) => p.id === inv.poId);
-    if (inv) payGuard(u, inv.id);
+    if (inv) { payGuard(u, inv.id); payStepUp(u, req.sessionId, inv.id); }
     return S.payInvoice(req.params.id, String(key), { urgency: b(req).urgency, approvers: b(req).approvers, fxLockId: b(req).fxLockId ? String(b(req).fxLockId) : undefined });
   });
-  app.post("/refunds", async (req) => { const u = who(req); const pi = db.intents.find((i) => i.id === b(req).paymentIntentId); if (!pi || !P.canAccessTenant(u, pi.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "payment not found"); const r = await S.refund(pi.id, Number(b(req).amount), String(b(req).reason ?? "refund")); P.audit(u.id, "refund", r.id, "refund.requested_by", { amount: r.amount }); return r; });
+  app.post("/refunds", async (req) => { const u = who(req); const pi = ownPayment(u, b(req).paymentIntentId); const r = await S.refund(pi.id, Number(b(req).amount), String(b(req).reason ?? "refund")); P.audit(u.id, "refund", r.id, "refund.requested_by", { amount: r.amount }); return r; });
   app.post("/erp/vendor-master/changes", async (req: any) => { const { u, t } = ctx(req); return BC.requestFromErp(u, t, b(req)); });
-  app.get("/settlements/:id", async (req: any) => db.settlements.find((s) => s.id === req.params.id) ?? { error: "not found" });
+  app.get("/settlements/:id", async (req: any) => { const u = who(req); const st = db.settlements.find((s) => s.id === req.params.id); if (!st || !inScope(u, st.tenantId ?? db.intents.find((i) => i.id === st.paymentIntentId)?.tenantId)) throw new S.HttpError(404, "settlement not found"); return st; });
   app.get("/ledger/journals", async () => S.ledgerView());
   // Legal entities and FX. A client sees only its own entities, locks and books.
   app.get("/entities", async (req) => S.entitiesView(scopeOf(req)));
@@ -401,7 +423,7 @@ export async function buildApp() {
   app.post("/views", async (req) => TB.saveView(who(req), b(req)));
   app.delete("/views/:id", async (req: any) => TB.deleteView(who(req), req.params.id));
   app.get("/export/:kind", async (req: any, reply) => { const u = who(req); const ids = req.query?.ids ? new Set(String(req.query.ids).split(",").filter(Boolean).slice(0, 1000)) : undefined; const csv = TB.exportCsv(req.params.kind, scopeOf(req), u, () => clientOf(req, u), ids); return reply.type("text/csv; charset=utf-8").header("content-disposition", `attachment; filename="${req.params.kind}.csv"`).send(csv); });
-  app.get("/payments/:id", async (req: any) => { const i = db.intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); Risk.ensureScores([i]); return { intent: i, riskReview: Risk.reviewOf(i.id), settlement: db.settlements.find((s) => s.id === i.settlementId) ?? null, attempts: i.kind === "refund" ? [] : S.paymentAttempts(i.id), maxAttempts: S.MAX_PAYMENT_ATTEMPTS, evidence: db.evidence.filter((e) => e.subjectId === i.id) }; });
+  app.get("/payments/:id", async (req: any) => { const i = ownPayment(who(req), req.params.id); Risk.ensureScores([i]); return { intent: i, riskReview: Risk.reviewOf(i.id), settlement: db.settlements.find((s) => s.id === i.settlementId) ?? null, attempts: i.kind === "refund" ? [] : S.paymentAttempts(i.id), maxAttempts: S.MAX_PAYMENT_ATTEMPTS, evidence: db.evidence.filter((e) => e.subjectId === i.id) }; });
   app.post("/payments/:id/retry", async (req: any) => {
     const key = req.headers["idempotency-key"]; if (!key) throw new S.HttpError(400, "Idempotency-Key header required");
     const u = who(req); const i = scoped(scopeOf(req)).intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found");
@@ -450,10 +472,10 @@ export async function buildApp() {
   app.post("/ops/recon/exceptions/:id/resolve", async (req: any) => { const { u, t } = opCtx(req); return O.resolveException(u, t, decodeURIComponent(req.params.id), b(req).action, String(b(req).note ?? "")); });
   app.get("/ops/recon/export.csv", async (req: any, reply) => { const { t } = opCtx(req); return reply.type("text/csv").header("content-disposition", `attachment; filename="recon-${t}.csv"`).send(O.reconCsv(t)); });
   app.get("/ops/compliance", async (req) => { who(req); return { ...O.complianceStatus(), cases: S.listCases(null), travelRule: O.travelRuleRecords(null) }; });
-  app.post("/ops/cases/:id/sar/draft", async (req: any) => O.draftSar(who(req), req.params.id));
-  app.put("/ops/cases/:id/sar", async (req: any) => O.editSar(who(req), req.params.id, String(b(req).text ?? "")));
-  app.post("/ops/cases/:id/sar/file", async (req: any) => O.fileSar(who(req), req.params.id));
-  app.post("/ops/cases/:id/close", async (req: any) => O.closeCase(who(req), req.params.id, String(b(req).resolution ?? "")));
+  app.post("/ops/cases/:id/sar/draft", async (req: any) => O.draftSar(who(req), ownCase(who(req), req.params.id).id));
+  app.put("/ops/cases/:id/sar", async (req: any) => O.editSar(who(req), ownCase(who(req), req.params.id).id, String(b(req).text ?? "")));
+  app.post("/ops/cases/:id/sar/file", async (req: any) => O.fileSar(who(req), ownCase(who(req), req.params.id).id));
+  app.post("/ops/cases/:id/close", async (req: any) => O.closeCase(who(req), ownCase(who(req), req.params.id).id, String(b(req).resolution ?? "")));
   // Step 6: revenue, KPIs, dispute evidence, developer keys and webhooks
   app.get("/ops/revenue", async (req) => { who(req); return A.revenue(); });
   app.get("/orders/:poId/evidence", async (req: any) => S.disputeEvidence(scopeOf(req), req.params.poId));
@@ -523,7 +545,7 @@ export async function buildApp() {
     req.raw.on("close", () => { off(); clearInterval(ping); if (timer) clearTimeout(timer); });
   });
   app.get("/ops/kpis", async (req) => { who(req); return A.kpis(); });
-  app.get("/cases/:id/evidence-pack", async (req: any, reply) => { const u = who(req); const c = S.getCase(req.params.id); if (!c || !P.canAccessTenant(u, c.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "case not found"); P.audit(u.id, "case", c.id, "dispute.evidence_exported", {}); return reply.header("content-disposition", `attachment; filename="evidence-${c.id}.json"`).send(A.evidencePack(c.id)); });
+  app.get("/cases/:id/evidence-pack", async (req: any, reply) => { const u = who(req); const c = ownCase(u, req.params.id); P.audit(u.id, "case", c.id, "dispute.evidence_exported", {}); return reply.header("content-disposition", `attachment; filename="evidence-${c.id}.json"`).send(A.evidencePack(c.id)); });
   app.get("/dev/keys", async (req) => D.listApiKeys(ctx(req).t));
   app.post("/dev/keys", async (req) => { const { u, t } = ctx(req); return D.createApiKey(u, t, String(b(req).label ?? ""), b(req).role ?? "auditor"); });
   app.post("/dev/keys/:id/revoke", async (req: any) => { const { u, t } = ctx(req); return D.revokeApiKey(u, t, req.params.id); });
