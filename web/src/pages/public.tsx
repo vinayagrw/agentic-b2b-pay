@@ -2,7 +2,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { KeyRound, LogIn } from "lucide-react";
-import { api, useGet, type Me } from "../lib/api";
+import { api, useGet, useStartupGet, type Me } from "../lib/api";
 import { afterLogin } from "../lib/session";
 import { Badge, Card, ErrorNote, Muted } from "../components/ui";
 import { OnboardPortal } from "./workspace";
@@ -10,7 +10,7 @@ import { SsoButtons } from "./iam";
 
 const ROLE_LABEL: Record<string, string> = { operator_admin: "Operator admin", client_admin: "Client admin", approver: "Approver", ap_clerk: "AP clerk", auditor: "Auditor" };
 export function Login() {
-  const { data: cfg } = useGet<{ demo: boolean; sso: { id: string; label: string }[]; saml?: { available: boolean; label?: string } }>("/auth/config");
+  const { data: cfg } = useStartupGet<{ demo: boolean; sso: { id: string; label: string }[]; saml?: { available: boolean; label?: string } }>("/auth/config");
   const { data } = useGet<{ users: any[] }>("/auth/demo-users", !!cfg?.demo); const qc = useQueryClient(); const nav = useNavigate();
   const [err, setErr] = useState(() => new URLSearchParams(location.search).get("error") ?? "");
   const go = async (u: any) => { try { await api("/auth/login", { userId: u.id }); await afterLogin(qc, () => api<Me>("/me"), nav); } catch (e: any) { setErr(e.message); } };

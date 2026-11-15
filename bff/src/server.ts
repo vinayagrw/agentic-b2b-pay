@@ -95,7 +95,12 @@ export const TOOLS = [
   { name: "get_evidence", description: "Evidence chain for a subject", input: { subjectId: "string" }, run: (a: any, u?: any) => S.evidenceView(a.subjectId, P.isOperator(needUser(u)) ? null : u.tenantId ?? "tnt-acme") },
 ];
 
+/** True once migrations and seed data are in place. GET /ready reports it. */
+let ready = false;
+export const isReady = () => ready;
+export const setReady = (v: boolean) => { ready = v; };
 export async function buildApp() {
+  ready = false;
   const app = Fastify({ logger: false, bodyLimit: 5 * 1024 * 1024 });
   await app.register(cors, { origin: true, credentials: true });
   // Keep the raw bytes for webhook signature checks, parse JSON for everything else.
@@ -113,13 +118,14 @@ export async function buildApp() {
   await app.register(rateLimit, {
     global: true, timeWindow: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000, keyGenerator: rlKey,
     max: (req: any, key: string) => key.startsWith("key:") ? Number(process.env.RATE_LIMIT_KEY_MAX) || 120 : key.startsWith("sid:") ? Number(process.env.RATE_LIMIT_SESSION_MAX) || 600 : Number(process.env.RATE_LIMIT_IP_MAX) || 300,
-    allowList: (req: any) => req.url === "/health" || req.url.startsWith("/events") || req.url.startsWith("/live/stream") || req.url.startsWith("/webhooks/") || req.url.startsWith("/docs"),
+    allowList: (req: any) => req.url === "/health" || req.url === "/ready" || req.url.startsWith("/events") || req.url.startsWith("/live/stream") || req.url.startsWith("/webhooks/") || req.url.startsWith("/docs"),
     errorResponseBuilder: (_req: any, c: any) => Object.assign(new Error(`Too many requests. Try again in ${c.after}.`), { statusCode: 429 }),
   });
   await app.register(swagger, { openapi: { info: { title: "B2B Pay BFF", version: "0.1.0", description: "Agentic B2B payments API. Test mode only, no real funds." }, components: { securitySchemes: { session: { type: "apiKey", in: "cookie", name: "sid" }, bearer: { type: "http", scheme: "bearer" } } } } });
   await app.register(swaggerUi, { routePrefix: "/docs" });
   P.seedPlatform(); I.seedIdp();
   CR.seedDemo(); BC.seedDemo(); // again here: on a fresh database the demo user only exists after seedPlatform
+  ready = true;
   const COOKIE = { path: "/", httpOnly: true, sameSite: "lax" as const, signed: true };
   const userOf = (req: any): P.User | null => {
     const bearer = /^Bearer (\S+)$/.exec(String(req.headers?.authorization ?? ""))?.[1];
@@ -164,7 +170,7 @@ export async function buildApp() {
   });
   const b = (req: any) => (req.body ?? {}) as any;
   // Every route needs a signed-in user unless listed as public. Each route maps to one permission, checked here by requirePermission.
-  const PUBLIC = new Set(["/health", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle", "/webhooks/stripe-issuing", "/mcp", "/integrations/slack/actions", "/integrations/teams/actions"]);
+  const PUBLIC = new Set(["/health", "/ready", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle", "/webhooks/stripe-issuing", "/mcp", "/integrations/slack/actions", "/integrations/teams/actions"]);
   const ROUTE_PERMS: Record<string, I.Permission> = {
     "POST /reset": "platform.reset", "POST /kill-switch": "agents.manage", "POST /agents": "agents.manage", "POST /agents/:id/verify": "agents.manage", "POST /agents/:id/suspend": "agents.manage", "POST /agents/:id/resume": "agents.manage",
     "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /approvals/:poId/resubmit": "workspace.read", "POST /approvals/delegations": "payments.approve", "POST /approvals/delegations/:id/revoke": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /invoices/:id/override": "payments.approve", "POST /invoices/:id/credit-notes": "payments.approve", "POST /invoices/:id/hold": "flow.operate", "POST /refunds": "payments.refund", "POST /payments/:id/retry": "payments.pay", "POST /payments/:id/ach-return": "payments.refund",
@@ -327,6 +333,7 @@ export async function buildApp() {
   app.post("/changes/:id/decide", async (req: any) => { const u = who(req); return P.decideChange(u, req.params.id, !!b(req).approve); });
 
   app.get("/health", async () => ({ ok: true, llmMode: llmMode() }));
+  app.get("/ready", async (_req, reply) => ready ? { ready: true } : reply.code(503).send({ ready: false, error: "Starting up" }));
   app.get("/state", async (req) => ({ ...scoped(scopeOf(req)), llmMode: llmMode(), signers: S.SIGNERS }));
   app.post("/reset", async () => { reset(); S.bootstrap(); return { ok: true }; });
 
