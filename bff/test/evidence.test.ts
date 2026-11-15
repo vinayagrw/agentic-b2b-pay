@@ -24,6 +24,19 @@ async function paidByCard(ask = "Need 50 sealed 6204 bearings", approve: (id: st
 const login = async (app: any, userId: string) => { const r = await app.inject({ method: "POST", url: "/auth/login", payload: { userId } }); return `sid=${r.cookies.find((x: any) => x.name === "sid")!.value}`; };
 
 describe("dispute evidence record", () => {
+  it("keeps both mandates valid for seeded order po-duty-seed-2 paid on the simulated issuer", async () => {
+    const po = db.pos.find((p) => p.id === "po-duty-seed-2")!; const sup = db.suppliers.find((s) => s.id === "sup-fabrikam")!;
+    const { card } = await C.issueForOrder(pat(), "tnt-acme", null, po.id);
+    expect(card.cartAmount).toBe(po.total);
+    const r = C.authorize("tnt-acme", card.id, { merchant: sup.name, amount: card.cartAmount!, supplierId: sup.id }, { source: "simulator", actor: "usr-clerk-pat" });
+    expect(r.decision.approved).toBe(true);
+    const e = S.disputeEvidence("tnt-acme", po.id); const pair = AP2.currentPair(po.id);
+    expect(e.mandates.intent).toMatchObject({ kind: "intent", signatureValid: true }); expect(e.mandates.cart).toMatchObject({ kind: "cart", signatureValid: true });
+    expect(AP2.verifySigned(pair.intent!)).toBe(true); expect(AP2.verifySigned(pair.cart!)).toBe(true);
+    const v = AP2.verifyMandatePair(pair.intent, pair.cart, { poId: po.id, supplierId: sup.id, currency: pair.cart!.body.currency, amount: card.cartAmount!, lines: pair.cart!.body.lines });
+    expect(v.ok).toBe(true);
+  });
+
   it("is complete for a mandate-bound card payment", async () => {
     const { po, sup, card } = await paidByCard();
     const e = S.disputeEvidence("tnt-acme", po.id); const pair = AP2.currentPair(po.id);
