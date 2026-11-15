@@ -43,6 +43,7 @@ import * as CARDS from "./cards.js";
 import * as BC from "./bankchange.js";
 import * as CR from "./credit.js";
 import { buildMcpServer } from "./mcp.js";
+import { verifyAgent } from "./modules/kya.js";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 
@@ -67,10 +68,26 @@ export function payGuard(u: any, invId: unknown) {
   return inv;
 }
 
+/** Who an MCP call acts as: the agent behind the bearer key, or the demo buyer agent for a signed-in person. */
+export type McpCtx = { agentId: string; tenantId: string };
+/** Resolves the agent from an agk_ bearer key and runs KYA on every call. Wrong key 401, killed, paused or unverified 403. */
+export function mcpAgent(key: string): { user: P.User; ctx: McpCtx } {
+  const hit = W.agentKeyLookup(key);
+  if (!hit || !hit.agent) throw new P.AuthError(401, "Unknown agent key");
+  const a = hit.agent; const tenantId = a.tenantId ?? "tnt-acme";
+  if ((a as any).killed) throw new P.AuthError(403, "This agent was killed");
+  if (hit.revoked) throw new P.AuthError(401, "This agent key was revoked");
+  if (a.status !== "active") throw new P.AuthError(403, "This agent is paused");
+  if (db.killSwitch) throw new P.AuthError(403, "The kill switch is on. Agents cannot act");
+  const org = db.orgs.find((o) => o.id === a.orgId);
+  if (!verifyAgent(a, org?.kybStatus === "verified").verified) throw new P.AuthError(403, "This agent failed the KYA check");
+  return { user: { id: `agent:${a.id}`, tenantId, name: a.name, email: "", role: "ap_clerk" } as P.User, ctx: { agentId: a.id, tenantId } };
+}
+
 export const TOOLS = [
   { name: "draft_purchase_order", description: "Turn a natural language need into a PO draft", input: { need: "string" }, run: (a: any) => S.draftPo(String(a.need)) },
   { name: "create_purchase_order", description: "Submit PO draft, runs policy engine", input: { draft: "PoDraft" }, run: (a: any, u?: any) => { const d = PoDraft.parse(a.draft); const sup = db.suppliers.find((x) => x.id === d.supplierId); if (!sup || !P.canAccessTenant(needUser(u), sup.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "supplier not found"); return S.createPo(d); } },
-  { name: "evaluate_policy", description: "Dry run policy for supplier, category and amount", input: { supplierId: "string", category: "string", amount: "number" }, run: (a: any) => S.policyFor("agt-buyer-1", a.supplierId, a.category, Number(a.amount)).decision },
+  { name: "evaluate_policy", description: "Dry run policy for supplier, category and amount", input: { supplierId: "string", category: "string", amount: "number" }, run: (a: any, u?: any, c?: McpCtx) => { const agentId = c?.agentId ?? "agt-buyer-1"; const sup = db.suppliers.find((x) => x.id === a.supplierId); if (u && sup && !P.canAccessTenant(u, sup.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "supplier not found"); return S.policyFor(agentId, a.supplierId, a.category, Number(a.amount)).decision; } },
   { name: "submit_invoice", description: "Supplier agent submits invoice text for a PO", input: { poId: "string", text: "string" }, run: (a: any, u?: any) => { ownPo(needUser(u), a.poId); return S.submitInvoice(a.poId, a.text); } },
   { name: "match_invoice", description: "Run 3-way match", input: { invoiceId: "string" }, run: (a: any, u?: any) => { ownInvoice(needUser(u), a.invoiceId); return S.matchInvoice(a.invoiceId); } },
   { name: "execute_payment", description: "Route, screen, sign and settle a matched invoice", input: { invoiceId: "string", idempotencyKey: "string" }, run: (a: any, u?: any) => { if (!a.idempotencyKey) throw new S.HttpError(400, "idempotencyKey required"); payGuard(u, a.invoiceId); return S.payInvoice(a.invoiceId, String(a.idempotencyKey)); } },
@@ -171,6 +188,7 @@ export async function buildApp() {
   app.addHook("preHandler", async (req: any) => {
     const url = req.routeOptions?.url as string | undefined;
     if (!url || PUBLIC.has(url) || url.startsWith("/uploads/") || url.startsWith("/onboard/") || url.startsWith("/supplier-portal/") || url.startsWith("/scim/") || url.startsWith("/docs") || req.method === "HEAD" || req.method === "OPTIONS") return;
+    if (url === "/mcp/call" && bearerOf(req)?.startsWith("agk_")) { req.mcpAgent = mcpAgent(bearerOf(req)!); req.sessionUser = req.mcpAgent.user; }
     can(req, permFor(req.method, url));
   });
 
@@ -313,7 +331,12 @@ export async function buildApp() {
 
   // Agent gateway: MCP style
   app.get("/mcp/tools", async () => ({ tools: TOOLS.map(({ run, ...t }) => t) }));
-  app.post("/mcp/call", async (req) => { const { name, arguments: args } = b(req); const t = TOOLS.find((x) => x.name === name); if (!t) throw new S.HttpError(404, `unknown tool ${name}`); return { content: await (t.run as any)(args ?? {}, who(req)) }; });
+  app.post("/mcp/call", async (req) => {
+    const { name, arguments: args } = b(req); const t = TOOLS.find((x) => x.name === name); if (!t) throw new S.HttpError(404, `unknown tool ${name}`);
+    const key = bearerOf(req);
+    if (key?.startsWith("agk_")) { const m = (req as any).mcpAgent ?? mcpAgent(key); return { content: await (t.run as any)(args ?? {}, m.user, m.ctx) }; }
+    const u = who(req); return { content: await (t.run as any)(args ?? {}, u, { agentId: S.buyerAgent(u.tenantId ?? "tnt-acme")?.id ?? "agt-buyer-1", tenantId: u.tenantId ?? "tnt-acme" }) };
+  });
   // A2A style agent card
   app.get("/.well-known/agent.json", async () => ({ name: "B2B pay gateway", protocols: ["mcp", "a2a"], skills: TOOLS.map((t) => t.name), url: "http://localhost:8790" }));
 

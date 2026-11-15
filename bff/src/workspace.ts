@@ -40,6 +40,12 @@ export function agentForKey(plain: string) {
   if (!r) return null; const a = db.agents.find((x) => x.id === r.agent_id);
   return a && a.status === "active" ? a : null;
 }
+/** Key row lookup that keeps revoked keys, so callers can tell a wrong key (401) from a killed or paused agent (403). */
+export function agentKeyLookup(plain: string): { agent: Agent | null; revoked: boolean } | null {
+  const r = sql.prepare("SELECT * FROM agent_keys WHERE hash = ?").get(sha(plain)) as any;
+  if (!r) return null;
+  return { agent: db.agents.find((x) => x.id === r.agent_id) ?? null, revoked: !!r.revoked_at };
+}
 export const agentKeys = (agentId: string) => sql.prepare("SELECT id, prefix, created_by createdBy, created_at createdAt, revoked_at revokedAt FROM agent_keys WHERE agent_id = ? ORDER BY created_at DESC").all(agentId);
 
 export const MandateInput = z.object({
