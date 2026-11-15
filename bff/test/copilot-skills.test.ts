@@ -14,8 +14,8 @@ const ctx = (id: string, scope: string | null): CP.Ctx => ({ user: P.getUser(id)
 const names = () => CP.TOOLS.map((t) => t.name);
 
 describe("copilot skills (mock mode)", () => {
-  it("loads the six seeded skills and rejects a bad tool with a log line", () => {
-    expect(CP.skills().map((s) => s.slug)).toEqual(["approval-backlog", "fx-exposure", "month-end-cash-review", "recon-exceptions", "spend-variance", "supplier-risk-check"]);
+  it("loads the seeded skills and rejects a bad tool with a log line", () => {
+    expect(CP.skills().map((s) => s.slug)).toEqual(["approval-backlog", "fx-exposure", "month-end-cash-review", "recon-exceptions", "spend-variance", "supplier-risk-check", "tariff-cash-scenario"]);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sk-"));
     const w = (slug: string, tools: string) => { fs.mkdirSync(path.join(dir, slug)); fs.writeFileSync(path.join(dir, slug, "SKILL.md"), `---\nname: T\ndescription: d\ntools: [${tools}]\n---\n1. step\n`); };
     w("good-one", "spendBySupplier"); w("bad-one", "spendBySupplier, dropTables");

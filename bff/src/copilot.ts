@@ -21,10 +21,11 @@ import { z } from "zod";
 import * as SK from "./skills.js";
 import * as CARDS from "./cards.js";
 import * as TM from "./terms.js";
-import { termsLabel } from "@b2b/shared";
+import { termsLabel, TARIFF_DEFAULT_DATE } from "@b2b/shared";
+import * as TF from "./tariff.js";
 
 export type Source = { tool: string; ids: string[]; links: { id: string; href: string }[] };
-export type ToolResult = { tool: string; args: Record<string, string>; summary: string; rows: unknown[]; source: Source; error?: string };
+export type ToolResult = { tool: string; args: Record<string, string>; summary: string; rows: unknown[]; source: Source; error?: string; chart?: { type: ChartType; title?: string; x: string; y: string[] } };
 export type ProposalKind = "reroute_payment" | "schedule_payment" | "approve_po" | "reject_po" | "suspend_agent" | "resume_agent" | "supplier_hold" | "supplier_release" | "lock_fx" | "start_sweep" | "draft_policy" | "pay_early";
 export type Proposal = { id: string; kind: ProposalKind; label: string; method: "POST"; path: string; body: Record<string, unknown>; target: string; allowed: boolean; reason: string; detail?: string; source?: "model" };
 export type ChartType = "bar" | "line" | "area" | "donut" | "stacked" | "table";
@@ -135,24 +136,36 @@ export const TOOLS: Tool[] = [
     const summary = rows.map((r) => `${r.label} ${r.state} (${r.env}, ${r.failed} of ${r.attempts} failed in 24 hours)`).join(", ");
     return { summary, rows, source: src("railHealth", rows.map((r) => ({ id: r.rail, href: c.prefix === "/app" ? "/app/settings" : "/operator/treasury" }))) };
   } },
-  { name: "cashForecast", description: "Simple 4 week cash forecast from ledger cash, payments in flight and open invoices by due date", args: [], run: (c) => {
+  { name: "cashForecast", description: "Simple 12 week cash forecast from ledger cash, payments in flight and open invoices by due date", args: [], run: (c) => {
     const st = scoped(c.scope); const day0 = Date.parse(new Date().toISOString().slice(0, 10));
     const start = round(S.entitiesView(c.scope).filter((e) => e.currency === "USD").reduce((a, e) => a + e.cash, 0));
     const inflight = st.intents.filter((i) => i.kind !== "refund" && ["created", "routed", "submitted", "pending"].includes(i.status));
-    const weeks = Array.from({ length: 4 }, (_, n) => ({ week: `Week ${n + 1}`, from: new Date(day0 + n * 7 * 864e5).toISOString().slice(0, 10), outflow: 0, early: 0, items: [] as string[] }));
+    const weeks = Array.from({ length: TF.WEEKS }, (_, n) => ({ week: `Week ${n + 1}`, from: new Date(day0 + n * 7 * 864e5).toISOString().slice(0, 10), outflow: 0, early: 0, items: [] as string[] }));
     for (const i of inflight) { weeks[0].outflow = round(weeks[0].outflow + i.amount); weeks[0].early = round(weeks[0].early + i.amount); weeks[0].items.push(i.id); }
     let later = 0; let saved = 0; const today = new Date(day0).toISOString().slice(0, 10);
     for (const inv of st.invoices.filter((x) => !x.paid && !inflight.some((i) => i.invoiceId === x.id))) {
       const d = Date.parse(inv.dueDate); const n = Number.isNaN(d) ? 0 : Math.max(0, Math.floor((d - day0) / (7 * 864e5)));
       // Pay early option: the net amount on the discount date while the discount is open. Otherwise the same as paying on the due date.
       const leg = TM.forecastLegs(inv, today).early; const e = Math.max(0, Math.floor((Date.parse(leg.date) - day0) / (7 * 864e5)));
-      if (!Number.isNaN(e) && e <= 3) weeks[e].early = round(weeks[e].early + leg.amount); saved = round(saved + leg.saved);
-      if (n > 3) { later = round(later + inv.amount); continue; } weeks[n].outflow = round(weeks[n].outflow + inv.amount); weeks[n].items.push(inv.id);
+      if (!Number.isNaN(e) && e < TF.WEEKS) weeks[e].early = round(weeks[e].early + leg.amount); saved = round(saved + leg.saved);
+      if (n >= TF.WEEKS) { later = round(later + inv.amount); continue; } weeks[n].outflow = round(weeks[n].outflow + inv.amount); weeks[n].items.push(inv.id);
     }
     let bal = start; let eb = start; const rows = weeks.map((w) => { bal = round(bal - w.outflow); eb = round(eb - w.early); return { week: w.week, from: w.from, outflow: w.outflow, balance: bal, items: w.items.length, payEarlyOutflow: w.early, payEarlyBalance: eb }; });
-    const summary = `Starting USD ledger cash ${money(start)}. ` + rows.map((r) => `${r.week} out ${money(r.outflow)}, balance ${money(r.balance)}`).join(", ") + (later ? `. ${money(later)} is due after 4 weeks` : "")
-      + (saved ? `. Pay early option: taking every open early-pay discount saves ${TM.totalsText(TM.payOptions(c.scope, today).byCurrency, "saved") || money(saved)} (demo figure) and moves that cash out sooner, week 4 balance ${money(rows[3].payEarlyBalance)} against ${money(rows[3].balance)} when paying on the due date` : "");
+    const last = rows[rows.length - 1]; const busy = rows.filter((r) => r.outflow);
+    const summary = `Starting USD ledger cash ${money(start)}. Forecast for ${TF.WEEKS} weeks. ` + (busy.length ? busy.map((r) => `${r.week} out ${money(r.outflow)}, balance ${money(r.balance)}`).join(", ") : "Nothing is due to go out") + `. ${last.week} balance ${money(last.balance)}` + (later ? `. ${money(later)} is due after ${TF.WEEKS} weeks` : "")
+      + (saved ? `. Pay early option: taking every open early-pay discount saves ${TM.totalsText(TM.payOptions(c.scope, today).byCurrency, "saved") || money(saved)} (demo figure) and moves that cash out sooner, week ${TF.WEEKS} balance ${money(last.payEarlyBalance)} against ${money(last.balance)} when paying on the due date` : "");
     return { summary, rows, source: src("cashForecast", weeks.flatMap((w) => w.items.slice(0, 3)).map((id) => ({ id, href: id.startsWith("pi-") ? `${c.prefix}/payments/${id}` : c.prefix === "/app" ? "/app/invoices" : "/operator/treasury" }))) };
+  } },
+  { name: "tariffScenario", description: "Tariff cash scenario: weekly cash out for 12 weeks with duty exclusions kept and with exclusions ended for customs entries after a chosen date (after, a date like 2027-01-09, the default). Duty rates are user inputs on PO lines, there is no live tariff feed", args: [], opt: ["after"], run: (c, a) => {
+    const after = a.after || TARIFF_DEFAULT_DATE; if (!TF.validDay(after)) throw new Error("after must be a date like 2027-01-09");
+    const base = TOOLS.find((t) => t.name === "cashForecast")!.run(c, {}).rows as { week: string; from: string; outflow: number }[];
+    const sc = TF.scenario(c.scope, base, after); const t = sc.totals; const hit = sc.lines.filter((l) => l.place === "in_window" && l.dutyWithoutExclusions > l.dutyWithExclusions);
+    const peak = [...sc.rows].sort((x, y) => y.extraDuty - x.extraDuty)[0];
+    const summary = !sc.lines.length ? `No purchase order line has a duty rate yet. Add duty fields to a PO line to run this scenario. ${sc.note}`
+      : `Scenario date ${after}. Cash out over ${TF.WEEKS} weeks with exclusions kept ${money(t.withExclusions)}, of which duty ${money(t.dutyWithExclusions)}. With exclusions ended for customs entries after ${after} it is ${money(t.withoutExclusions)}, of which duty ${money(t.dutyWithoutExclusions)}. Extra duty ${money(t.extraDuty)} on ${hit.length} PO line${hit.length === 1 ? "" : "s"}`
+        + (peak?.extraDuty ? `, most in ${peak.week} (from ${peak.from}) with ${money(peak.extraDuty)}` : "") + (sc.outside.later ? `. ${sc.outside.later} line${sc.outside.later === 1 ? "" : "s"} with customs entry after week ${TF.WEEKS} not counted` : "") + (sc.outside.noDate ? `. ${sc.outside.noDate} line${sc.outside.noDate === 1 ? "" : "s"} with no customs entry date not counted` : "") + `. A customs entry on ${after} itself still has the exclusion. ${sc.note}`;
+    return { summary, rows: sc.rows, chart: { type: "line", title: "Weekly cash out with and without exclusions", x: "week", y: ["cashOutWithExclusions", "cashOutWithoutExclusions"] },
+      source: src("tariffScenario", [...new Set(sc.lines.map((l) => l.poId))].slice(0, 8).map((id) => ({ id, href: c.prefix === "/app" ? "/app/purchase-orders" : "/operator/treasury" }))) };
   } },
   { name: "discountsAvailable", description: "Early-pay discounts on unpaid invoices: terms, pay-by date, saving (demo figure) and status, plus pay-early against pay-on-due totals", args: [], run: (c) => {
     const rows = TM.discountRows(c.scope); const o = TM.payOptions(c.scope); const live = rows.filter((r) => r.status !== "missed");
@@ -284,7 +297,7 @@ export function runTool(c: Ctx, name: string, args: Record<string, string> = {})
   if (t.schema) { const p = QueryArgs.safeParse(Object.fromEntries(Object.entries(args).filter(([, v]) => v !== "" && v !== undefined && v !== null))); if (!p.success) return empty(`${name} args are not valid: ${p.error.issues.map((i) => i.path.join(".") || i.message).join(", ")}`);
     return { tool: name, args: Object.fromEntries(Object.entries(p.data).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])), ...t.run(c, p.data as any) }; }
   for (const k of t.args) { const v = String(args[k] ?? ""); if (!ID.test(v)) return empty(`${k} must be a record id`); clean[k] = v; }
-  for (const k of t.opt ?? []) { const v = args[k] === undefined ? "" : String(args[k]); if (!v) continue; if (!(k === "term" ? TERM : ID).test(v)) return empty(`${k} is not valid`); clean[k] = v; }
+  for (const k of t.opt ?? []) { const v = args[k] === undefined ? "" : String(args[k]); if (!v) continue; if (!(k === "term" ? TERM : k === "after" ? /^\d{4}-\d{2}-\d{2}$/ : ID).test(v)) return empty(k === "after" ? "after must be a date like 2027-01-09" : `${k} is not valid`); clean[k] = v; }
   try { return { tool: name, args: clean, ...t.run(c, clean) }; } catch (e: any) { return empty(e instanceof S.HttpError && e.status === 404 ? `${Object.values(clean)[0] ?? "record"} was not found in your tenant` : String(e.message ?? e)); }
 }
 
@@ -309,7 +322,8 @@ export function mockPlan(q: string, c: Partial<Ctx> = {}): { name: string; args:
   if (/draft.*(rule|policy)|(rule|policy).*draft|approval rule|polic/.test(s)) add("approvalRules");
   if (/risk|fraud|flagged|suspicious/.test(s) && !plan.some((p) => p.name === "riskScore")) add("riskInbox");
   if (/discount|pay(ing)? early|early.?pay|payment terms|\bterms\b|net \d+/.test(s)) add("discountsAvailable");
-  if (/forecast|runway|cash flow|next (week|month)|upcoming/.test(s)) add("cashForecast");
+  if (/tariff|\bdut(y|ies)\b|exclusion|landed cost|customs/.test(s)) { const d = TF.dayIn(q); add("tariffScenario", d ? { after: d } : {}); }
+  if (/forecast|runway|cash flow|next (week|month)|upcoming/.test(s) && !plan.some((p) => p.name === "tariffScenario")) add("cashForecast");
   if (/bank detail|bank change|bank account change|payee change|payout change|changed? (their |its )?bank/.test(s)) add("bankChanges");
   if (/\bcards?\b|card spend|virtual card/.test(s)) add("cardSpend");
   if (/mandate|limit|agent/.test(s) && !plan.some((p) => p.name === "cardSpend") && !/pause|suspend|resume/.test(s)) add("mandates");
@@ -326,7 +340,7 @@ export function mockPlan(q: string, c: Partial<Ctx> = {}): { name: string; args:
   if (/supplier|vendor|spend|spent|top/.test(s) && !plan.some((p) => p.name === "supplierProfile")) add("spendBySupplier");
   if (/approv|pending|waiting|queue/.test(s)) add("pendingApprovals");
   if (/invoice|memo|unpaid|owe/.test(s)) add("openInvoices");
-  if (/balance|ledger|entit|journal/.test(s) || (/cash/.test(s) && !plan.some((p) => p.name === "cashForecast"))) add("entityBalances");
+  if (/balance|ledger|entit|journal/.test(s) || (/cash/.test(s) && !plan.some((p) => p.name === "cashForecast" || p.name === "tariffScenario"))) add("entityBalances");
   if (/\bfx\b|rate|currenc|eur|gbp|exposure/.test(s) && !plan.some((p) => p.name === "fxGainLoss" || p.name === "fxLocksAndRates")) add("fxExposure");
   if (/payment|status|blocked|failed|settled/.test(s) && !pi) add("paymentsByStatus");
   if (!plan.length && c.recordId) {
@@ -405,7 +419,7 @@ export function proposalsFor(c: Ctx, q: string): Proposal[] {
 }
 
 const LABEL: Record<string, string> = { spendBySupplier: "Spend by supplier", paymentsByStatus: "Payments by status", pendingApprovals: "Waiting for approval", entityBalances: "Entity balances", fxExposure: "FX", openInvoices: "Open invoices", whyPayment: "Why", riskInbox: "Risk inbox", bankChanges: "Bank detail changes",
-  mandates: "Mandates", fxLocksAndRates: "FX locks", railHealth: "Rail health", cashForecast: "Cash forecast", discountsAvailable: "Early-pay discounts", supplierProfile: "Supplier", auditSearch: "Evidence", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", query: "Query", dailyDigest: "Today", opsQueues: "Ops queues", riskEscalations: "Risk escalations", recurringPayments: "Recurring payments", tenants: "Clients", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA" };
+  mandates: "Mandates", fxLocksAndRates: "FX locks", railHealth: "Rail health", cashForecast: "Cash forecast", tariffScenario: "Tariff cash scenario", discountsAvailable: "Early-pay discounts", supplierProfile: "Supplier", auditSearch: "Evidence", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", query: "Query", dailyDigest: "Today", opsQueues: "Ops queues", riskEscalations: "Risk escalations", recurringPayments: "Recurring payments", tenants: "Clients", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA" };
 const mockAnswer = (q: string, results: ToolResult[]) => {
   const base = results.map((r) => `${LABEL[r.tool] ?? r.tool}: ${r.summary}.`).join(" ");
   return /\bdraft\b.*\b(rule|policy)\b|\b(rule|policy)\b.*\bdraft\b/i.test(q) ? `Draft rule in plain words: ${parseRuleDraft(q).words} ${base}` : base;
@@ -419,7 +433,7 @@ export function chartFor(results: ToolResult[]): Chart | null {
   const prim = (v: unknown) => typeof v === "number" || typeof v === "string" || typeof v === "boolean" || v === null;
   const columns = Object.keys(rows[0] ?? {}).filter((k) => prim(rows[0][k])).slice(0, 8);
   const table = rows.slice(0, 50).map((x) => columns.map((k) => (x[k] === null || x[k] === undefined ? "" : typeof x[k] === "number" ? x[k] : String(x[k]))));
-  const pick: Record<string, [string, string, Chart["kind"]]> = { spendBySupplier: ["supplier", "total", "bar"], paymentsByStatus: ["status", "count", "donut"], entityBalances: ["name", "cash", "bar"], cashForecast: ["week", "balance", "bar"], dailyDigest: ["item", "value", "bar"], tenants: ["name", "settled", "bar"], riskScore: ["reason", "points", "bar"], railHealth: ["label", "attempts", "bar"], riskInbox: ["paymentId", "score", "bar"] };
+  const pick: Record<string, [string, string, Chart["kind"]]> = { spendBySupplier: ["supplier", "total", "bar"], paymentsByStatus: ["status", "count", "donut"], entityBalances: ["name", "cash", "bar"], cashForecast: ["week", "balance", "bar"], tariffScenario: ["week", "cashOutWithoutExclusions", "bar"], dailyDigest: ["item", "value", "bar"], tenants: ["name", "settled", "bar"], riskScore: ["reason", "points", "bar"], railHealth: ["label", "attempts", "bar"], riskInbox: ["paymentId", "score", "bar"] };
   const p = pick[r.tool];
   const series = p ? rows.filter((x) => typeof x[p[1]] === "number").slice(0, 12).map((x) => ({ label: String(x[p[0]]), value: Number(x[p[1]]) })) : [];
   return { kind: p && series.some((x) => x.value) ? p[2] : "table", title, series, columns, rows: table };
@@ -451,6 +465,7 @@ export function mockSpec(q: string, results: ToolResult[]): SpecPick | null {
   const s = q.toLowerCase(); const ok = results.filter((x) => !x.error && x.rows.length); const r = ok[0]; if (!r) return null;
   const f = r.rows[0] as Record<string, unknown>; const nums = Object.keys(f).filter((k) => typeof f[k] === "number"); if (!nums.length) return null;
   const ask = (["bar", "line", "area", "donut", "stacked", "table"] as const).find((t) => new RegExp(`\\b(as|in) an? ${t}\\b|\\b${t} chart`).test(s));
+  if (r.chart) return { ...r.chart, type: ask ?? r.chart.type };
   if (r.tool === "query") { const a = r.args; const y = [a.measure]; const dim = a.dimension !== "none" ? a.dimension : undefined;
     if (a.period !== "none") return { type: ask ?? (dim ? "line" : "area"), x: "period", y, ...(dim ? { series: dim } : {}) };
     return { type: ask ?? (r.rows.length < 6 && a.measure !== "avg_amount" ? "donut" : "bar"), x: dim ?? y[0], y }; }
@@ -499,6 +514,7 @@ export function skillPlan(sk: SK.Skill, q: string, c: Partial<Ctx> = {}) {
   const fromQ = mockPlan(q, c); const plan: { name: string; args: Record<string, string> }[] = [];
   for (const t of sk.tools) { const tool = TOOLS.find((x) => x.name === t.name); const qa = fromQ.find((p) => p.name === t.name)?.args ?? {};
     const args = { ...qa, ...t.args }; if (tool?.args.length && !tool.args.every((k) => args[k])) { const id = tool.args[0] === "paymentId" ? idIn(q, "pi", c) : tool.args[0] === "supplierId" ? idIn(q, "sup", c) : undefined; if (!id) continue; args[tool.args[0]] = id; }
+    if (t.name === "tariffScenario" && !args.after) { const d = TF.dayIn(q); if (d) args.after = d; }
     plan.push({ name: t.name, args }); }
   return plan.slice(0, 4);
 }
@@ -647,6 +663,7 @@ export function suggestFor(c: Ctx, route = "", recordId = ""): string[] {
   const id = ID.test(recordId) ? recordId : ""; const r = String(route).replace(/^\/(app|operator)/, "") || "/"; const op = P.isOperator(c.user);
   if (id.startsWith("pi-")) return [`Why did ${id} happen?`, `Explain the risk score of ${id}`, `Explain the FX gain or loss on ${id}`];
   if (id.startsWith("sup-")) return [`Show the supplier profile of ${id}`, `Show the audit history of ${id}`, `Put supplier ${id} on hold because of a pending review`];
+  if (r.startsWith("/purchase-orders") && !id) return ["Run the tariff cash scenario", "What is waiting for approval?", "What is our cash forecast?"];
   if (id.startsWith("po-")) return [`What is waiting for approval?`, `Approve ${id}`, `Show the audit history of ${id}`];
   if (id.startsWith("agt-")) return ["Show agent mandates", `Pause agent ${id}`, `Show the audit history of ${id}`];
   if (r.startsWith("/approvals")) return ["What is waiting for approval?", "Show the approval rules", "Draft a rule: IT orders over 50,000 need a client admin"];

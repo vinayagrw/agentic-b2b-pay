@@ -28,7 +28,7 @@ describe("tenants", () => {
     await S.runFlow("Need 3 shelf label packs", { tenantId: "tnt-globex" });
     const app = await buildApp(); const cookie = await login(app, "usr-cfo-jane");
     const st = (await app.inject({ url: "/state", headers: { cookie } })).json();
-    expect(st.pos.map((p: any) => p.id)).toEqual(["po-eu-seed"]); expect(st.suppliers.every((s: any) => !s.tenantId || s.tenantId === "tnt-acme")).toBe(true);
+    expect(st.pos.map((p: any) => p.id)).toEqual(["po-eu-seed", "po-duty-seed-1", "po-duty-seed-2"]); expect(st.suppliers.every((s: any) => !s.tenantId || s.tenantId === "tnt-acme")).toBe(true);
   });
 });
 

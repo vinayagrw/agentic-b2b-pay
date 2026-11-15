@@ -49,6 +49,17 @@ const EU_PO = (now: Date): PurchaseOrder => ({ id: "po-eu-seed", tenantId: "tnt-
   lines: [{ sku: "VD-VLV-HYD", description: "Hydraulic valve DN25", qty: 20, unitPrice: 85 }], total: 1700, status: "invoiced", justification: "Seeded EUR order for Acme Europe BV", policy: { outcome: "allow", reasons: ["Seeded"], checks: [] } as any, createdAt: now.toISOString() });
 const EU_INV = (now: Date): Invoice => ({ id: "inv-eu-seed", tenantId: "tnt-acme", poId: "po-eu-seed", supplierId: "sup-vandijk", number: "VD-2026-0001", amount: 1700, currency: "EUR", entityId: "ent-acme-eu", invoiceDate: now.toISOString().slice(0, 10), dueDate: new Date(now.getTime() + 30 * 864e5).toISOString().slice(0, 10),
   extract: { invoiceNumber: "VD-2026-0001", poNumber: "po-eu-seed", supplierName: "Van Dijk Industrie BV", currency: "EUR", lines: [{ sku: "VD-VLV-HYD", qty: 20, unitPrice: 85 }], total: 1700, dueDate: new Date(now.getTime() + 30 * 864e5).toISOString().slice(0, 10) } as any, extractedBy: "seed", matchStatus: "unmatched", erpApproval: "pending", paid: false, terms: { netDays: 30, discountPct: 1.5, discountDays: 14 } });
+/** Two seeded orders with duty fields for the tariff cash scenario. Rates are demo inputs, not from a tariff feed. Customs entry dates sit on both sides of 9 Jan 2027. */
+const DUTY_POS = (now: Date): PurchaseOrder[] => [
+  { id: "po-duty-seed-1", tenantId: "tnt-acme", buyerOrgId: "org-acme", supplierId: "sup-northwind", agentId: "agt-buyer-1", mandateId: "mdt-1", erpRef: null, category: "components", currency: "USD", total: 4200, usdEquivalent: 4200, status: "approved",
+    lines: [{ sku: "NW-MTR-750", description: "Servo motor 750W", qty: 6, unitPrice: 420, hsCode: "8501.52", originCountry: "CN", dutyRatePct: 25, customsEntryDate: "2026-12-18", exclusionApplies: true, exclusionEndDate: "2027-01-09" },
+      { sku: "NW-DRV-750", description: "Servo drive 750W", qty: 4, unitPrice: 420, hsCode: "8504.40", originCountry: "CN", dutyRatePct: 25, customsEntryDate: "2027-01-22", exclusionApplies: true, exclusionEndDate: "2027-01-09" }],
+    justification: "Seeded order with duty fields for the tariff cash scenario", policy: { outcome: "allow", reasons: ["Seeded"], checks: [] } as any, createdAt: new Date(now.getTime() - 40 * 864e5).toISOString() },
+  { id: "po-duty-seed-2", tenantId: "tnt-acme", buyerOrgId: "org-acme", supplierId: "sup-fabrikam", agentId: "agt-buyer-1", mandateId: "mdt-1", erpRef: null, category: "components", currency: "USD", total: 3000, usdEquivalent: 3000, status: "approved",
+    lines: [{ sku: "FB-BRK-STL", description: "Steel bracket set", qty: 100, unitPrice: 18, hsCode: "7326.90", originCountry: "MX", dutyRatePct: 10, customsEntryDate: "2027-01-15", exclusionApplies: true, exclusionEndDate: "2027-01-09" },
+      { sku: "FB-FST-ALU", description: "Aluminium fastener kit", qty: 50, unitPrice: 24, hsCode: "7616.10", originCountry: "MX", dutyRatePct: 7.5, customsEntryDate: "2027-01-15", exclusionApplies: false }],
+    justification: "Seeded order with duty fields for the tariff cash scenario", policy: { outcome: "allow", reasons: ["Seeded"], checks: [] } as any, createdAt: new Date(now.getTime() - 40 * 864e5).toISOString() },
+];
 export function seed(): Db {
   const now = new Date();
   const later = new Date(now.getTime() + 90 * 864e5);
@@ -102,7 +113,7 @@ export function seed(): Db {
       { sku: "VD-VLV-HYD", supplierId: "sup-vandijk", description: "Hydraulic valve DN25", category: "components", unitPrice: 85, keywords: ["valve", "valves", "hydraulic"] },
       { sku: "FB-STL-304", supplierId: "sup-fabrikam", description: "Stainless steel sheet 304 per ton", category: "components", unitPrice: 3100, keywords: ["steel", "stainless", "sheet"] },
     ],
-    pos: [EU_PO(now)], receipts: [], invoices: [EU_INV(now)], intents: [], settlements: [], journals: [], evidence: [], erp: [], payeeChanges: [], refunds: [], alerts: [],
+    pos: [EU_PO(now), ...DUTY_POS(now)], receipts: [], invoices: [EU_INV(now)], intents: [], settlements: [], journals: [], evidence: [], erp: [], payeeChanges: [], refunds: [], alerts: [],
     killSwitch: false, seq: 1000,
   };
 }

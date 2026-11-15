@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { can } from "../lib/perm";
 import { canIssueForOrder, money } from "../lib/cards";
@@ -6,7 +6,7 @@ import { payByLine, termsText, STATUS_TEXT, statusTone, canAskEarlyPay, DEMO_NOT
 import { Ban, Play, ShieldAlert, Sparkles } from "lucide-react";
 import { api, useAppState, useGet, useMe, useAct } from "../lib/api";
 import { usd } from "../lib/utils";
-import { RAIL_LABEL, type Rail } from "@b2b/shared";
+import { RAIL_LABEL, TARIFF_NOTE, landedCost, dutyDue, fullDuty, exclusionCovers, hasDutyFields, type Rail, type PoLine } from "@b2b/shared";
 import { Badge, Button, Card, EmptyState, ErrorNote, Input, Json, Label, Mono, Muted, Select, Table, Textarea } from "../components/ui";
 
 const EMPTY = { pos: [], invoices: [], intents: [], settlements: [], refunds: [], receipts: [], agents: [], mandates: [], suppliers: [], payeeChanges: [], alerts: [], erp: [], evidence: [], journals: [], signers: [], killSwitch: false };
@@ -78,16 +78,27 @@ export function BuyerDraft({ onPo }: { onPo?: (id: string) => void }) {
   </div>;
 }
 
+/** One PO line with duty fields in plain words. The rate is what the user typed in. */
+export function dutyLineText(l: PoLine) {
+  const ex = !l.exclusionApplies ? "No exclusion." : exclusionCovers(l) ? `Exclusion applies${l.exclusionEndDate ? ` to ${l.exclusionEndDate}` : ""}, so no duty is due${fullDuty(l) ? ` (it would be ${fullDuty(l).toFixed(2)})` : ""}.` : `Exclusion ended ${l.exclusionEndDate}, before customs entry.`;
+  return [`${l.sku}.`, l.hsCode ? `HS code ${l.hsCode}.` : "", l.originCountry ? `Origin ${l.originCountry}.` : "", typeof l.dutyRatePct === "number" ? `Duty rate ${l.dutyRatePct} percent.` : "No duty rate entered.", l.customsEntryDate ? `Customs entry ${l.customsEntryDate}.` : "No customs entry date.", ex].filter(Boolean).join(" ");
+}
 export function PoTable({ st }: { st: any }) {
   const { run, busy, error } = useAct(); const nav = useNavigate(); const { data: me } = useMe();
   const issueCard = async (poId: string) => { const r = await run(() => api<{ card: { id: string } }>(`/orders/${poId}/card`, {})); if (r?.card) nav(`/app/cards/${r.card.id}`); };
   return <Card title="Purchase orders" pad={false}>
     <ErrorNote msg={error} />
-    {st.pos.length ? <Table head={["PO", "Supplier", "Category", "Total", "Policy", "Status", ""]}>{[...st.pos].reverse().map((p: any) => <tr key={p.id}>
-      <td><Mono>{p.id}</Mono></td><td>{p.supplierId}</td><td>{p.category}</td><td className="tabular-nums">{usd(p.total)}</td><td><Badge v={p.policy.outcome} /></td><td><Badge v={p.status} /></td>
+    {st.pos.length ? <Table head={["PO", "Supplier", "Category", "Total", "Duty", "Landed cost", "Policy", "Status", ""]}>{[...st.pos].reverse().map((p: any) => { const lc = landedCost(p.lines ?? []); const cur = (n: number) => money(n, p.currency ?? "USD"); return <Fragment key={p.id}><tr>
+      <td><Mono>{p.id}</Mono></td><td>{p.supplierId}</td><td>{p.category}</td><td className="tabular-nums">{usd(p.total)}</td>
+      <td className="tabular-nums">{lc.hasDuty ? cur(lc.duty) : <Muted>None entered</Muted>}</td><td className="tabular-nums">{lc.hasDuty ? cur(lc.landed) : <Muted>Same as total</Muted>}</td>
+      <td><Badge v={p.policy.outcome} /></td><td><Badge v={p.status} /></td>
       <td className="text-right"><div className="flex flex-wrap justify-end gap-2">{canIssueForOrder(p.status) && can(me, "flow.operate") && <Button size="sm" disabled={busy} title="A mandate-bound virtual card that works once, for the exact order amount" onClick={() => issueCard(p.id)}>Issue card for this order</Button>}
-        {p.status === "approved" && <Button size="sm" disabled={busy} onClick={() => run(() => api("/goods-receipts", { poId: p.id }))}>Post goods receipt</Button>}</div></td></tr>)}</Table>
+        {p.status === "approved" && <Button size="sm" disabled={busy} onClick={() => run(() => api("/goods-receipts", { poId: p.id }))}>Post goods receipt</Button>}</div></td></tr>
+      {lc.hasDuty && <tr data-testid={`duty-${p.id}`}><td colSpan={9} className="bg-muted/40 px-4 py-2 text-sm">
+        <ul className="space-y-1">{(p.lines as PoLine[]).filter(hasDutyFields).map((l, n) => <li key={n}><span className="font-medium">Duty line</span> {dutyLineText(l)} <span className="tabular-nums">Duty {cur(dutyDue(l))}</span></li>)}</ul>
+        <div className="mt-1 tabular-nums">Goods {cur(lc.goods)} plus duty {cur(lc.duty)}. Landed cost {cur(lc.landed)}.</div></td></tr>}</Fragment>; })}</Table>
       : <EmptyState title="No purchase orders" body="The buyer agent drafts POs from a plain language need." />}
+    {st.pos.some((p: any) => (p.lines ?? []).some(hasDutyFields)) && <div className="border-t border-border px-4 py-2"><Muted>{TARIFF_NOTE} Landed cost is the goods total plus duty. Ask the copilot to run the tariff cash scenario.</Muted></div>}
   </Card>;
 }
 

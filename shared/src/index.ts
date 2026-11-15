@@ -14,8 +14,37 @@ export const PoLine = z.object({
   description: z.string().min(1),
   qty: z.number().int().positive(),
   unitPrice: z.number().nonnegative(),
+  /** Optional duty fields. The rate is typed in by the user. There is no live tariff feed. */
+  hsCode: z.string().trim().regex(/^[\d.]{4,14}$/).optional(),
+  originCountry: z.string().trim().min(2).max(56).optional(),
+  dutyRatePct: z.number().min(0).max(500).optional(),
+  customsEntryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  exclusionApplies: z.boolean().optional(),
+  exclusionEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 export type PoLine = z.infer<typeof PoLine>;
+
+export const TARIFF_NOTE = "Duty rates are entered by you. No live tariff feed.";
+/** The default date after which the scenario treats exclusions as ended. */
+export const TARIFF_DEFAULT_DATE = "2027-01-09";
+type DutyLine = Pick<PoLine, "qty" | "unitPrice" | "dutyRatePct" | "customsEntryDate" | "exclusionApplies" | "exclusionEndDate">;
+const cents = (n: number) => Math.round(n * 100) / 100;
+export const hasDutyFields = (l: Partial<PoLine>) => typeof l.dutyRatePct === "number" || !!l.hsCode;
+/** Duty on one line at the rate the user typed in, before any exclusion. */
+export const fullDuty = (l: DutyLine) => typeof l.dutyRatePct === "number" ? cents(l.qty * l.unitPrice * l.dutyRatePct / 100) : 0;
+/** True when an exclusion covers the line on its customs entry date. The exclusion runs through its end date.
+ *  endsOn replaces the end date on the line: null means the exclusion never ends. */
+export function exclusionCovers(l: DutyLine, endsOn?: string | null) {
+  if (!l.exclusionApplies) return false;
+  const end = endsOn === undefined ? l.exclusionEndDate : endsOn;
+  return !end || !l.customsEntryDate || l.customsEntryDate <= end;
+}
+export const dutyDue = (l: DutyLine, endsOn?: string | null) => exclusionCovers(l, endsOn) ? 0 : fullDuty(l);
+/** Goods value, duty and landed cost (goods plus duty) for a set of PO lines. */
+export function landedCost(lines: PoLine[], endsOn?: string | null) {
+  const goods = cents(lines.reduce((a, l) => a + l.qty * l.unitPrice, 0)); const duty = cents(lines.reduce((a, l) => a + dutyDue(l, endsOn), 0));
+  return { goods, duty, landed: cents(goods + duty), hasDuty: lines.some(hasDutyFields) };
+}
 
 /** Strict shape the buyer agent (LLM or fallback) must return. */
 export const PoDraft = z.object({
