@@ -43,4 +43,20 @@ describe("/mcp/call resolves the agent from its key", () => {
     expect((await call(app, k, "evaluate_policy", { supplierId: "sup-northwind", category: "components", amount: 1 })).statusCode).toBe(404);
     const ev = (await call(app, k, "get_evidence", { subjectId: po.id })).json(); expect(ev.content.records).toHaveLength(0);
   });
+  it("create_purchase_order runs as the calling agent, not the default buyer", async () => {
+    const app = await buildApp();
+    const ann = { id: "usr-acme-ann", tenantId: "tnt-acme", name: "Ann", email: "", role: "client_admin" };
+    const b: any = W.registerAgent(ann as any, "tnt-acme", W.NewAgent.parse({ name: "Small bot", mandate: { monthlyLimit: 1000, perTxnMax: 50, allowedCategories: ["components"], allowedRails: ["stripe_ach"], validTo: "2030-01-01" } }));
+    const id = b.agent?.id ?? b.id; Object.assign(agent(id), { erpRole: agent("agt-buyer-1").erpRole });
+    const draft = { supplierId: "sup-northwind", category: "components", currency: "USD", lines: [{ sku: "NW-MTR-750", description: "Servo", qty: 2, unitPrice: 420 }], justification: "Spare" };
+    const r = await call(app, b.key.key, "create_purchase_order", { draft });
+    expect(r.statusCode).toBe(200);
+    const po = db.pos[db.pos.length - 1];
+    expect(po.agentId).toBe(id);
+    expect(po.status).not.toBe("approved");
+  });
+  it("evaluate_policy on an unknown supplier is 404", async () => {
+    const app = await buildApp(); const k = W.issueAgentKey(agent("agt-buyer-1"), "test").key;
+    expect((await call(app, k, "evaluate_policy", { supplierId: "sup-nope", category: "components", amount: 1 })).statusCode).toBe(404);
+  });
 });
