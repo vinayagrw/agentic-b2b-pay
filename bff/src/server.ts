@@ -59,15 +59,22 @@ export function ownInvoice(u: any, invId: unknown) {
   try { ownPo(u, inv.poId); } catch { throw new S.HttpError(404, "invoice not found"); }
   return inv;
 }
+const needUser = (u: any) => { if (!u) throw new P.AuthError(401, "Sign in required"); return u; };
+/** Same guards as POST /invoices/:id/pay: payments.pay, tenant and entity scope, maker-checker. */
+export function payGuard(u: any, invId: unknown) {
+  I.requirePermission(needUser(u), "payments.pay");
+  const inv = ownInvoice(u, invId); const po = db.pos.find((p) => p.id === inv.poId); if (po) I.sodPay(u, po as any);
+  return inv;
+}
 
 export const TOOLS = [
   { name: "draft_purchase_order", description: "Turn a natural language need into a PO draft", input: { need: "string" }, run: (a: any) => S.draftPo(String(a.need)) },
-  { name: "create_purchase_order", description: "Submit PO draft, runs policy engine", input: { draft: "PoDraft" }, run: (a: any) => S.createPo(PoDraft.parse(a.draft)) },
+  { name: "create_purchase_order", description: "Submit PO draft, runs policy engine", input: { draft: "PoDraft" }, run: (a: any, u?: any) => { const d = PoDraft.parse(a.draft); const sup = db.suppliers.find((x) => x.id === d.supplierId); if (!sup || !P.canAccessTenant(needUser(u), sup.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "supplier not found"); return S.createPo(d); } },
   { name: "evaluate_policy", description: "Dry run policy for supplier, category and amount", input: { supplierId: "string", category: "string", amount: "number" }, run: (a: any) => S.policyFor("agt-buyer-1", a.supplierId, a.category, Number(a.amount)).decision },
-  { name: "submit_invoice", description: "Supplier agent submits invoice text for a PO", input: { poId: "string", text: "string" }, run: (a: any, u?: any) => { if (u) ownPo(u, a.poId); return S.submitInvoice(a.poId, a.text); } },
-  { name: "match_invoice", description: "Run 3-way match", input: { invoiceId: "string" }, run: (a: any, u?: any) => { if (u) ownInvoice(u, a.invoiceId); return S.matchInvoice(a.invoiceId); } },
-  { name: "execute_payment", description: "Route, screen, sign and settle a matched invoice", input: { invoiceId: "string", idempotencyKey: "string" }, run: (a: any) => S.payInvoice(a.invoiceId, a.idempotencyKey) },
-  { name: "get_evidence", description: "Evidence chain for a subject", input: { subjectId: "string" }, run: (a: any) => S.evidenceView(a.subjectId) },
+  { name: "submit_invoice", description: "Supplier agent submits invoice text for a PO", input: { poId: "string", text: "string" }, run: (a: any, u?: any) => { ownPo(needUser(u), a.poId); return S.submitInvoice(a.poId, a.text); } },
+  { name: "match_invoice", description: "Run 3-way match", input: { invoiceId: "string" }, run: (a: any, u?: any) => { ownInvoice(needUser(u), a.invoiceId); return S.matchInvoice(a.invoiceId); } },
+  { name: "execute_payment", description: "Route, screen, sign and settle a matched invoice", input: { invoiceId: "string", idempotencyKey: "string" }, run: (a: any, u?: any) => { if (!a.idempotencyKey) throw new S.HttpError(400, "idempotencyKey required"); payGuard(u, a.invoiceId); return S.payInvoice(a.invoiceId, String(a.idempotencyKey)); } },
+  { name: "get_evidence", description: "Evidence chain for a subject", input: { subjectId: "string" }, run: (a: any, u?: any) => S.evidenceView(a.subjectId, P.isOperator(needUser(u)) ? null : u.tenantId ?? "tnt-acme") },
 ];
 
 export async function buildApp() {
@@ -320,14 +327,14 @@ export async function buildApp() {
   app.post("/buyer/draft", async (req) => { const { t } = ctx(req); return S.draftPo(z.object({ need: z.string().min(3) }).parse(b(req)).need, t); });
   app.post("/purchase-orders", async (req) => { const d = PoDraft.parse(b(req).draft); const sup = db.suppliers.find((x) => x.id === d.supplierId); if (sup) await S.ensureRates({ currency: d.currency, entityId: d.entityId, tenantId: sup.tenantId ?? "tnt-acme" }); const po = S.createPo(d, b(req).agentId); po.requestedBy = who(req).id; save(); return po; });
   app.post("/approvals/:poId", async (req: any) => { const { u, t } = ctx(req); const po = db.pos.find((p) => p.id === req.params.poId); if (!po || (po.tenantId ?? "tnt-acme") !== t) throw new S.HttpError(404, "po not found"); if (b(req).approve) { I.requirePermission(u, "payments.approve", { amount: po.total, tenantId: t }); SU.requireFresh(u, req.sessionId ?? null, po.usdEquivalent ?? po.total); } return S.decideApproval(po.id, !!b(req).approve, u.id, String(b(req).comment ?? "")); });
-  app.post("/goods-receipts", async (req) => S.receiveGoods(b(req).poId, Number(b(req).shortBy ?? 0)));
-  app.post("/invoices/render", async (req) => ({ text: S.invoiceText(b(req).poId, { priceBumpPct: Number(b(req).priceBumpPct ?? 0), poison: !!b(req).poison }) }));
+  app.post("/goods-receipts", async (req) => { ownPo(who(req), b(req).poId); return S.receiveGoods(b(req).poId, Number(b(req).shortBy ?? 0)); });
+  app.post("/invoices/render", async (req) => { ownPo(who(req), b(req).poId); return { text: S.invoiceText(b(req).poId, { priceBumpPct: Number(b(req).priceBumpPct ?? 0), poison: !!b(req).poison }) }; });
   app.post("/invoices", async (req) => { ownPo(who(req), b(req).poId); return S.submitInvoice(b(req).poId, String(b(req).text), { invoiceDate: b(req).invoiceDate ? String(b(req).invoiceDate) : undefined }); });
   app.post("/invoices/:id/match", async (req: any) => { const inv = ownInvoice(who(req), req.params.id); if (inv) await S.ensureRates({ currency: inv.currency, entityId: S.invoiceEntity(inv).id, tenantId: inv.tenantId ?? "tnt-acme", invoiceDate: inv.invoiceDate }); return S.matchInvoice(req.params.id); });
   app.post("/invoices/:id/pay", async (req: any) => {
     const key = req.headers["idempotency-key"]; if (!key) throw new S.HttpError(400, "Idempotency-Key header required");
     const u = who(req); const inv = db.invoices.find((i) => i.id === req.params.id); const po = inv && db.pos.find((p) => p.id === inv.poId);
-    if (po) { if (!P.canAccessTenant(u, po.tenantId ?? "tnt-acme") || !I.inEntityScope(u, po.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "invoice not found"); I.sodPay(u, po as any); }
+    if (inv) payGuard(u, inv.id);
     return S.payInvoice(req.params.id, String(key), { urgency: b(req).urgency, approvers: b(req).approvers, fxLockId: b(req).fxLockId ? String(b(req).fxLockId) : undefined });
   });
   app.post("/refunds", async (req) => { const u = who(req); const pi = db.intents.find((i) => i.id === b(req).paymentIntentId); if (!pi || !P.canAccessTenant(u, pi.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "payment not found"); const r = await S.refund(pi.id, Number(b(req).amount), String(b(req).reason ?? "refund")); P.audit(u.id, "refund", r.id, "refund.requested_by", { amount: r.amount }); return r; });
