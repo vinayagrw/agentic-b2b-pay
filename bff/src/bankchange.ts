@@ -202,6 +202,8 @@ type Nonce = { tenantId: string; supplierId: string; addr: string; message: stri
 const nonces = new Map<string, Nonce>();
 const NONCE_TTL = 10 * 60_000;
 const sandboxAccount = (address: string) => privateKeyToAccount(keccak256(toHex(crypto.createHmac("sha256", hashKey()).update(`sandbox-wallet:${address.toLowerCase()}`).digest("hex"))));
+/** Sandbox signing is only for sandbox tenants. Any rail in live mode, or a production server, turns it off. */
+export const sandboxSignAllowed = (tenantId: string) => process.env.NODE_ENV !== "production" && !Object.values(P.getTenant(tenantId)?.railSettings ?? {}).some((r) => r?.env === "live");
 const addrOk = (a: unknown): a is string => typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.test(a);
 export function walletNonce(u: P.User, tenantId: string, supplierId: string, raw: any) {
   I.requirePermission(u, "suppliers.payee_change", { tenantId });
@@ -216,6 +218,7 @@ export function walletNonce(u: P.User, tenantId: string, supplierId: string, raw
 /** Sandbox stand-in for a wallet app. Signs the server message with the key derived for that address. */
 export async function sandboxSign(u: P.User, tenantId: string, supplierId: string, raw: any) {
   I.requirePermission(u, "suppliers.payee_change", { tenantId });
+  if (!sandboxSignAllowed(tenantId)) throw new BankChangeError(403, "Simulated signing is off in live mode. Sign with the real wallet.");
   const n = nonces.get(String(raw?.nonce ?? ""));
   if (!n || n.exp < Date.now() || n.tenantId !== tenantId || n.supplierId !== supplierId) throw new BankChangeError(422, "That sign request has expired. Start again.");
   return { signature: await sandboxAccount(n.addr).signMessage({ message: n.message }), simulated: true };
@@ -228,12 +231,16 @@ export async function verifyWalletProof(tenantId: string, supplierId: string, ra
   if (!proof?.nonce || !proof?.signature) throw new BankChangeError(422, "Sign with the new wallet first. A wallet change needs a signed proof from the new wallet.");
   const n = nonces.get(String(proof.nonce));
   if (!n || n.exp < Date.now() || n.tenantId !== tenantId || n.supplierId !== supplierId || n.addr !== address.toLowerCase()) throw new BankChangeError(422, "The wallet proof has expired or is for another wallet. Sign again.");
+  nonces.delete(proof.nonce); // take it now so two requests at once cannot both use it
   let signer = ""; try { signer = (await recoverMessageAddress({ message: n.message, signature: proof.signature })).toLowerCase(); } catch { signer = ""; }
-  const mode = signer === n.addr ? "wallet" : signer && signer === sandboxAccount(n.addr).address.toLowerCase() ? "sandbox" : null;
-  if (!mode) throw new BankChangeError(422, "The wallet proof is not signed by the new wallet");
-  nonces.delete(proof.nonce);
-  return { mode, nonce: proof.nonce, verifiedAt: now() };
+  const mode = signer === n.addr ? "wallet" : signer && signer === sandboxAccount(n.addr).address.toLowerCase() && sandboxSignAllowed(tenantId) ? "sandbox" : null;
+  if (!mode) { nonces.set(String(proof.nonce), n); throw new BankChangeError(422, "The wallet proof is not signed by the new wallet"); }
+  const out: WalletProof = { mode, nonce: proof.nonce, verifiedAt: now() }; taken.set(out, n);
+  return out;
 }
+const taken = new WeakMap<WalletProof, Nonce>();
+/** Gives the nonce back when the request fails a later check, so the user does not have to sign again. */
+export function releaseProof(p: WalletProof | null | undefined) { const n = p && taken.get(p); if (p && n && n.exp > Date.now()) nonces.set(p.nonce, n); }
 
 const checker = (u: P.User, r: Row, what: string) => {
   if (r.status !== "pending") throw new BankChangeError(409, `This request is already ${r.status}`);
@@ -268,6 +275,7 @@ export function decide(u: P.User, tenantId: string, sessionId: string | null, id
   const f = JSON.parse(I.unseal(r.new_enc)) as Full; const m = mask(f);
   const proof = r.wallet_proof ? (JSON.parse(r.wallet_proof) as WalletProof) : null;
   if (f.kind === "wallet" && !proof?.verifiedAt) throw new BankChangeError(409, "This wallet change has no checked signature from the new wallet. Reject it and ask again.");
+  if (f.kind === "wallet" && proof?.mode === "sandbox" && !sandboxSignAllowed(r.tenant_id)) throw new BankChangeError(409, "This wallet change was signed in sandbox. Live mode needs a real wallet signature. Reject it and ask again.");
   const addRails = (rails: Supplier["acceptedRails"]) => { sup.acceptedRails = [...new Set([...sup.acceptedRails, ...rails])]; };
   if (f.kind === "wallet") {
     // The pay flow reads the wallet from the supplier record, so the approved address is stored there in full.

@@ -599,7 +599,7 @@ export async function buildApp() {
   app.get("/bank-changes/settings", async (req) => { const { t } = ctx(req); return BC.settings(t); });
   app.put("/bank-changes/settings", async (req: any) => { const { u, t } = ctx(req); return BC.saveSettings(u, t, b(req)); });
   app.get("/bank-changes/:id", async (req: any) => BC.detail(scopeOf(req), req.params.id));
-  app.post("/suppliers/:id/bank-changes", async (req: any) => { const { u, t } = ctx(req); I.requirePermission(u, "suppliers.payee_change", { tenantId: t }); const proof = await BC.verifyWalletProof(t, req.params.id, b(req)); return BC.request(u, t, req.params.id, b(req), { proof }); });
+  app.post("/suppliers/:id/bank-changes", async (req: any) => { const { u, t } = ctx(req); I.requirePermission(u, "suppliers.payee_change", { tenantId: t }); const proof = await BC.verifyWalletProof(t, req.params.id, b(req)); try { return BC.request(u, t, req.params.id, b(req), { proof }); } catch (e) { BC.releaseProof(proof); throw e; } });
   app.post("/suppliers/:id/bank-changes/wallet-nonce", async (req: any) => { const { u, t } = ctx(req); return BC.walletNonce(u, t, req.params.id, b(req)); });
   app.post("/suppliers/:id/bank-changes/wallet-sandbox-sign", async (req: any) => { const { u, t } = ctx(req); return BC.sandboxSign(u, t, req.params.id, b(req)); });
   app.put("/suppliers/:id/callback-phone", async (req: any) => { const { u, t } = ctx(req); return BC.setPhone(u, t, req.params.id, b(req)); });

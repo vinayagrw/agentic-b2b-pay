@@ -261,5 +261,37 @@ describe("ERP vendor master changes go through the bank-change check", () => {
       await callback(app, sam, r.json().id); await stepUp(app, sam);
       const d = await decide(app, sam, r.json().id); expect(d.statusCode).toBe(409); expect(d.body).toContain("no checked signature");
     });
+    const goLive = () => sql.prepare("UPDATE tenants SET rail_settings = json_set(rail_settings, '$.usdc_base.env', 'live') WHERE id = 'tnt-acme'").run();
+    it("turns off simulated signing and sandbox proofs on a live tenant", async () => {
+      const app = await buildApp(); const pat = await login(app, "usr-clerk-pat"); const sam = await login(app, "usr-controller-sam");
+      const { message, ...proof } = await signed(app, pat, "sup-fabrikam", WALLET);
+      const r = await ask(app, pat, "sup-fabrikam", body(proof)); expect(r.statusCode).toBe(200);
+      goLive(); expect(BC.sandboxSignAllowed("tnt-acme")).toBe(false);
+      const n = (await app.inject({ method: "POST", url: "/suppliers/sup-fabrikam/bank-changes/wallet-nonce", headers: { cookie: pat }, payload: { address: OTHER } })).json();
+      expect((await app.inject({ method: "POST", url: "/suppliers/sup-fabrikam/bank-changes/wallet-sandbox-sign", headers: { cookie: pat }, payload: { nonce: n.nonce } })).statusCode).toBe(403);
+      await callback(app, sam, r.json().id); await stepUp(app, sam);
+      const d = await decide(app, sam, r.json().id); expect(d.statusCode).toBe(409); expect(d.body).toContain("signed in sandbox");
+    });
+    it("refuses a sandbox signature at request time on a live tenant", async () => {
+      const app = await buildApp(); const pat = await login(app, "usr-clerk-pat");
+      const { message, ...proof } = await signed(app, pat, "sup-fabrikam", WALLET); goLive();
+      const r = await ask(app, pat, "sup-fabrikam", body(proof)); expect(r.statusCode).toBe(422);
+      expect(sql.prepare("SELECT COUNT(*) n FROM bank_change_requests").get()).toEqual({ n: 0 });
+    });
+    it("keeps the signature usable when a later check fails", async () => {
+      const app = await buildApp(); const pat = await login(app, "usr-clerk-pat");
+      const phone = db.suppliers.find((x) => x.id === "sup-fabrikam")!.contactPhone;
+      const { message, ...proof } = await signed(app, pat, "sup-fabrikam", WALLET);
+      db.suppliers.find((x) => x.id === "sup-fabrikam")!.contactPhone = undefined as any;
+      expect((await ask(app, pat, "sup-fabrikam", body(proof))).statusCode).toBe(409);
+      db.suppliers.find((x) => x.id === "sup-fabrikam")!.contactPhone = phone;
+      expect((await ask(app, pat, "sup-fabrikam", body(proof))).statusCode).toBe(200);
+    });
+    it("lets only one of two requests at the same time use a nonce", async () => {
+      const app = await buildApp(); const pat = await login(app, "usr-clerk-pat");
+      const { message, ...proof } = await signed(app, pat, "sup-fabrikam", WALLET);
+      const [a, c] = await Promise.all([BC.verifyWalletProof("tnt-acme", "sup-fabrikam", body(proof)).then(() => 1, () => 0), BC.verifyWalletProof("tnt-acme", "sup-fabrikam", body(proof)).then(() => 1, () => 0)]);
+      expect(a + c).toBe(1);
+    });
   });
 });
