@@ -23,3 +23,12 @@ export function resubmitBlock(item: { status: string; canResubmit?: boolean }, n
   if (note.trim().length < 3) return "Say what changed, in a few words.";
   return null;
 }
+/** One line for a hand over, written from the viewer side. */
+export function delegationLine(d: Delegation, meId: string): string {
+  const from = d.fromUser === meId ? "You" : d.fromName; const to = d.toUser === meId ? "you" : d.toName;
+  return `${from} to ${to}, ${d.startsOn} to ${d.endsOn}${d.note ? `. ${d.note}` : ""}`;
+}
+/** Badge text for an approval card handled for someone else, or null. */
+export function handledForBadge(p: { status: string; delegatedFrom?: { userId: string; name: string } | null }): string | null {
+  return p.delegatedFrom && p.status === "pending_approval" ? `Approving for ${p.delegatedFrom.name}` : null;
+}

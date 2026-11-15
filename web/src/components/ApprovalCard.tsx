@@ -8,7 +8,7 @@ import { Badge, Button, Card, ErrorNote, Input, Mono, Muted, Textarea } from "./
 import { StatusDot } from "./kit";
 import { ConfidenceList } from "./ConfidenceBar";
 import type { Confidence } from "../lib/live";
-import { resubmitBlock } from "../lib/delegation";
+import { handledForBadge, resubmitBlock } from "../lib/delegation";
 
 type Mark = { userId: string; name: string; comment?: string; onBehalfOfName?: string };
 const byText = (a: Mark) => `${a.name}${a.onBehalfOfName ? ` for ${a.onBehalfOfName}` : ""}`;
@@ -106,7 +106,7 @@ export function ApprovalCard({ p, onDecided, selected, onSelect }: { p: Approval
           {h.rejectedBy && <div className="text-bad">Rejected by {byText(h.rejectedBy)}{h.rejectedBy.comment ? `: "${h.rejectedBy.comment}"` : ""}</div>}
           <div>Sent again by {h.resubmittedByName}: "{h.note}"</div></li>)}</ol></details>}</div>}
 
-    {p.delegatedFrom && p.status === "pending_approval" && <div className="mt-2"><Badge v={`Handed to you by ${p.delegatedFrom.name}`} tone="primary" /></div>}
+    {handledForBadge(p) && <div className="mt-2"><Badge v={handledForBadge(p)!} tone="primary" /></div>}
     {p.status === "rejected" && p.canResubmit && <Resubmit id={p.id} item={p} />}
 
     {p.status === "pending_approval" && (blocked ? <Muted className="mt-3 block">{blocked}</Muted> : <div className="mt-3 flex flex-col gap-2">

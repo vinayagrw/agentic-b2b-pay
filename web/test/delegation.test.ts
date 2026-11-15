@@ -21,3 +21,18 @@ describe("resubmit", () => {
     expect(resubmitBlock({ status: "rejected", canResubmit: true }, " ")).toMatch(/what changed/);
   });
 });
+
+import { delegationLine, handledForBadge } from "../src/lib/delegation";
+describe("hand over card helpers", () => {
+  const d = { id: "d1", fromUser: "a", fromName: "Ann", toUser: "b", toName: "Bo", startsOn: "2026-11-01", endsOn: "2026-11-09", note: "", state: "active" as const };
+  it("describes the hand over from the viewer side", () => {
+    expect(delegationLine(d, "a")).toBe("You to Bo, 2026-11-01 to 2026-11-09");
+    expect(delegationLine(d, "b")).toBe("Ann to you, 2026-11-01 to 2026-11-09");
+    expect(delegationLine({ ...d, note: "Leave" }, "c")).toBe("Ann to Bo, 2026-11-01 to 2026-11-09. Leave");
+  });
+  it("badges only pending cards handled for someone else", () => {
+    expect(handledForBadge({ status: "pending_approval", delegatedFrom: { userId: "a", name: "Ann" } })).toBe("Approving for Ann");
+    expect(handledForBadge({ status: "approved", delegatedFrom: { userId: "a", name: "Ann" } })).toBeNull();
+    expect(handledForBadge({ status: "pending_approval", delegatedFrom: null })).toBeNull();
+  });
+});
