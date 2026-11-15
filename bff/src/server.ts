@@ -481,7 +481,7 @@ export async function buildApp() {
   // Bank statement import and line matching. Operators pass tenantId, client admins use their own tenant.
   app.get("/reconciliation/statements", async (req) => { const t = ctx(req).t; return { ...BS.statementView(t), targets: BS.matchTargets(t) }; });
   app.post("/reconciliation/statements", { bodyLimit: 3_000_000 }, async (req) => { const { u, t } = ctx(req); return BS.importStatement(u, t, String(b(req).filename ?? ""), String(b(req).content ?? "")); });
-  app.post("/reconciliation/statements/lines/:id/match", async (req: any) => { const { u, t } = ctx(req); return BS.matchLine(u, t, req.params.id, String(b(req).settlementId ?? ""), String(b(req).note ?? "")); });
+  app.post("/reconciliation/statements/lines/:id/match", async (req: any) => { const { u, t } = ctx(req); return BS.matchLine(u, t, req.params.id, String(b(req).settlementId ?? ""), String(b(req).note ?? ""), b(req).override === true); });
   app.post("/reconciliation/statements/lines/:id/ignore", async (req: any) => { const { u, t } = ctx(req); return BS.ignoreLine(u, t, req.params.id, String(b(req).reason ?? "")); });
   app.get("/ops/recon/export.csv", async (req: any, reply) => { const { t } = opCtx(req); return reply.type("text/csv").header("content-disposition", `attachment; filename="recon-${t}.csv"`).send(O.reconCsv(t)); });
   app.get("/ops/compliance", async (req) => { who(req); return { ...O.complianceStatus(), cases: S.listCases(null), travelRule: O.travelRuleRecords(null) }; });

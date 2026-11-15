@@ -6,7 +6,7 @@ import { Badge, Button, Card, EmptyState, ErrorNote, Input, Mono, Muted, PageHea
 import { Section } from "../components/Shell";
 import { Loading } from "./flows";
 
-type Line = { id: string; amount: number; currency: string; direction: string; valueDate: string; endToEndId: string | null; bankRef: string | null; info: string | null; status: "unmatched" | "matched" | "ignored"; settlementId: string | null; resolution?: { action: string; note: string; by: string } };
+type Line = { id: string; amount: number; currency: string; direction: string; valueDate: string; endToEndId: string | null; bankRef: string | null; info: string | null; status: "unmatched" | "matched" | "ignored"; settlementId: string | null; resolution?: { action: string; note: string; by: string }; pendingChangeId?: string | null };
 type Target = { settlementId: string; intentId: string; amount: number; currency: string; confirmedAt: string };
 type View = { statements: { id: string; filename: string; format: string; statementId: string; lineCount: number; importedAt: string }[]; lines: Line[]; exceptions: Line[]; matched: number; targets: Target[] };
 
@@ -14,15 +14,18 @@ const q = (tenantId?: string) => (tenantId ? `?tenantId=${encodeURIComponent(ten
 const money = (n: number, c: string) => `${n.toFixed(2)} ${c}`;
 
 function LineRow({ l, targets, tenantId, canEdit }: { l: Line; targets: Target[]; tenantId?: string; canEdit: boolean }) {
-  const { run, busy, error } = useAct(); const [pick, setPick] = useState(""); const [note, setNote] = useState("");
+  const { run, busy, error } = useAct(); const [pick, setPick] = useState(""); const [note, setNote] = useState(""); const [over, setOver] = useState(false); const [sent, setSent] = useState(!!l.pendingChangeId);
+  const ask = async (f: () => Promise<unknown>) => { if (await run(f)) setSent(true); };
   const base = `/reconciliation/statements/lines/${encodeURIComponent(l.id)}`;
   return <li className="px-4 py-3">
     <div className="flex flex-wrap items-center gap-2 text-[13px]"><Badge v="Unmatched" tone="bad" /><span className="tabular-nums">{money(l.amount, l.currency)} {l.direction}</span><Muted>value date {l.valueDate}</Muted><Mono>{l.endToEndId ?? "no reference"}</Mono><span className="flex-1">{l.info}</span></div>
-    {canEdit && <div className="mt-2 flex flex-wrap gap-2">
+    {sent && <div className="mt-2"><Badge v="Waiting for a second client admin to approve" tone="neutral" /></div>}
+    {canEdit && !sent && <div className="mt-2 flex flex-wrap gap-2">
       <Select className="max-w-xs" value={pick} onChange={(e) => setPick(e.target.value)}><option value="">Pick a payment</option>{targets.map((t) => <option key={t.settlementId} value={t.settlementId}>{t.intentId} {money(t.amount, t.currency)} on {t.confirmedAt.slice(0, 10)}</option>)}</Select>
       <Input className="max-w-xs" placeholder="Note or reason" value={note} onChange={(e) => setNote(e.target.value)} />
-      <Button size="sm" disabled={busy || !pick} onClick={() => run(() => api(`${base}/match${q(tenantId)}`, { settlementId: pick, note }))}>Match</Button>
-      <Button size="sm" variant="ghost" disabled={busy || !note.trim()} onClick={() => run(() => api(`${base}/ignore${q(tenantId)}`, { reason: note }))}>Ignore with reason</Button>
+      <label className="inline-flex items-center gap-1 text-xs"><input type="checkbox" checked={over} onChange={(e) => setOver(e.target.checked)} />Amount differs, match anyway</label>
+      <Button size="sm" disabled={busy || !pick} onClick={() => ask(() => api(`${base}/match${q(tenantId)}`, { settlementId: pick, note, override: over }))}>Match</Button>
+      <Button size="sm" variant="ghost" disabled={busy || !note.trim()} onClick={() => ask(() => api(`${base}/ignore${q(tenantId)}`, { reason: note }))}>Ignore with reason</Button>
     </div>}
     <ErrorNote msg={error} /></li>;
 }

@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowLeftRight, Banknote, Bot, Building2, Check, ChevronsUpDown, Code2, CreditCard, FileCheck2, FileText, Gauge, HandCoins, Home, Inbox, KeyRound, Landmark, MessageSquare, MonitorSmartphone, UserCog, LogOut, Moon, Palette, Scale, Search, Settings, ShieldAlert, ShieldCheck, ShoppingCart, Sun, Truck, Users, Workflow, type LucideIcon } from "lucide-react";
 import { api, useLiveEvents, useMe, type Me } from "../lib/api";
+import { can } from "../lib/perm";
 import { applyTheme } from "../lib/theme";
 import { cn } from "../lib/utils";
 import { CommandPalette, ShortcutsOverlay, useShortcuts } from "./CommandPalette";
@@ -10,7 +11,7 @@ import { EntitySwitcher } from "../pages/entities";
 import { CopilotPanel } from "./Copilot";
 import { Badge, Menu, MenuContent, MenuItem, MenuLabel, MenuSep, MenuTrigger } from "./ui";
 
-type Item = { to: string; label: string; icon: LucideIcon };
+type Item = { to: string; label: string; icon: LucideIcon; perm?: string };
 export const OPERATOR_NAV: Item[] = [
   { to: "/operator", label: "Home", icon: Home }, { to: "/operator/tenants", label: "Tenants", icon: Building2 },
   { to: "/operator/transactions", label: "Transactions", icon: Activity }, { to: "/operator/payments", label: "Payments", icon: ArrowLeftRight }, { to: "/operator/risk", label: "Risk inbox", icon: ShieldAlert }, { to: "/operator/bank-changes", label: "Bank changes", icon: Landmark }, { to: "/operator/compliance", label: "Compliance", icon: ShieldCheck },
@@ -23,7 +24,7 @@ export const CLIENT_NAV: Item[] = [
   { to: "/app", label: "Home", icon: Home }, { to: "/app/purchase-orders", label: "Purchase orders", icon: ShoppingCart },
   { to: "/app/invoices", label: "Invoices", icon: FileText }, { to: "/app/approvals", label: "Approvals", icon: Inbox }, { to: "/app/chat-approvals", label: "Chat approvals", icon: MessageSquare }, { to: "/app/risk", label: "Risk inbox", icon: ShieldAlert }, { to: "/app/bank-changes", label: "Bank changes", icon: Landmark },
   { to: "/app/agents", label: "Agents", icon: Bot }, { to: "/app/suppliers", label: "Suppliers", icon: Truck },
-  { to: "/app/cards", label: "Cards", icon: CreditCard }, { to: "/app/credit", label: "Credit line", icon: HandCoins }, { to: "/app/payments", label: "Payments", icon: Banknote }, { to: "/app/transactions", label: "Transactions", icon: Activity }, { to: "/app/evidence", label: "Evidence", icon: FileCheck2 }, { to: "/app/ledger", label: "Entity ledger", icon: Scale }, { to: "/app/reconciliation", label: "Reconciliation", icon: FileCheck2 }, { to: "/app/rules", label: "Rules", icon: Workflow }, { to: "/app/developers", label: "Developers", icon: Code2 },
+  { to: "/app/cards", label: "Cards", icon: CreditCard }, { to: "/app/credit", label: "Credit line", icon: HandCoins }, { to: "/app/payments", label: "Payments", icon: Banknote }, { to: "/app/transactions", label: "Transactions", icon: Activity }, { to: "/app/evidence", label: "Evidence", icon: FileCheck2 }, { to: "/app/ledger", label: "Entity ledger", icon: Scale }, { to: "/app/reconciliation", label: "Reconciliation", icon: FileCheck2, perm: "statements.read" }, { to: "/app/rules", label: "Rules", icon: Workflow }, { to: "/app/developers", label: "Developers", icon: Code2 },
   { to: "/app/roles", label: "Roles", icon: UserCog }, { to: "/app/sessions", label: "Sessions", icon: MonitorSmartphone },
 ];
 
@@ -45,7 +46,7 @@ export function Shell({ kind }: { kind: "operator" | "client" }) {
   const [copilot, setCopilot] = useState<{ open: boolean; seed?: string }>({ open: false });
   useEffect(() => { applyTheme(me?.theme); }, [me?.theme]);
   if (!me) return null;
-  const nav = kind === "operator" ? OPERATOR_NAV : CLIENT_NAV;
+  const nav = (kind === "operator" ? OPERATOR_NAV : CLIENT_NAV).filter((n) => !n.perm || can(me, n.perm));
   return <div className="flex min-h-screen">
     <aside className={cn("sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-border md:flex", kind === "operator" ? "bg-surface" : "bg-subtle")}>
       <div className="flex items-center gap-2 px-4 py-4"><Logo name={me.theme.name} logo={me.theme.logo} /><div className="min-w-0"><div className="truncate text-[13px] font-semibold">{me.theme.name}</div><div className="truncate text-[11px] text-muted">{kind === "operator" ? "Operator console" : me.tenant.name}</div></div></div>

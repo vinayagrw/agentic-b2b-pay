@@ -14,6 +14,7 @@ const FIX = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../fixtu
 const fx = (f: string) => fs.readFileSync(path.join(FIX, f), "utf8");
 beforeEach(() => { useDb(":memory:"); reload(); reset(); P.seedPlatform(); S.bootstrap(); installFakes(); });
 const op = () => P.getUser("usr-op-olivia")!;
+const jane = () => P.getUser("usr-cfo-jane")!; const amara = () => P.getUser("usr-acme-amara")!;
 const camtFor = (ref: string, amt: number, day: string, id = "STMT-T1") => fx("sample.camt053.xml").replace("STMT-2026-11-01", id).replace("pi-sample-1", ref).replace(">1250.00<", `>${amt.toFixed(2)}<`).replace(/<ValDt><Dt>2026-11-01/, `<ValDt><Dt>${day}`);
 
 describe("bank statement parsing", () => {
@@ -48,7 +49,11 @@ describe("bank statement reconciliation", () => {
     expect(v.lines.find((l) => l.status === "matched")!.settlementId).toBe(st.id);
     expect(B.statementView("tnt-globex").lines).toHaveLength(0);
     expect(() => B.ignoreLine(op(), "tnt-acme", v.exceptions[0].id, "")).toThrow(/reason/);
-    expect(B.ignoreLine(op(), "tnt-acme", v.exceptions[0].id, "Monthly bank fee").status).toBe("ignored");
+    const c = B.ignoreLine(jane(), "tnt-acme", v.exceptions[0].id, "Monthly bank fee");
+    expect(c.status).toBe("pending"); expect(B.statementView("tnt-acme").exceptions).toHaveLength(1);
+    expect(() => B.ignoreLine(amara(), "tnt-acme", v.exceptions[0].id, "again")).toThrow(/second approver/);
+    expect(() => P.decideChange(jane(), c.id, true)).toThrow(/own change/);
+    expect((P.decideChange(amara(), c.id, true).result as any).status).toBe("ignored");
     expect(JSON.stringify(db.evidence)).toMatch(/bank_statement.line_ignored/);
   });
   it("does not auto match when value date is over 2 days off, and allows a manual match", async () => {
@@ -58,8 +63,41 @@ describe("bank statement reconciliation", () => {
     expect(B.importStatement(op(), "tnt-acme", "x.xml", camtFor(pi.id, pi.amount, far)).matched).toBe(0);
     const line = B.statementView("tnt-acme").exceptions.find((l) => l.endToEndId === pi.id)!;
     expect(() => B.matchLine(op(), "tnt-acme", line.id, "stl-nope", "x")).toThrow(/settled payment/);
-    expect(B.matchLine(op(), "tnt-acme", line.id, st.id, "Bank booked late").status).toBe("matched");
+    const c = B.matchLine(op(), "tnt-acme", line.id, st.id, "Bank booked late");
+    expect(c.status).toBe("pending");
+    expect((P.decideChange(jane(), c.id, true).result as any).status).toBe("matched");
     expect(() => B.matchLine(op(), "tnt-globex", line.id, st.id, "x")).toThrow(/not found/);
+  });
+  it("rejects a manual match whose amount, currency or direction differ, unless override has a note", async () => {
+    const r = await S.runFlow("Need 2000 sealed 6204 bearings for line 3"); await S.pollSettlements();
+    const pi = db.intents.find((i) => i.id === r.intentId)!; const st = db.settlements.find((s) => s.paymentIntentId === pi.id)!;
+    const day = st.confirmedAt.slice(0, 10);
+    B.importStatement(op(), "tnt-acme", "a.xml", camtFor("other-ref", 10, day, "STMT-A"));
+    const small = B.statementView("tnt-acme").exceptions.find((l) => l.amount === 10)!;
+    expect(() => B.matchLine(jane(), "tnt-acme", small.id, st.id, "")).toThrow(/does not equal/);
+    expect(() => B.matchLine(jane(), "tnt-acme", small.id, st.id, "", true)).toThrow(/note/);
+    const c = B.matchLine(jane(), "tnt-acme", small.id, st.id, "Partial booking", true);
+    expect(c.payload.difference).toBe(Math.round((10 - pi.amount) * 100) / 100);
+    P.decideChange(amara(), c.id, false);
+    B.importStatement(op(), "tnt-acme", "b.xml", camtFor("x2", pi.amount, day, "STMT-B").replace("USD\">" + pi.amount.toFixed(2), "EUR\">" + pi.amount.toFixed(2)).replace(/Ccy="USD">([\d.]+)<\/Amt><CdtDbtInd>DBIT/, 'Ccy="EUR">$1</Amt><CdtDbtInd>DBIT'));
+    const eur = B.statementView("tnt-acme").exceptions.find((l) => l.currency === "EUR")!;
+    expect(() => B.matchLine(jane(), "tnt-acme", eur.id, st.id, "x", true)).toThrow(/EUR/);
+    B.importStatement(op(), "tnt-acme", "c.xml", camtFor("x3", pi.amount, day, "STMT-C").replace("<CdtDbtInd>DBIT", "<CdtDbtInd>CRDT"));
+    const cr = B.statementView("tnt-acme").exceptions.find((l) => l.direction === "credit")!;
+    expect(() => B.matchLine(jane(), "tnt-acme", cr.id, st.id, "x", true)).toThrow(/debit/);
+  });
+  it("does not treat a missing or reused statement id as a duplicate", () => {
+    const mt = fx("sample.mt940.txt");
+    B.importStatement(op(), "tnt-acme", "1.txt", mt);
+    expect(() => B.importStatement(op(), "tnt-acme", "2.txt", mt.replace(":28C:00001/001", ":28C:00002/001").replace("BANKREF-1", "BANKREF-9"))).not.toThrow();
+    expect(() => B.importStatement(op(), "tnt-acme", "3.txt", mt.replace(":28C:00001/001", ":28C:00001/001").replace("Supplier payment", "Other text"))).toThrow(/already imported/);
+    const camt = fx("sample.camt053.xml").replace("<Id>STMT-2026-11-01</Id>", "");
+    B.importStatement(op(), "tnt-acme", "a.xml", camt);
+    expect(() => B.importStatement(op(), "tnt-acme", "b.xml", camt.replace("BANKREF-1", "BANKREF-7"))).not.toThrow();
+  });
+  it("rejects a camt.053 file with more than one statement", () => {
+    const x = fx("sample.camt053.xml"); const stmt = x.match(/<Stmt>[\s\S]*?<\/Stmt>/)![0];
+    expect(() => B.parseStatement(x.replace(stmt, stmt + stmt))).toThrow(/more than one statement/);
   });
   it("imports an MT940 file", async () => {
     expect(B.importStatement(op(), "tnt-acme", "s.txt", fx("sample.mt940.txt")).lines).toBe(2);
@@ -75,7 +113,8 @@ describe("bank statement reconciliation", () => {
     const v = (await app.inject({ method: "GET", url: "/reconciliation/statements?tenantId=tnt-acme", headers: { cookie: olivia } })).json();
     expect(v.exceptions).toHaveLength(2);
     const ig = await app.inject({ method: "POST", url: `/reconciliation/statements/lines/${v.exceptions[1].id}/ignore?tenantId=tnt-acme`, headers: { cookie: olivia }, payload: { reason: "Bank fee" } });
-    expect(ig.json().status).toBe("ignored");
+    expect(ig.json().status).toBe("pending");
+    expect((await app.inject({ method: "POST", url: `/changes/${ig.json().id}/decide`, headers: { cookie: jane }, payload: { approve: true } })).json().result.status).toBe("ignored");
     await app.close();
   });
 });
