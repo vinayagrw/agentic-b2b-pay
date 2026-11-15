@@ -19,6 +19,7 @@ import * as Risk from "./risk.js";
 import * as Ops from "./ops.js";
 import * as TM from "./terms.js";
 import * as CR from "./credit.js";
+import { queueNotice } from "./notices.js";
 
 const now = () => new Date().toISOString();
 const sha = (s: string | Buffer) => crypto.createHash("sha256").update(s).digest("hex");
@@ -285,8 +286,59 @@ export function supplierData(token: string) {
   const payments = st.intents.filter((p) => p.kind !== "refund" && invoices.some((i) => i.invoiceId === p.invoiceId)).map((p) => ({ paymentId: p.id, invoiceId: p.invoiceId, amount: p.amount, status: p.status, rail: (p as any).rail ?? p.route?.rail ?? null, createdAt: p.createdAt ?? null }));
   const ob = s.onboarding; const hold = W.holdOf(s);
   const onboarding = { status: ob?.status ?? "verified", screening: s.screeningStatus, bank: ob?.bank ? `ending ${ob.bank.last4}` : s.bankDetailsRef ? "on file" : "missing", wallet: s.walletAddress ? "on file" : "none", onHold: !!hold, acceptedRails: s.acceptedRails };
-  return { supplier: { id: s.id, name: s.name }, buyer: P.getTenant(t)?.name ?? t, theme: P.themeFor(P.getTenant(t)!), invoices, payments, onboarding };
+  const orders = openPos(s, t).map((p) => ({ poId: p.id, total: p.total, currency: p.currency ?? "USD", status: p.status }));
+  return { supplier: { id: s.id, name: s.name }, buyer: P.getTenant(t)?.name ?? t, theme: P.themeFor(P.getTenant(t)!), invoices, payments, onboarding, openOrders: orders };
 }
+const portalWin = new Map<string, number[]>();
+/** Basic per token and per address limit on the public portal routes, SUPPLIER_PORTAL_RATE_MAX per minute (default 60). */
+export function portalRateOk(key: string, at = Date.now()) {
+  const max = Number(process.env.SUPPLIER_PORTAL_RATE_MAX) || 60; const xs = (portalWin.get(key) ?? []).filter((x) => at - x < 60_000);
+  if (xs.length >= max) { portalWin.set(key, xs); return false; } xs.push(at); portalWin.set(key, xs); return true;
+}
+export const resetPortalRate = () => portalWin.clear();
+const OPEN_PO = new Set(["approved", "received"]);
+/** Orders this supplier can still invoice. */
+function openPos(s: { id: string }, t: string) { return db.pos.filter((p) => p.supplierId === s.id && tenantOf(p) === t && OPEN_PO.has(p.status)); }
+/** The supplier sends an invoice against one of its own open orders. Same path as any invoice, with the duplicate check. */
+export async function portalSubmitInvoice(token: string, raw: any) {
+  const s = portalSupplier(token); const t = tenantOf(s);
+  const poId = String(raw?.poId ?? ""); const text = String(raw?.text ?? "").slice(0, 20_000);
+  if (!openPos(s, t).some((p) => p.id === poId)) throw err(404, "Open order not found for this supplier");
+  if (!text.trim()) throw err(422, "Paste the invoice text");
+  const inv = await S.submitInvoice(poId, text, { submittedBy: `supplier-portal:${s.id}`, ...(raw?.invoiceDate ? { invoiceDate: String(raw.invoiceDate) } : {}) });
+  appendEvidence(db.evidence, "invoice", inv.id, "supplier_portal.invoice_submitted", { supplierId: s.id, poId });
+  queueNotice({ tenantId: t, kind: "invoice_received", audience: "buyer", supplierId: s.id, refId: inv.id, subject: `Invoice ${inv.number} received from ${s.name}`, body: `${s.name} sent invoice ${inv.number} for ${inv.amount.toFixed(2)} ${inv.currency} against order ${poId}.` });
+  save(); return { invoiceId: inv.id, number: inv.number, amount: inv.amount, currency: inv.currency, riskSignals: (inv as any).riskSignals ?? [] };
+}
+function ownPayment(s: { id: string }, t: string, paymentId: string) {
+  const p = scoped(t).intents.find((x) => x.id === paymentId && x.kind !== "refund");
+  const inv = p && db.invoices.find((i) => i.id === p.invoiceId && i.supplierId === s.id && tenantOf(i) === t);
+  if (!p || !inv) throw err(404, "Payment not found"); return { p, inv };
+}
+/** The supplier raises a dispute on one of its payments. Opens a case the buyer sees. */
+export function portalDispute(token: string, paymentId: string, raw: any) {
+  const s = portalSupplier(token); const t = tenantOf(s); const { p, inv } = ownPayment(s, t, paymentId);
+  const reason = String(raw?.reason ?? "").trim().slice(0, 1000); if (reason.length < 5) throw err(422, "Say what is wrong in a few words");
+  if (S.listCases(t).some((c) => c.kind === "dispute" && c.status === "open" && c.intentId === p.id && c.detail?.source === "supplier_portal")) throw err(409, "A dispute is already open for this payment");
+  const c = S.openCase({ tenantId: t, kind: "dispute", intentId: p.id, title: `Supplier dispute from ${s.name} on ${p.id}`, detail: { source: "supplier_portal", supplierId: s.id, invoiceId: inv.id, amount: p.amount, reason } });
+  queueNotice({ tenantId: t, kind: "dispute_opened", audience: "buyer", supplierId: s.id, refId: c.id, subject: `Dispute opened by ${s.name}`, body: `${s.name} raised a dispute on payment ${p.id} for invoice ${inv.number}. Reason: ${reason}` });
+  save(); return { caseId: c.id, status: c.status };
+}
+const csvCell = (v: unknown) => { const x = String(v ?? ""); return /^[=+\-@\t\r]/.test(x) ? `'${x}` : /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
+const esc = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+/** Remittance advice for one paid payment, as CSV or a simple printable HTML page. */
+export function portalRemittance(token: string, paymentId: string, format: "csv" | "html") {
+  const s = portalSupplier(token); const t = tenantOf(s); const { p, inv } = ownPayment(s, t, paymentId);
+  if (p.status !== "settled") throw err(409, "Remittance advice is ready once the payment is paid");
+  const st = db.settlements.find((x) => x.id === p.settlementId);
+  const buyer = P.getTenant(t)?.name ?? t;
+  const row = { payer: buyer, payee: s.name, paymentId: p.id, invoiceNumber: inv.number, invoiceId: inv.id, poId: inv.poId, amount: p.amount.toFixed(2), currency: inv.currency ?? "USD", rail: p.rail ?? "", reference: st?.railRef ?? p.providerRef ?? "", paidAt: st?.confirmedAt ?? "" };
+  appendEvidence(db.evidence, "payment", p.id, "supplier_portal.remittance_downloaded", { supplierId: s.id, format }); save();
+  if (format === "csv") { const k = Object.keys(row); return `${k.join(",")}\n${k.map((x) => csvCell((row as any)[x])).join(",")}\n`; }
+  const rows = Object.entries(row).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Remittance advice ${esc(p.id)}</title><style>body{font-family:sans-serif;margin:2rem;color:#111;background:#fff}table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px 10px;text-align:left}</style></head><body><h1>Remittance advice</h1><p>${esc(buyer)} paid ${esc(s.name)}. Sandbox record.</p><table>${rows}</table><p><button onclick="window.print()">Print</button></p></body></html>`;
+}
+
 export const SUPPLIER_SUGGEST = ["Which of my invoices are unpaid?", "When was I last paid?", "What is my onboarding status?"];
 export async function supplierAsk(token: string, question: string) {
   const d = supplierData(token); const q = String(question ?? "").trim().slice(0, 300); if (!q) throw err(422, "Ask a question");

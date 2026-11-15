@@ -38,6 +38,7 @@ import * as LV from "./live.js";
 import rateLimit from "@fastify/rate-limit";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import * as SP from "./sparky.js";
+import * as NT from "./notices.js";
 import * as TM from "./terms.js";
 import * as CH from "./chatops.js";
 import * as CARDS from "./cards.js";
@@ -217,11 +218,17 @@ export async function buildApp() {
     "GET /cases/:id/evidence-pack": "audit.read", "GET /payments/:id/why/export.json": "audit.read", "GET /payments/:id/why/export.md": "audit.read",
     "GET /identity/configs": "identity.manage", "POST /identity/configs": "identity.manage", "GET /iam/users": "roles.manage", "GET /iam/roles": "roles.manage", "POST /iam/roles": "roles.manage", "PUT /iam/roles/:id": "roles.manage", "DELETE /iam/roles/:id": "roles.manage", "POST /iam/users/:id/role": "roles.manage",
     "POST /sessions/:id/revoke": "workspace.read", "POST /risk/:paymentId/decide": "risk.review", "POST /views": "workspace.read", "DELETE /views/:id": "workspace.read", "GET /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens/:id/revoke": "developers.keys",
-    "POST /copilot/outcome": "workspace.read", "POST /copilot/skills/:slug": "workspace.read", "POST /workspace/suppliers/:id/portal-link": "suppliers.invite", "GET /ops/agent-view": "treasury.read", "GET /ops/copilot-metrics": "treasury.read", "GET /ops/offers": "treasury.read", "POST /ops/offers/:tenantId": "settings.live_toggle", "POST /cards/:id/decide": "payments.approve", "POST /credit/draws/:id/decide": "payments.approve", "POST /credit/draws/:id/repay": "payments.pay", "GET /ops/credit": "treasury.read", "PUT /ops/credit/lines/:tenantId": "treasury.sweep", "PUT /ops/credit/caps/:bankId": "treasury.sweep",
+    "POST /copilot/outcome": "workspace.read", "POST /copilot/skills/:slug": "workspace.read", "POST /workspace/suppliers/:id/portal-link": "suppliers.invite", "GET /notices/outbox": "suppliers.review", "GET /ops/agent-view": "treasury.read", "GET /ops/copilot-metrics": "treasury.read", "GET /ops/offers": "treasury.read", "POST /ops/offers/:tenantId": "settings.live_toggle", "POST /cards/:id/decide": "payments.approve", "POST /credit/draws/:id/decide": "payments.approve", "POST /credit/draws/:id/repay": "payments.pay", "GET /ops/credit": "treasury.read", "PUT /ops/credit/lines/:tenantId": "treasury.sweep", "PUT /ops/credit/caps/:bankId": "treasury.sweep",
     "POST /suppliers/:id/bank-changes": "suppliers.payee_change", "POST /suppliers/:id/bank-changes/wallet-nonce": "suppliers.payee_change", "POST /suppliers/:id/bank-changes/wallet-sandbox-sign": "suppliers.payee_change", "POST /bank-changes/:id/callback": "payments.approve", "POST /bank-changes/:id/decide": "payments.approve", "PUT /bank-changes/settings": "rules.edit", "PUT /suppliers/:id/callback-phone": "suppliers.review",
   };
   /** The permission a route needs. Developer routes need developers.keys, other reads need workspace.read, other writes need flow.operate. */
   const permFor = (method: string, url: string): I.Permission => ROUTE_PERMS[`${method} ${url}`] ?? (url.startsWith("/dev/") ? "developers.keys" : method === "GET" ? "workspace.read" : "flow.operate");
+  // Public supplier portal routes are rate limited per token and per address.
+  app.addHook("onRequest", async (req: any, reply) => {
+    if (!String(req.url).startsWith("/supplier-portal/")) return;
+    const tok = String(req.url).split("/")[2] ?? "";
+    if (!SP.portalRateOk(`t:${tok}`) || !SP.portalRateOk(`ip:${req.ip}`)) return reply.status(429).send({ error: "Too many requests, try again in a minute" });
+  });
   app.addHook("preHandler", async (req: any) => {
     const url = req.routeOptions?.url as string | undefined;
     if (!url || PUBLIC.has(url) || url.startsWith("/uploads/") || url.startsWith("/onboard/") || url.startsWith("/supplier-portal/") || url.startsWith("/scim/") || url.startsWith("/docs") || req.method === "HEAD" || req.method === "OPTIONS") return;
@@ -633,6 +640,11 @@ export async function buildApp() {
   app.get("/ops/offers", async (req) => { if (!P.isOperator(who(req))) throw new P.AuthError(403, "Operators only"); return SP.offerSettings(); });
   app.post("/ops/offers/:tenantId", async (req: any) => SP.setOffers(who(req), req.params.tenantId, !!b(req).enabled));
   app.get("/supplier-portal/:token", async (req: any) => ({ ...SP.supplierData(req.params.token), suggest: SP.SUPPLIER_SUGGEST }));
+  app.post("/supplier-portal/:token/invoices", async (req: any) => SP.portalSubmitInvoice(req.params.token, b(req)));
+  app.post("/supplier-portal/:token/payments/:id/dispute", async (req: any) => SP.portalDispute(req.params.token, req.params.id, b(req)));
+  app.get("/supplier-portal/:token/payments/:id/remittance.csv", async (req: any, reply) => reply.type("text/csv").header("content-disposition", `attachment; filename="remittance-${String(req.params.id).replace(/[^\w-]/g, "")}.csv"`).send(SP.portalRemittance(req.params.token, req.params.id, "csv")));
+  app.get("/supplier-portal/:token/payments/:id/remittance.html", async (req: any, reply) => reply.type("text/html; charset=utf-8").header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'").send(SP.portalRemittance(req.params.token, req.params.id, "html")));
+  app.get("/notices/outbox", async (req) => ({ mode: "mock", notices: NT.listNotices(ctx(req).t) }));
   app.post("/supplier-portal/:token/ask", async (req: any) => SP.supplierAsk(req.params.token, String(b(req).question ?? "")));
   // MCP over streamable HTTP, stateless. Bearer mcp_test_... token only. Session cookies and API keys do not work here.
   app.all("/mcp", async (req: any, reply) => {

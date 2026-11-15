@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
-import { Bot, Gift, KeyRound, LayoutList, Send, Store } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Bot, Gift, KeyRound, LayoutList, Mail, Send, Store } from "lucide-react";
+import { isPaid, noticeLabel, remittanceUrl } from "../lib/portal";
 import { api, useAct, useGet } from "../lib/api";
 import { usd } from "../lib/utils";
-import { Badge, Button, Card, EmptyState, ErrorNote, Input, Label, Mono, Muted, Stat, Table } from "../components/ui";
+import { Badge, Button, Card, EmptyState, ErrorNote, Input, Label, Mono, Muted, Select, Stat, Table, Textarea } from "../components/ui";
 
 /** MCP tokens on the Developers page. Scoped to read-only tools, with an expiry, shown once, revocable. */
 export function McpTokens({ tenantId }: { tenantId?: string }) {
@@ -58,6 +60,8 @@ export function OpsAgentPanel() {
 export function SupplierPortal() {
   const { token = "" } = useParams(); const { data: d, error } = useGet<any>(`/supplier-portal/${token}`);
   const [q, setQ] = useState(""); const [turns, setTurns] = useState<any[]>([]); const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
+  const qc = useQueryClient(); const [poId, setPoId] = useState(""); const [text, setText] = useState(""); const [note, setNote] = useState(""); const [disputeFor, setDisputeFor] = useState(""); const [reason, setReason] = useState("");
+  const act = async (fn: () => Promise<any>, ok: (r: any) => string) => { setBusy(true); setErr(""); setNote(""); try { const r = await fn(); setNote(ok(r)); qc.invalidateQueries({ queryKey: [`/supplier-portal/${token}`] }); return r; } catch (e: any) { setErr(e.message); } finally { setBusy(false); } };
   const ask = async (text: string) => { const t = text.trim(); if (!t) return; setBusy(true); setErr(""); setQ(""); try { const r = await api(`/supplier-portal/${token}/ask`, { question: t }); setTurns((x) => [...x, r]); } catch (e: any) { setErr(e.message); } finally { setBusy(false); } };
   if (error) return <div className="grid min-h-screen place-items-center bg-bg p-4"><EmptyState icon={Store} title="This link does not work" body={(error as Error).message} /></div>;
   if (!d) return <div className="min-h-screen bg-bg p-4"><Muted>Loading</Muted></div>;
@@ -65,15 +69,31 @@ export function SupplierPortal() {
     <div><h1 className="text-lg font-semibold">{d.supplier.name}</h1><Muted>Supplier portal for {d.buyer}. You see only your own invoices, payments and onboarding.</Muted></div>
     <div className="grid gap-3 sm:grid-cols-3"><Stat label="Onboarding" value={d.onboarding.status} hint={`Screening ${d.onboarding.screening}`} /><Stat label="Open invoices" value={d.invoices.filter((i: any) => !i.paid).length} hint={`${d.invoices.length} in total`} /><Stat label="Payments" value={d.payments.length} hint={d.onboarding.onHold ? "Paused by the buyer for review" : `Bank ${d.onboarding.bank}`} /></div>
     <Card title="Your invoices" pad={false}>{d.invoices.length ? <Table head={["Invoice", "Amount", "Due", "Match", "Paid"]}>{d.invoices.map((i: any) => <tr key={i.invoiceId}><td>{i.number} <Mono className="text-muted">{i.invoiceId}</Mono></td><td>{Number(i.amount).toFixed(2)} {i.currency}</td><td>{i.dueDate}</td><td><Badge v={i.match} /></td><td><Badge v={i.paid ? "paid" : "open"} tone={i.paid ? "ok" : "warn"} /></td></tr>)}</Table> : <EmptyState title="No invoices yet" />}</Card>
-    <Card title="Your payments" pad={false}>{d.payments.length ? <Table head={["Payment", "Amount", "Status", "Rail"]}>{d.payments.map((p: any) => <tr key={p.paymentId}><td><Mono>{p.paymentId}</Mono></td><td>{usd(p.amount)}</td><td><Badge v={p.status} /></td><td>{p.rail ?? ""}</td></tr>)}</Table> : <EmptyState title="No payments yet" />}</Card>
+    <Card title="Your payments" pad={false}>{d.payments.length ? <Table head={["Payment", "Amount", "Status", "Rail", "Actions"]}>{d.payments.map((p: any) => <tr key={p.paymentId}><td><Mono>{p.paymentId}</Mono></td><td>{usd(p.amount)}</td><td><Badge v={p.status} /></td><td>{p.rail ?? ""}</td><td className="flex flex-wrap gap-2">{isPaid(p) && <><a className="text-xs underline" href={remittanceUrl(token, p.paymentId, "csv")}>Remittance CSV</a><a className="text-xs underline" href={remittanceUrl(token, p.paymentId, "html")} target="_blank" rel="noreferrer">Print view</a></>}<Button size="sm" variant="ghost" onClick={() => { setDisputeFor(p.paymentId); setReason(""); }}>Raise a dispute</Button></td></tr>)}</Table> : <EmptyState title="No payments yet" />}</Card>
+    {note && <div role="status" className="rounded-lg border border-ok/40 bg-ok/10 p-3 text-[13px]">{note}</div>}
+    {disputeFor && <Card title={`Dispute payment ${disputeFor}`}><form className="flex flex-col gap-2" onSubmit={async (e) => { e.preventDefault(); const r = await act(() => api(`/supplier-portal/${token}/payments/${disputeFor}/dispute`, { reason }), (x) => `Dispute sent. Case ${x.caseId}. The buyer will review it.`); if (r) setDisputeFor(""); }}>
+      <Label>What is wrong</Label><Textarea aria-label="Dispute reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="We were paid 20 dollars less than the invoice" />
+      <div className="flex gap-2"><Button type="submit" variant="primary" disabled={busy || reason.trim().length < 5}>Send dispute</Button><Button type="button" variant="ghost" onClick={() => setDisputeFor("")}>Cancel</Button></div></form></Card>}
+    <Card title="Send an invoice"><form className="flex flex-col gap-2" onSubmit={async (e) => { e.preventDefault(); const r = await act(() => api(`/supplier-portal/${token}/invoices`, { poId, text }), (x) => `Invoice ${x.number} received as ${x.invoiceId}.${x.riskSignals?.length ? " It looks close to an earlier invoice, so the buyer will check it." : ""}`); if (r) setText(""); }}>
+      {(d.openOrders ?? []).length ? <><Label>Order</Label><Select aria-label="Order" value={poId} onChange={(e) => setPoId(e.target.value)}><option value="">Pick an open order</option>{d.openOrders.map((o: any) => <option key={o.poId} value={o.poId}>{o.poId} {Number(o.total).toFixed(2)} {o.currency}</option>)}</Select>
+      <Label>Invoice text</Label><Textarea aria-label="Invoice text" value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste your invoice here" className="min-h-32" />
+      <Button type="submit" variant="primary" disabled={busy || !poId || !text.trim()}>Send invoice</Button></> : <Muted>No open orders to invoice right now.</Muted>}
+    </form></Card>
     <Card title={<span className="flex items-center gap-2"><Bot size={14} />Ask about your account</span>}>
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap gap-1.5">{d.suggest.map((s: string) => <button key={s} onClick={() => ask(s)} className="rounded-full border border-border px-2.5 py-1 text-xs hover:bg-subtle">{s}</button>)}</div>
         {turns.map((t) => <div key={t.id} className="flex flex-col gap-1"><div className="self-end rounded-xl bg-primary px-3 py-2 text-[13px] text-primary-fg">{t.question}</div><div className="rounded-xl bg-subtle px-3 py-2 text-[13px]">{t.refused && <span className="mb-1 block text-[11px] font-medium text-warn">No source found</span>}{t.answer}</div></div>)}
         <ErrorNote msg={err} />
         <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); ask(q); }}><Input aria-label="Ask the supplier agent" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Which of my invoices are unpaid?" className="flex-1" disabled={busy} /><Button type="submit" variant="primary" disabled={busy || !q.trim()} aria-label="Send"><Send size={14} /></Button></form>
-        <Muted>Read-only. The agent cannot change bank details or payment dates.</Muted>
+        <Muted>The agent only reads. It cannot change bank details or payment dates.</Muted>
       </div>
     </Card>
   </div></div>;
+}
+
+/** Buyer admin view of the email notice outbox. Mock mode: rows are stored, nothing is sent. */
+export function NoticesPage() {
+  const { data } = useGet<{ mode: string; notices: any[] }>("/notices/outbox");
+  return <div className="flex flex-col gap-4"><div><h1 className="text-lg font-semibold">Email notices</h1><Muted>Mock mode. These emails are stored here and never sent.</Muted></div>
+    <Card title={<span className="flex items-center gap-2"><Mail size={14} />Outbox</span>} pad={false}>{data?.notices.length ? <Table head={["When", "Type", "To", "Subject", "Message"]}>{data.notices.map((n) => <tr key={n.id}><td className="whitespace-nowrap text-xs">{n.createdAt.slice(0, 16).replace("T", " ")}</td><td><Badge v={noticeLabel(n.kind)} /></td><td>{n.audience === "buyer" ? "Your team" : `Supplier ${n.supplierId}`}</td><td>{n.subject}</td><td className="text-xs text-muted">{n.body}</td></tr>)}</Table> : <EmptyState title="No notices yet" />}</Card></div>;
 }
