@@ -419,6 +419,12 @@ export function holdInvoice(invId: string, userId: string, reason: unknown, rele
   save(); return inv;
 }
 /** USD value of an invoice, for step-up and approval limits. */
+/** USD value of an invoice, or null when no FX rate is cached. Use where an unknown value must fail closed. */
+export function invoiceUsdKnown(inv: import("./modules/store.js").Invoice): number | null {
+  if ((inv.currency ?? "USD") === "USD") return inv.amount;
+  const ur = FX.cachedRateOn(inv.currency, "USD", inv.invoiceDate) ?? FX.cachedRateOn(inv.currency, "USD");
+  return ur ? FX.convert(inv.amount, ur.rate) : null;
+}
 export function invoiceUsd(inv: import("./modules/store.js").Invoice) {
   if ((inv.currency ?? "USD") === "USD") return inv.amount;
   const ur = FX.cachedRateOn(inv.currency, "USD", inv.invoiceDate) ?? FX.cachedRateOn(inv.currency, "USD");

@@ -62,6 +62,12 @@ export function ownInvoice(u: any, invId: unknown) {
   return inv;
 }
 /** 404 unless the caller can see the tenant and it is in their entity scope. */
+/** 404 unless the caller's tenant owns the agent. */
+export function ownAgent(u: any, id: unknown) {
+  const a = db.agents.find((x) => x.id === id);
+  if (!a || !inScope(u, a.tenantId)) throw new S.HttpError(404, "agent not found");
+  return a;
+}
 const inScope = (u: any, tenantId: string | null | undefined) => P.canAccessTenant(u, tenantId ?? "tnt-acme") && I.inEntityScope(u, tenantId ?? "tnt-acme");
 export function ownPayment(u: any, id: unknown) {
   const pi = db.intents.find((i) => i.id === id);
@@ -81,7 +87,8 @@ export function ownCase(u: any, id: unknown) {
 /** Fresh authenticator code for payments above the approval step-up threshold. Agents have no session, so they cannot pay above it. */
 export function payStepUp(u: any, sessionId: string | null | undefined, invId: unknown) {
   const inv = db.invoices.find((i) => i.id === invId); if (!inv) return;
-  const usd = S.invoiceUsd(inv); if (SU.needsStepUp(usd)) SU.requireFresh(u, sessionId ?? null, usd);
+  // No cached rate means the USD value is unknown, so fail closed and ask for a fresh code.
+  const usd = S.invoiceUsdKnown(inv) ?? Number.POSITIVE_INFINITY; if (SU.needsStepUp(usd)) SU.requireFresh(u, sessionId ?? null, usd);
 }
 const needUser = (u: any) => { if (!u) throw new P.AuthError(401, "Sign in required"); return u; };
 /** Same guards as POST /invoices/:id/pay: payments.pay, tenant and entity scope, maker-checker. */
@@ -371,9 +378,9 @@ export async function buildApp() {
   app.get("/.well-known/agent.json", async () => ({ name: "B2B pay gateway", protocols: ["mcp", "a2a"], skills: TOOLS.map((t) => t.name), url: "http://localhost:8790" }));
 
   app.post("/agents", async (req) => S.registerAgent(RegisterAgent.parse(b(req))));
-  app.post("/agents/:id/verify", async (req: any) => S.kyaVerify(req.params.id));
-  app.post("/agents/:id/suspend", async (req: any) => S.setAgentStatus(req.params.id, "suspended"));
-  app.post("/agents/:id/resume", async (req: any) => S.setAgentStatus(req.params.id, "active"));
+  app.post("/agents/:id/verify", async (req: any) => S.kyaVerify(ownAgent(who(req), req.params.id).id));
+  app.post("/agents/:id/suspend", async (req: any) => S.setAgentStatus(ownAgent(who(req), req.params.id).id, "suspended"));
+  app.post("/agents/:id/resume", async (req: any) => S.setAgentStatus(ownAgent(who(req), req.params.id).id, "active"));
   app.post("/kill-switch", async (req) => S.setKillSwitch(!!b(req).on));
   app.post("/policy/evaluate", async (req) => { const x = b(req); return S.policyFor(x.agentId ?? "agt-buyer-1", x.supplierId, x.category, Number(x.amount)).decision; });
 
@@ -401,7 +408,7 @@ export async function buildApp() {
   });
   app.post("/refunds", async (req) => { const u = who(req); const pi = ownPayment(u, b(req).paymentIntentId); const r = await S.refund(pi.id, Number(b(req).amount), String(b(req).reason ?? "refund")); P.audit(u.id, "refund", r.id, "refund.requested_by", { amount: r.amount }); return r; });
   app.post("/erp/vendor-master/changes", async (req: any) => { const { u, t } = ctx(req); return BC.requestFromErp(u, t, b(req)); });
-  app.get("/settlements/:id", async (req: any) => { const u = who(req); const st = db.settlements.find((s) => s.id === req.params.id); if (!st || !inScope(u, st.tenantId ?? db.intents.find((i) => i.id === st.paymentIntentId)?.tenantId)) throw new S.HttpError(404, "settlement not found"); return st; });
+  app.get("/settlements/:id", async (req: any) => { const u = who(req); const st = db.settlements.find((s) => s.id === req.params.id); const stTenant = st && (st.tenantId ?? db.intents.find((i) => i.id === st.paymentIntentId)?.tenantId); if (!st || (stTenant ? !inScope(u, stTenant) : !P.isOperator(u))) throw new S.HttpError(404, "settlement not found"); return st; });
   app.get("/ledger/journals", async () => S.ledgerView());
   // Legal entities and FX. A client sees only its own entities, locks and books.
   app.get("/entities", async (req) => S.entitiesView(scopeOf(req)));
@@ -472,10 +479,10 @@ export async function buildApp() {
   app.post("/ops/recon/exceptions/:id/resolve", async (req: any) => { const { u, t } = opCtx(req); return O.resolveException(u, t, decodeURIComponent(req.params.id), b(req).action, String(b(req).note ?? "")); });
   app.get("/ops/recon/export.csv", async (req: any, reply) => { const { t } = opCtx(req); return reply.type("text/csv").header("content-disposition", `attachment; filename="recon-${t}.csv"`).send(O.reconCsv(t)); });
   app.get("/ops/compliance", async (req) => { who(req); return { ...O.complianceStatus(), cases: S.listCases(null), travelRule: O.travelRuleRecords(null) }; });
-  app.post("/ops/cases/:id/sar/draft", async (req: any) => O.draftSar(who(req), ownCase(who(req), req.params.id).id));
-  app.put("/ops/cases/:id/sar", async (req: any) => O.editSar(who(req), ownCase(who(req), req.params.id).id, String(b(req).text ?? "")));
-  app.post("/ops/cases/:id/sar/file", async (req: any) => O.fileSar(who(req), ownCase(who(req), req.params.id).id));
-  app.post("/ops/cases/:id/close", async (req: any) => O.closeCase(who(req), ownCase(who(req), req.params.id).id, String(b(req).resolution ?? "")));
+  app.post("/ops/cases/:id/sar/draft", async (req: any) => { const u = who(req); return O.draftSar(u, ownCase(u, req.params.id).id); });
+  app.put("/ops/cases/:id/sar", async (req: any) => { const u = who(req); return O.editSar(u, ownCase(u, req.params.id).id, String(b(req).text ?? "")); });
+  app.post("/ops/cases/:id/sar/file", async (req: any) => { const u = who(req); return O.fileSar(u, ownCase(u, req.params.id).id); });
+  app.post("/ops/cases/:id/close", async (req: any) => { const u = who(req); return O.closeCase(u, ownCase(u, req.params.id).id, String(b(req).resolution ?? "")); });
   // Step 6: revenue, KPIs, dispute evidence, developer keys and webhooks
   app.get("/ops/revenue", async (req) => { who(req); return A.revenue(); });
   app.get("/orders/:poId/evidence", async (req: any) => S.disputeEvidence(scopeOf(req), req.params.poId));
