@@ -26,7 +26,7 @@ import * as AP2 from "./modules/ap2.js";
 import { paidByCard, orderCards } from "./cards.js";
 import { evaluateMandates } from "./modules/policy.js";
 
-export class HttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
+export class HttpError extends Error { constructor(public status: number, msg: string, public extra?: Record<string, unknown>) { super(msg); } }
 const must = <T>(v: T | undefined, what: string): T => { if (!v) throw new HttpError(404, `${what} not found`); return v; };
 const ev = (t: string, id: string, e: string, p: unknown) => appendEvidence(db.evidence, t, id, e, p);
 const erp = (e: Omit<import("./modules/store.js").ErpEvent, "id">) => db.erp.push({ id: nextId("erp"), ...e });
@@ -296,7 +296,8 @@ export async function submitInvoice(poId: string, text: string, opts: { invoiceD
   const r = await readInvoice(text);
   const invoiceDate = opts.invoiceDate ?? FX.today();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) || invoiceDate > FX.today()) throw new HttpError(422, "invoiceDate must be YYYY-MM-DD and not in the future");
-  const inv = { id: nextId("inv"), invoiceDate, tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? sup.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: paidByCard(tenantOf(po), poId), injection: r.injection, ...(sup.terms ? { terms: sup.terms } : {}) };
+  const riskSignals = duplicateCheck(tenantOf(po), po.supplierId, r.value.invoiceNumber, r.value.total, invoiceDate);
+  const inv = { id: nextId("inv"), invoiceDate, tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? sup.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: paidByCard(tenantOf(po), poId), injection: r.injection, ...(riskSignals.length ? { riskSignals } : {}), ...(sup.terms ? { terms: sup.terms } : {}) };
   db.invoices.push(inv); po.status = po.status === "received" ? "invoiced" : po.status;
   ev("invoice", inv.id, "llm.invoice_extracted", { source: r.source, extract: r.value });
   if (r.injection.length) {
@@ -304,6 +305,17 @@ export async function submitInvoice(poId: string, text: string, opts: { invoiceD
     ev("invoice", inv.id, "security.injection_ignored", { lines: r.injection, walletUnchanged: sup.walletAddress === walletBefore });
   }
   save(); return inv;
+}
+const normNo = (n: string) => String(n ?? "").replace(/\s+/g, "").toUpperCase();
+const DAY = 86_400_000;
+/** Blocks an exact repeat (same supplier, invoice number and amount in the tenant) and returns near-duplicate risk signals. */
+export function duplicateCheck(tenantId: string, supplierId: string, number: string, amount: number, invoiceDate: string) {
+  const same = db.invoices.filter((i) => (i.tenantId ?? "tnt-acme") === tenantId && i.supplierId === supplierId && Math.abs(i.amount - amount) < 0.005);
+  const dup = same.find((i) => normNo(i.number) === normNo(number));
+  if (dup) throw new HttpError(409, `This invoice was already sent as ${dup.id}. Same supplier, invoice number and amount.`, { duplicateOf: dup.id });
+  const at = Date.parse(invoiceDate);
+  return same.filter((i) => Math.abs(Date.parse(i.invoiceDate ?? invoiceDate) - at) <= 7 * DAY)
+    .map((i) => ({ code: "near_duplicate" as const, invoiceId: i.id, detail: `Same supplier and amount as ${i.id} (number ${i.number}) within 7 days` }));
 }
 /** Fetches (or reuses) the rates a PO or invoice needs, so the sync steps never run without a real rate. */
 export async function ensureRates(input: { currency?: string; entityId?: string; tenantId: string; invoiceDate?: string }) {

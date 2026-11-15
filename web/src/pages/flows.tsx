@@ -6,6 +6,7 @@ import { payByLine, termsText, STATUS_TEXT, statusTone, canAskEarlyPay, DEMO_NOT
 import { Ban, Play, ShieldAlert, Sparkles } from "lucide-react";
 import { api, useAppState, useGet, useMe, useAct } from "../lib/api";
 import { usd } from "../lib/utils";
+import { invoiceSubmitNote } from "../lib/invoices";
 import { RAIL_LABEL, TARIFF_NOTE, landedCost, dutyDue, fullDuty, exclusionCovers, hasDutyFields, type Rail, type PoLine } from "@b2b/shared";
 import { BankChangesWaiting } from "../components/BankChange";
 import { Badge, Button, Card, EmptyState, ErrorNote, Input, Json, Label, Mono, Muted, Select, Table, Textarea } from "../components/ui";
@@ -136,7 +137,7 @@ export function PayeeChanges({ st }: { st: any }) {
 
 export function InvoiceDesk({ st }: { st: any }) {
   const open = st.pos.filter((p: any) => ["approved", "received"].includes(p.status));
-  const [poId, setPoId] = useState(""); const [text, setText] = useState(""); const [bump, setBump] = useState(0);
+  const [poId, setPoId] = useState(""); const [text, setText] = useState(""); const [bump, setBump] = useState(0); const [note, setNote] = useState("");
   const { run, busy, error } = useAct(); const sel = poId || open[0]?.id || "";
   return <Card title="Supplier agent sends an invoice" action={<Busy on={busy} />}>
     {!open.length ? <EmptyState title="No approved purchase orders" body="Approve a PO first. The supplier agent then posts goods receipt and invoices it." /> : <>
@@ -148,8 +149,9 @@ export function InvoiceDesk({ st }: { st: any }) {
         <Button disabled={busy} onClick={async () => { const r: any = await run(() => api("/invoices/render", { poId: sel, poison: true })); if (r) setText(r.text); }}>Generate poisoned invoice</Button>
       </div>
       <Textarea className="mt-2 min-h-40" value={text} onChange={(e) => setText(e.target.value)} placeholder="Invoice text appears here" />
-      <Button className="mt-2" variant="primary" disabled={busy || !text} onClick={() => run(() => api("/invoices", { poId: sel, text }))}>Submit invoice for the model to read</Button>
+      <Button className="mt-2" variant="primary" disabled={busy || !text} onClick={async () => { setNote(""); const r: any = await run(() => api("/invoices", { poId: sel, text })); if (r) setNote(invoiceSubmitNote(r)); }}>Submit invoice for the model to read</Button>
     </>}
+    {note && <div className="mt-2 text-sm text-amber-700">{note}</div>}
     <ErrorNote msg={error} />
   </Card>;
 }

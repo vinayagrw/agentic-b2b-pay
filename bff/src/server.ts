@@ -159,7 +159,7 @@ export async function buildApp() {
   });
   app.setErrorHandler((err: any, _req, reply) => {
     const status = err instanceof P.AuthError ? err.status : err instanceof S.HttpError ? err.status : err instanceof FX.FxError ? err.status : err instanceof RailError ? err.status : err instanceof z.ZodError ? 422 : err.statusCode ?? 500;
-    reply.status(status).send({ error: err instanceof z.ZodError ? "validation" : err.message, issues: err instanceof z.ZodError ? err.issues : undefined });
+    reply.status(status).send({ error: err instanceof z.ZodError ? "validation" : err.message, issues: err instanceof z.ZodError ? err.issues : undefined, ...(err instanceof S.HttpError && err.extra ? err.extra : {}) });
   });
   const b = (req: any) => (req.body ?? {}) as any;
   // Every route needs a signed-in user unless listed as public. Each route maps to one permission, checked here by requirePermission.

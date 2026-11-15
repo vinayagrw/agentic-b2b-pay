@@ -16,8 +16,8 @@ describe("cross-tenant invoice submit and match", () => {
     expect((await app.inject({ method: "POST", url: "/invoices", headers: { cookie: gina }, payload: { poId: po.id, text } })).statusCode).toBe(404);
     const inv = await S.submitInvoice(po.id, text);
     expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/match`, headers: { cookie: gina } })).statusCode).toBe(404);
-    const pat = await login(app, "usr-clerk-pat");
-    expect((await app.inject({ method: "POST", url: "/invoices", headers: { cookie: pat }, payload: { poId: po.id, text } })).statusCode).toBe(200);
+    const pat = await login(app, "usr-clerk-pat"); const po2 = acmePo();
+    expect((await app.inject({ method: "POST", url: "/invoices", headers: { cookie: pat }, payload: { poId: po2.id, text: S.invoiceText(po2.id, {}) } })).statusCode).toBe(200);
   });
   it("MCP submit_invoice and match_invoice return 404 for another tenant's PO", async () => {
     const app = await buildApp(); const gina = await login(app, "usr-globex-gina"); const po = acmePo();
@@ -25,8 +25,8 @@ describe("cross-tenant invoice submit and match", () => {
     expect((await app.inject({ method: "POST", url: "/mcp/call", headers: { cookie: gina }, payload: { name: "submit_invoice", arguments: { poId: po.id, text } } })).statusCode).toBe(404);
     const inv = await S.submitInvoice(po.id, text);
     expect((await app.inject({ method: "POST", url: "/mcp/call", headers: { cookie: gina }, payload: { name: "match_invoice", arguments: { invoiceId: inv.id } } })).statusCode).toBe(404);
-    const pat = await login(app, "usr-clerk-pat");
-    expect((await app.inject({ method: "POST", url: "/mcp/call", headers: { cookie: pat }, payload: { name: "submit_invoice", arguments: { poId: po.id, text } } })).statusCode).toBe(200);
+    const pat = await login(app, "usr-clerk-pat"); const po2 = acmePo();
+    expect((await app.inject({ method: "POST", url: "/mcp/call", headers: { cookie: pat }, payload: { name: "submit_invoice", arguments: { poId: po2.id, text: S.invoiceText(po2.id, {}) } } })).statusCode).toBe(200);
   });
   it("MCP execute_payment, get_evidence and create_purchase_order are tenant scoped", async () => {
     const app = await buildApp(); const gina = await login(app, "usr-globex-gina"); const po = acmePo();
@@ -43,7 +43,7 @@ describe("cross-tenant invoice submit and match", () => {
     const app = await buildApp(); const gina = await login(app, "usr-globex-gina"); const po = acmePo();
     expect((await app.inject({ method: "POST", url: "/goods-receipts", headers: { cookie: gina }, payload: { poId: po.id } })).statusCode).toBe(404);
     expect((await app.inject({ method: "POST", url: "/invoices/render", headers: { cookie: gina }, payload: { poId: po.id } })).statusCode).toBe(404);
-    const pat = await login(app, "usr-clerk-pat");
+    const pat = await login(app, "usr-clerk-pat"); const po2 = acmePo();
     expect((await app.inject({ method: "POST", url: "/invoices/render", headers: { cookie: pat }, payload: { poId: po.id } })).statusCode).toBe(200);
   });
 });
