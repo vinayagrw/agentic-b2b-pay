@@ -20,6 +20,8 @@ export const PERMISSIONS = {
   "compliance.case.file": "Draft, file and close compliance cases",
   "treasury.read": "See treasury, reconciliation and revenue",
   "treasury.sweep": "Move funds and resolve reconciliation exceptions",
+  "statements.read": "See imported bank statements and unmatched lines",
+  "statements.manage": "Import bank statements and match or ignore lines",
   "rails.balances": "See rail balances",
   "settings.live_toggle": "Request live or test mode for a rail",
   "settings.branding": "Edit bank branding and logos",
@@ -42,7 +44,7 @@ export const ALL_PERMS = Object.keys(PERMISSIONS) as Permission[];
 const READ: Permission[] = ["workspace.read", "changes.decide"];
 export const BUILTIN: Record<P.Role, Permission[]> = {
   operator_admin: ALL_PERMS.filter((p) => !["suppliers.review", "suppliers.payee_change"].includes(p)),
-  client_admin: [...READ, "payments.pay", "payments.approve", "payments.refund", "flow.operate", "agents.manage", "rules.edit", "suppliers.invite", "suppliers.review", "suppliers.payee_change", "developers.keys", "settings.branding", "roles.manage", "changes.request", "erp.vendor_master", "sessions.manage", "audit.read", "rails.balances", "risk.review"],
+  client_admin: [...READ, "payments.pay", "payments.approve", "payments.refund", "flow.operate", "agents.manage", "rules.edit", "suppliers.invite", "suppliers.review", "suppliers.payee_change", "developers.keys", "settings.branding", "roles.manage", "changes.request", "erp.vendor_master", "sessions.manage", "audit.read", "rails.balances", "risk.review", "statements.read", "statements.manage"],
   approver: [...READ, "payments.pay", "payments.approve", "payments.refund", "flow.operate", "risk.review"],
   ap_clerk: [...READ, "payments.pay", "flow.operate", "suppliers.invite", "suppliers.payee_change"],
   auditor: [...READ, "audit.read", "compliance.read", "treasury.read", "users.read", "rails.balances"],

@@ -22,6 +22,7 @@ import { llmMode } from "./llm.js";
 import { fileURLToPath } from "node:url";
 import * as W from "./workspace.js";
 import * as O from "./ops.js";
+import * as BS from "./bankstmt.js";
 import * as D from "./developers.js";
 import * as A from "./analytics.js";
 import { scoped } from "./modules/store.js";
@@ -211,7 +212,7 @@ export async function buildApp() {
     "POST /workspace/suppliers/invite": "suppliers.invite", "POST /workspace/suppliers/:id/link": "suppliers.invite", "POST /workspace/suppliers/:id/review": "suppliers.review", "POST /workspace/suppliers/:id/hold": "suppliers.review", "POST /workspace/suppliers/:id/terms": "suppliers.review", "POST /invoices/:id/early-pay": "changes.request",
     "POST /workspace/suppliers/:id/wallet-message": "workspace.read",
     "GET /ops/treasury": "treasury.read", "POST /ops/treasury/sweep": "treasury.sweep", "POST /ops/recon/run": "treasury.sweep", "GET /ops/recon": "treasury.read", "POST /ops/recon/exceptions/:id/resolve": "treasury.sweep",
-    "GET /ops/recon/export.csv": "treasury.read", "GET /ops/compliance": "compliance.read", "POST /ops/cases/:id/sar/draft": "compliance.case.file", "PUT /ops/cases/:id/sar": "compliance.case.file",
+    "GET /ops/recon/export.csv": "treasury.read", "GET /reconciliation/statements": "statements.read", "POST /reconciliation/statements": "statements.manage", "POST /reconciliation/statements/lines/:id/match": "statements.manage", "POST /reconciliation/statements/lines/:id/ignore": "statements.manage", "GET /ops/compliance": "compliance.read", "POST /ops/cases/:id/sar/draft": "compliance.case.file", "PUT /ops/cases/:id/sar": "compliance.case.file",
     "POST /ops/cases/:id/sar/file": "compliance.case.file", "POST /ops/cases/:id/close": "compliance.case.file", "GET /ops/revenue": "treasury.read", "GET /ops/sankey": "treasury.read", "GET /ops/kpis": "treasury.read", "GET /live/pulse": "treasury.read",
     "GET /cases/:id/evidence-pack": "audit.read", "GET /payments/:id/why/export.json": "audit.read", "GET /payments/:id/why/export.md": "audit.read",
     "GET /identity/configs": "identity.manage", "POST /identity/configs": "identity.manage", "GET /iam/users": "roles.manage", "GET /iam/roles": "roles.manage", "POST /iam/roles": "roles.manage", "PUT /iam/roles/:id": "roles.manage", "DELETE /iam/roles/:id": "roles.manage", "POST /iam/users/:id/role": "roles.manage",
@@ -477,6 +478,11 @@ export async function buildApp() {
   app.post("/ops/recon/run", async (req) => O.runRecon(opCtx(req).t));
   app.get("/ops/recon", async (req) => O.runRecon(opCtx(req).t));
   app.post("/ops/recon/exceptions/:id/resolve", async (req: any) => { const { u, t } = opCtx(req); return O.resolveException(u, t, decodeURIComponent(req.params.id), b(req).action, String(b(req).note ?? "")); });
+  // Bank statement import and line matching. Operators pass tenantId, client admins use their own tenant.
+  app.get("/reconciliation/statements", async (req) => { const t = ctx(req).t; return { ...BS.statementView(t), targets: BS.matchTargets(t) }; });
+  app.post("/reconciliation/statements", { bodyLimit: 3_000_000 }, async (req) => { const { u, t } = ctx(req); return BS.importStatement(u, t, String(b(req).filename ?? ""), String(b(req).content ?? "")); });
+  app.post("/reconciliation/statements/lines/:id/match", async (req: any) => { const { u, t } = ctx(req); return BS.matchLine(u, t, req.params.id, String(b(req).settlementId ?? ""), String(b(req).note ?? "")); });
+  app.post("/reconciliation/statements/lines/:id/ignore", async (req: any) => { const { u, t } = ctx(req); return BS.ignoreLine(u, t, req.params.id, String(b(req).reason ?? "")); });
   app.get("/ops/recon/export.csv", async (req: any, reply) => { const { t } = opCtx(req); return reply.type("text/csv").header("content-disposition", `attachment; filename="recon-${t}.csv"`).send(O.reconCsv(t)); });
   app.get("/ops/compliance", async (req) => { who(req); return { ...O.complianceStatus(), cases: S.listCases(null), travelRule: O.travelRuleRecords(null) }; });
   app.post("/ops/cases/:id/sar/draft", async (req: any) => { const u = who(req); return O.draftSar(u, ownCase(u, req.params.id).id); });

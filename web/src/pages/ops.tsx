@@ -9,6 +9,7 @@ import { Section } from "../components/Shell";
 import { Loading, EvidenceLog } from "./flows";
 import { railName } from "./payments";
 import { useChartColors } from "../components/charts";
+import { BankStatements } from "./statements";
 
 /** Operator pages act on one business client at a time. */
 export function useClientPicker() {
@@ -86,6 +87,7 @@ export function ReconPage() {
       <div className="grid gap-3 sm:grid-cols-3"><Stat label="Settlements matched" value={`${data.matched} of ${data.total}`} /><Stat label="Open exceptions" value={open.length} /><Stat label="Resolved" value={data.exceptions.length - open.length} /></div>
       <Card title="Exceptions queue" pad={false}>{data.exceptions.length ? <ul className="divide-y divide-border">{data.exceptions.map((x: any) => <ExceptionRow key={x.id} x={x} tenantId={tenantId!} />)}</ul> : <EmptyState title="No exceptions" body="Every settlement matches a journal for the right amount, and every payment webhook matches a payment." />}</Card>
       <Card title="Matches" pad={false}>{data.rows.length ? <Table head={["Settlement", "Payment", "Rail", "Provider ref", "Amount", "Journal", "Status"]}>{data.rows.map((r: any) => <tr key={r.settlementId}><td><Mono>{r.settlementId}</Mono></td><td><Mono>{r.intentId}</Mono></td><td>{railName(r.rail)}</td><td><Mono className="block max-w-[180px] truncate">{r.txHash ?? r.providerRef}</Mono></td><td className="tabular-nums">{usd(r.amount)}</td><td><Mono>{r.journalId ?? "none"}</Mono></td><td><Badge v={r.status} /></td></tr>)}</Table> : <EmptyState title="No settlements yet" />}</Card>
+      <BankStatements key={tenantId} tenantId={tenantId!} />
     </>}
   </Section>;
 }

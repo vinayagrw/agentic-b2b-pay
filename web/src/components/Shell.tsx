@@ -23,7 +23,7 @@ export const CLIENT_NAV: Item[] = [
   { to: "/app", label: "Home", icon: Home }, { to: "/app/purchase-orders", label: "Purchase orders", icon: ShoppingCart },
   { to: "/app/invoices", label: "Invoices", icon: FileText }, { to: "/app/approvals", label: "Approvals", icon: Inbox }, { to: "/app/chat-approvals", label: "Chat approvals", icon: MessageSquare }, { to: "/app/risk", label: "Risk inbox", icon: ShieldAlert }, { to: "/app/bank-changes", label: "Bank changes", icon: Landmark },
   { to: "/app/agents", label: "Agents", icon: Bot }, { to: "/app/suppliers", label: "Suppliers", icon: Truck },
-  { to: "/app/cards", label: "Cards", icon: CreditCard }, { to: "/app/credit", label: "Credit line", icon: HandCoins }, { to: "/app/payments", label: "Payments", icon: Banknote }, { to: "/app/transactions", label: "Transactions", icon: Activity }, { to: "/app/evidence", label: "Evidence", icon: FileCheck2 }, { to: "/app/ledger", label: "Entity ledger", icon: Scale }, { to: "/app/rules", label: "Rules", icon: Workflow }, { to: "/app/developers", label: "Developers", icon: Code2 },
+  { to: "/app/cards", label: "Cards", icon: CreditCard }, { to: "/app/credit", label: "Credit line", icon: HandCoins }, { to: "/app/payments", label: "Payments", icon: Banknote }, { to: "/app/transactions", label: "Transactions", icon: Activity }, { to: "/app/evidence", label: "Evidence", icon: FileCheck2 }, { to: "/app/ledger", label: "Entity ledger", icon: Scale }, { to: "/app/reconciliation", label: "Reconciliation", icon: FileCheck2 }, { to: "/app/rules", label: "Rules", icon: Workflow }, { to: "/app/developers", label: "Developers", icon: Code2 },
   { to: "/app/roles", label: "Roles", icon: UserCog }, { to: "/app/sessions", label: "Sessions", icon: MonitorSmartphone },
 ];
 
