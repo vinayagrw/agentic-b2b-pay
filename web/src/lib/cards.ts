@@ -20,7 +20,7 @@ export function actionsFor(status: string) {
 export const canIssueForOrder = (poStatus: string) => ["approved", "received", "invoiced"].includes(poStatus);
 /** One plain line about the mandate behind a card. */
 export const mandateLine = (o: Pick<CardOrder, "mandate" | "cartAmount" | "currency" | "supplier">, used: boolean) => !o.mandate.ok ? `Mandate problem. ${o.mandate.reason}. This card will decline.`
-  : used ? `This card was used for its order. It paid ${money(o.cartAmount, o.currency)} to ${o.supplier}.` : `Mandate valid. This card works once, for exactly ${money(o.cartAmount, o.currency)} to ${o.supplier}.`;
+  : used ? `This card was used for its order. It paid ${money(o.cartAmount, o.currency)} to ${o.supplier}.` : `Mandate valid. This card works only for this order, for exactly ${money(o.cartAmount, o.currency)} to ${o.supplier}.`;
 export const TYPES = [
   { v: "one_time", label: "One-time", hint: "Closes after the first charge" },
   { v: "vendor_locked", label: "Vendor-locked", hint: "Works with one supplier or one MCC" },

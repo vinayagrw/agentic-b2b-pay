@@ -92,7 +92,7 @@ export function PoTable({ st }: { st: any }) {
       <td><Mono>{p.id}</Mono></td><td>{p.supplierId}</td><td>{p.category}</td><td className="tabular-nums">{usd(p.total)}</td>
       <td className="tabular-nums">{lc.hasDuty ? cur(lc.duty) : <Muted>None entered</Muted>}</td><td className="tabular-nums">{lc.hasDuty ? cur(lc.landed) : <Muted>Same as total</Muted>}</td>
       <td><Badge v={p.policy.outcome} /></td><td><Badge v={p.status} /></td>
-      <td className="text-right"><div className="flex flex-wrap justify-end gap-2">{canIssueForOrder(p.status) && can(me, "flow.operate") && <Button size="sm" disabled={busy} title="A mandate-bound virtual card that works once, for the exact order amount" onClick={() => issueCard(p.id)}>Issue card for this order</Button>}
+      <td className="text-right"><div className="flex flex-wrap justify-end gap-2">{canIssueForOrder(p.status) && can(me, "flow.operate") && <Button size="sm" disabled={busy} title="A mandate-bound virtual card, only for this order and its exact amount" onClick={() => issueCard(p.id)}>Issue card for this order</Button>}
         {p.status === "approved" && <Button size="sm" disabled={busy} onClick={() => run(() => api("/goods-receipts", { poId: p.id }))}>Post goods receipt</Button>}</div></td></tr>
       {lc.hasDuty && <tr data-testid={`duty-${p.id}`}><td colSpan={9} className="bg-muted/40 px-4 py-2 text-sm">
         <ul className="space-y-1">{(p.lines as PoLine[]).filter(hasDutyFields).map((l, n) => <li key={n}><span className="font-medium">Duty line</span> {dutyLineText(l)} <span className="tabular-nums">Duty {cur(dutyDue(l))}</span></li>)}</ul>

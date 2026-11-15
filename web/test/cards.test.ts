@@ -14,7 +14,7 @@ describe("mandate-bound virtual card helpers", () => {
     expect(["pending_approval", "rejected", "paid"].some(canIssueForOrder)).toBe(false);
   });
   it("says the mandate state in plain words", () => {
-    expect(mandateLine(o, false)).toMatch(/works once, for exactly \$250.00 to Northwind/);
+    expect(mandateLine(o, false)).toMatch(/works only for this order, for exactly \$250.00 to Northwind/);
     expect(mandateLine(o, true)).toMatch(/was used/);
     const bad = mandateLine({ ...o, mandate: { ...o.mandate, ok: false, reason: "The signed cart changed after the card was issued" } }, false);
     expect(bad).toMatch(/will decline/); expect(bad).not.toMatch(/[\u2014;]/);
