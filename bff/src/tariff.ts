@@ -1,7 +1,7 @@
 /** Tariff cash scenario. Duty rates are user inputs on PO lines. There is no live tariff feed. */
 import { scoped } from "./modules/store.js";
 import { round } from "./modules/match.js";
-import { fullDuty, exclusionCovers, TARIFF_DEFAULT_DATE, TARIFF_NOTE } from "@b2b/shared";
+import { fullDuty, exclusionCovers, dutyDue, TARIFF_DEFAULT_DATE, TARIFF_NOTE } from "@b2b/shared";
 
 export const WEEKS = 12;
 export const validDay = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
@@ -15,7 +15,8 @@ export function dayIn(q: string): string | undefined {
 
 export type DutyLine = { poId: string; sku: string; hsCode: string; originCountry: string; dutyRatePct: number; customsEntryDate: string; exclusionApplies: boolean; dutyWithExclusions: number; dutyWithoutExclusions: number; week: number | null; place: "in_window" | "later" | "past" | "no_date" };
 /** Every PO line of the tenant that carries a duty rate, with the duty owed in each case, in USD.
- *  With exclusions: a line marked as excluded pays no duty. Without: the exclusion ends on the chosen date, so an excluded line with customs entry after that date pays full duty. */
+ *  With exclusions: the duty the PO line itself says is due, so an exclusion runs to the end date on the line, as on the PO page.
+ *  Without: the exclusion ends on the chosen date or on the line's own end date, whichever is earlier. A later chosen date never extends an exclusion. */
 export function dutyLines(scope: string | null, after: string, today: string): DutyLine[] {
   const day0 = Date.parse(`${today}T00:00:00Z`); const out: DutyLine[] = [];
   for (const po of scoped(scope).pos) {
@@ -26,7 +27,7 @@ export function dutyLines(scope: string | null, after: string, today: string): D
       const full = round(fullDuty(l) * toUsd); const d = l.customsEntryDate && validDay(l.customsEntryDate) ? Date.parse(`${l.customsEntryDate}T00:00:00Z`) : NaN;
       const n = Number.isNaN(d) ? null : Math.floor((d - day0) / (7 * 864e5));
       out.push({ poId: po.id, sku: l.sku, hsCode: l.hsCode ?? "", originCountry: l.originCountry ?? "", dutyRatePct: l.dutyRatePct, customsEntryDate: l.customsEntryDate ?? "", exclusionApplies: !!l.exclusionApplies,
-        dutyWithExclusions: exclusionCovers(l, null) ? 0 : full, dutyWithoutExclusions: exclusionCovers(l, after) ? 0 : full,
+        dutyWithExclusions: round(dutyDue(l) * toUsd), dutyWithoutExclusions: exclusionCovers(l, l.exclusionEndDate && l.exclusionEndDate < after ? l.exclusionEndDate : after) ? 0 : full,
         week: n !== null && n >= 0 && n < WEEKS ? n : null, place: n === null ? "no_date" : n < 0 ? "past" : n >= WEEKS ? "later" : "in_window" });
     }
   }

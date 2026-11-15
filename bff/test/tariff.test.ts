@@ -77,10 +77,34 @@ describe("tariffScenario tool", () => {
     expect(TARIFF_DEFAULT_DATE).toBe("2027-01-09");
     const sc = TF.scenario("tnt-acme", (CP.runTool(jane(), "cashForecast").rows as any[]), undefined, "2026-11-14");
     expect(sc.after).toBe("2027-01-09");
-    // Seeded lines: entry 18 Dec stays excluded. Entries on 15 and 22 Jan lose the exclusion: 4 x 420 x 25 percent plus 100 x 18 x 10 percent.
+    // Seeded lines carry an exclusion to 31 Mar 2027. Entry 18 Dec stays excluded. Entries on 15 and 22 Jan lose the exclusion: 4 x 420 x 25 percent plus 100 x 18 x 10 percent.
     expect(sc.totals.extraDuty).toBe(600); expect(sc.totals.dutyWithExclusions).toBe(90); expect(sc.totals.dutyWithoutExclusions).toBe(690);
+    // With exclusions kept, the scenario duty equals the duty on the PO page.
+    expect(sc.totals.dutyWithExclusions).toBe(db.pos.filter((p) => p.id.startsWith("po-duty-seed")).reduce((n, p) => n + landedCost(p.lines).duty, 0));
     expect(run(jane()).summary).toMatch(/Scenario date 2027-01-09|No purchase order line/);
     expect(run(jane(), "9 Jan").error).toMatch(/date like 2027-01-09/); expect(run(jane(), "2027-02-31").error).toMatch(/date like 2027-01-09/);
+  });
+  it("honours the end date on the PO line in both cases and matches the PO page", () => {
+    noSeed(); const entry = addDays(today(), 30); const po = dutyPo(entry);
+    // The line's own exclusion ended before customs entry. Duty is due in both cases, whatever date is chosen.
+    po.lines[0].exclusionEndDate = addDays(entry, -10);
+    const page = landedCost(po.lines).duty; expect(page).toBe(300);
+    for (const after of [addDays(entry, -20), addDays(entry, -1), entry, addDays(entry, 40)]) {
+      const sc = TF.scenario("tnt-acme", CP.runTool(jane(), "cashForecast").rows as any[], after);
+      expect(sc.totals.dutyWithExclusions).toBe(page); expect(sc.totals.dutyWithoutExclusions).toBe(page); expect(sc.totals.extraDuty).toBe(0);
+    }
+    expect(run(jane(), addDays(entry, 40)).summary).toMatch(/never runs past the end date on its PO line/);
+    // The line's exclusion covers the entry. A chosen date before the entry ends it, a later one does not.
+    po.lines[0].exclusionEndDate = addDays(entry, 5); expect(landedCost(po.lines).duty).toBe(50);
+    const s2 = (after: string) => TF.scenario("tnt-acme", CP.runTool(jane(), "cashForecast").rows as any[], after).totals;
+    expect(s2(addDays(entry, -1))).toMatchObject({ dutyWithExclusions: 50, dutyWithoutExclusions: 300 });
+    expect(s2(addDays(entry, 40))).toMatchObject({ dutyWithExclusions: 50, dutyWithoutExclusions: 50 });
+  });
+  it("matches the PO page for the seeded line shape: end date 2027-01-09, entry 2027-01-22, chosen date 2027-02-01", () => {
+    noSeed(); const po = dutyPo("2027-01-22"); po.lines = [{ sku: "NW-DRV-750", description: "Servo drive 750W", qty: 4, unitPrice: 420, hsCode: "8504.40", originCountry: "CN", dutyRatePct: 25, customsEntryDate: "2027-01-22", exclusionApplies: true, exclusionEndDate: "2027-01-09" }];
+    expect(landedCost(po.lines).duty).toBe(420);
+    const [l] = TF.dutyLines("tnt-acme", "2027-02-01", "2026-11-14");
+    expect(l.dutyWithExclusions).toBe(420); expect(l.dutyWithoutExclusions).toBe(420);
   });
   it("leaves out lines with customs entry after week 12 and says so", () => {
     noSeed(); dutyPo(addDays(today(), 100));
