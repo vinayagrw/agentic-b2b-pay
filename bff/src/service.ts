@@ -732,7 +732,7 @@ export function applyRailUpdate(intentId: string, u: { status: "pending" | "sett
   erp(erpPostPayment(sup, po.erpRef ?? po.id, inv.number, inv.amount, st.railRef, st.txHash));
   ev("payment", intent.id, "erp.payment_posted", { system: sup.erp, invoice: inv.number });
   publish(tenantOf(intent), "payment.settled", { id: intent.id, amount: intent.amount, rail, providerRef: st.railRef, txHash });
-  queueNotice({ tenantId: tenantOf(intent), kind: "payment_sent", audience: "supplier", supplierId: sup.id, refId: intent.id, subject: `Payment sent for invoice ${inv.number}`, body: `We paid ${intent.amount.toFixed(2)} ${inv.currency ?? "USD"} for invoice ${inv.number} on ${rail}. Reference ${st.railRef}.` });
+  queueNotice({ tenantId: tenantOf(intent), kind: "payment_sent", audience: "supplier", supplierId: sup.id, refId: intent.id, subject: `Payment sent for invoice ${inv.number}`, body: `We paid ${intent.amount.toFixed(2)} ${intent.currency ?? "USD"} for invoice ${inv.number} (${inv.amount.toFixed(2)} ${inv.currency ?? "USD"}) on ${rail}. Reference ${st.railRef}.` });
   save(); return intent;
 }
 /** Books the payment in the entity ledger. AP is cleared at the invoice date rate it was booked at. The USD cash

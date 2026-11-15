@@ -227,7 +227,7 @@ export async function buildApp() {
   app.addHook("onRequest", async (req: any, reply) => {
     if (!String(req.url).startsWith("/supplier-portal/")) return;
     const tok = String(req.url).split("/")[2] ?? "";
-    if (!SP.portalRateOk(`t:${tok}`) || !SP.portalRateOk(`ip:${req.ip}`)) return reply.status(429).send({ error: "Too many requests, try again in a minute" });
+    if (!SP.portalRateOk(`ip:${req.ip}`) || (SP.portalTokenKnown(tok) && !SP.portalRateOk(`t:${tok}`))) return reply.status(429).send({ error: "Too many requests, try again in a minute" });
   });
   app.addHook("preHandler", async (req: any) => {
     const url = req.routeOptions?.url as string | undefined;

@@ -62,4 +62,23 @@ describe("supplier portal actions", () => {
     const codes = []; for (let i = 0; i < 5; i++) codes.push((await app.inject({ url: `/supplier-portal/${token}` })).statusCode);
     expect(codes.slice(0, 3)).toEqual([200, 200, 200]); expect(codes[4]).toBe(429);
   });
+
+  it("does not keep rate keys for unknown tokens and sweeps empty windows", async () => {
+    SP.resetPortalRate(); const app = await buildApp();
+    for (let i = 0; i < 20; i++) await app.inject({ url: `/supplier-portal/junk${i}`, remoteAddress: "10.0.0.9" });
+    expect(SP.portalRateSize()).toBe(1);
+    SP.sweepPortalRate(Date.now() + 61_000); expect(SP.portalRateSize()).toBe(0);
+  });
+
+  it("shows the paid amount in the paid currency and the invoice amount in the invoice currency", async () => {
+    const r = await S.runFlow("Need 2000 sealed 6204 bearings for line 3"); await S.pollSettlements();
+    const paid = db.intents.find((p) => p.id === r.intentId)!; const inv = db.invoices.find((i) => i.id === paid.invoiceId)!;
+    const n = NT.listNotices(tenantOf(inv)).find((x) => x.kind === "payment_sent" && x.refId === paid.id)!;
+    expect(n.body).toContain(`${paid.amount.toFixed(2)} USD`); expect(n.body).toContain(`${inv.amount.toFixed(2)} ${inv.currency ?? "USD"}`);
+    (inv as any).currency = "EUR";
+    const app = await buildApp(); const jane = await login(app, "usr-cfo-jane"); const token = await linkFor(app, jane, inv.supplierId);
+    const [head, row] = (await app.inject({ url: `/supplier-portal/${token}/payments/${paid.id}/remittance.csv` })).body.split("\n").map((l) => l.split(","));
+    const v = (k: string) => row[head.indexOf(k)];
+    expect(v("currency")).toBe("USD"); expect(v("invoiceCurrency")).toBe("EUR"); expect(v("invoiceAmount")).toBe(inv.amount.toFixed(2));
+  });
 });

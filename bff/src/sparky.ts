@@ -293,8 +293,14 @@ const portalWin = new Map<string, number[]>();
 /** Basic per token and per address limit on the public portal routes, SUPPLIER_PORTAL_RATE_MAX per minute (default 60). */
 export function portalRateOk(key: string, at = Date.now()) {
   const max = Number(process.env.SUPPLIER_PORTAL_RATE_MAX) || 60; const xs = (portalWin.get(key) ?? []).filter((x) => at - x < 60_000);
+  if (portalWin.size >= 10_000) sweepPortalRate(at);
   if (xs.length >= max) { portalWin.set(key, xs); return false; } xs.push(at); portalWin.set(key, xs); return true;
 }
+/** Drops keys whose window is empty so the map does not grow without bound. */
+export function sweepPortalRate(at = Date.now()) { for (const [k, xs] of portalWin) if (!xs.some((x) => at - x < 60_000)) portalWin.delete(k); }
+export const portalRateSize = () => portalWin.size;
+/** True when the token resolves to a live portal link. Only known tokens get a per token rate key. */
+export function portalTokenKnown(token: string) { try { portalSupplier(token); return true; } catch { return false; } }
 export const resetPortalRate = () => portalWin.clear();
 const OPEN_PO = new Set(["approved", "received"]);
 /** Orders this supplier can still invoice. */
@@ -332,7 +338,7 @@ export function portalRemittance(token: string, paymentId: string, format: "csv"
   if (p.status !== "settled") throw err(409, "Remittance advice is ready once the payment is paid");
   const st = db.settlements.find((x) => x.id === p.settlementId);
   const buyer = P.getTenant(t)?.name ?? t;
-  const row = { payer: buyer, payee: s.name, paymentId: p.id, invoiceNumber: inv.number, invoiceId: inv.id, poId: inv.poId, amount: p.amount.toFixed(2), currency: inv.currency ?? "USD", rail: p.rail ?? "", reference: st?.railRef ?? p.providerRef ?? "", paidAt: st?.confirmedAt ?? "" };
+  const row = { payer: buyer, payee: s.name, paymentId: p.id, invoiceNumber: inv.number, invoiceId: inv.id, poId: inv.poId, amount: p.amount.toFixed(2), currency: p.currency ?? "USD", invoiceAmount: inv.amount.toFixed(2), invoiceCurrency: inv.currency ?? "USD", rail: p.rail ?? "", reference: st?.railRef ?? p.providerRef ?? "", paidAt: st?.confirmedAt ?? "" };
   appendEvidence(db.evidence, "payment", p.id, "supplier_portal.remittance_downloaded", { supplierId: s.id, format }); save();
   if (format === "csv") { const k = Object.keys(row); return `${k.join(",")}\n${k.map((x) => csvCell((row as any)[x])).join(",")}\n`; }
   const rows = Object.entries(row).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join("");
