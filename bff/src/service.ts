@@ -289,7 +289,7 @@ export function receiveGoods(poId: string, shortBy = 0) {
 export function invoiceText(poId: string, opts: { priceBumpPct?: number; poison?: boolean }) {
   const po = must(db.pos.find((p) => p.id === poId), "po"); return renderInvoiceText(po, supplier(po.supplierId), opts);
 }
-export async function submitInvoice(poId: string, text: string, opts: { invoiceDate?: string } = {}) {
+export async function submitInvoice(poId: string, text: string, opts: { invoiceDate?: string; submittedBy?: string; supersedes?: string } = {}) {
   const po = must(db.pos.find((p) => p.id === poId), "po");
   const sup = supplier(po.supplierId);
   const walletBefore = sup.walletAddress;
@@ -297,7 +297,8 @@ export async function submitInvoice(poId: string, text: string, opts: { invoiceD
   const invoiceDate = opts.invoiceDate ?? FX.today();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) || invoiceDate > FX.today()) throw new HttpError(422, "invoiceDate must be YYYY-MM-DD and not in the future");
   const riskSignals = duplicateCheck(tenantOf(po), po.supplierId, r.value.invoiceNumber, r.value.total, invoiceDate, po.currency ?? "USD");
-  const inv = { id: nextId("inv"), invoiceDate, tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? sup.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: paidByCard(tenantOf(po), poId), injection: r.injection, ...(riskSignals.length ? { riskSignals } : {}), ...(sup.terms ? { terms: sup.terms } : {}) };
+  const inv = { id: nextId("inv"), invoiceDate, tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? sup.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: paidByCard(tenantOf(po), poId), injection: r.injection, ...(riskSignals.length ? { riskSignals } : {}), ...(sup.terms ? { terms: sup.terms } : {}), ...(opts.submittedBy ? { submittedBy: opts.submittedBy } : {}), ...(opts.supersedes ? { supersedes: opts.supersedes } : {}) };
+  if (opts.supersedes) { const old = must(db.invoices.find((i) => i.id === opts.supersedes), "invoice"); if (old.supersededBy) throw new HttpError(409, `Invoice ${old.id} was already replaced by ${old.supersededBy}`); old.supersededBy = inv.id; }
   db.invoices.push(inv); po.status = po.status === "received" ? "invoiced" : po.status;
   ev("invoice", inv.id, "llm.invoice_extracted", { source: r.source, extract: r.value });
   if (r.injection.length) {
@@ -336,8 +337,16 @@ export function matchInvoice(invId: string) {
   const grLines = db.receipts.filter((g) => g.poId === po.id).flatMap((g) => g.lines);
   const m = threeWayMatch(po.lines, grLines, inv.extract.lines);
   if (Math.abs(inv.extract.total - m.totals.invoice) > 0.01) { m.status = "exception"; m.lines.push({ sku: "TOTAL", poQty: 0, grQty: 0, invQty: 0, poPrice: m.totals.invoice, invPrice: inv.extract.total, ok: false, note: "Stated total does not equal sum of lines" }); }
+  if (inv.supersededBy) throw new HttpError(409, `Invoice was replaced by ${inv.supersededBy}`);
   inv.match = m; inv.matchStatus = m.status;
-  if (m.status === "matched") {
+  if (m.status === "matched") bookMatched(inv, po, ent, ar, ur);
+  ev("invoice", inv.id, "match.three_way", { status: m.status, totals: m.totals });
+  save(); return m;
+}
+type CachedRate = NonNullable<ReturnType<typeof FX.cachedRateOn>>;
+/** Approves a matched invoice in the ERP, signs the cart and books the AP accrual. */
+function bookMatched(inv: import("./modules/store.js").Invoice, po: PurchaseOrder, ent: ReturnType<typeof invoiceEntity>, ar: CachedRate, ur: CachedRate) {
+  {
     inv.erpApproval = "approved";
     const pair = AP2.currentPair(po.id);
     if (pair.intent) signCartFor(po, pair.intent, AP2.normLines(inv.extract.lines), inv.amount, supplier(po.supplierId));
@@ -347,8 +356,74 @@ export function matchInvoice(invId: string) {
     db.journals.push(ej(tenantOf(po), ent.id, makeJournal(nextId("jnl"), `Invoice ${inv.number} accrued`, inv.id, [{ account: po.category === "logistics" ? "5100 Freight expense" : "1300 Inventory", debit: fn, ...o }, { account: "2000 Accounts payable", credit: fn, ...o }], ent.currency)));
     erp({ system: supplier(po.supplierId).erp, kind: "invoice.approved", at: new Date().toISOString(), payload: { invoice: inv.number, po: po.erpRef, amount: inv.amount } });
   }
-  ev("invoice", inv.id, "match.three_way", { status: m.status, totals: m.totals });
-  save(); return m;
+}
+/** Rates for an invoice on its invoice date, or 409 when none is cached. */
+function invoiceRates(inv: import("./modules/store.js").Invoice, po: PurchaseOrder) {
+  const ent = invoiceEntity(inv, po);
+  const ar = FX.cachedRateOn(inv.currency ?? "USD", ent.currency, inv.invoiceDate);
+  const ur = FX.cachedRateOn(inv.currency ?? "USD", "USD", inv.invoiceDate);
+  if (!ar || !ur) throw new HttpError(409, `No ${inv.currency} rate for ${inv.invoiceDate ?? "today"} is cached. Get an FX quote first.`);
+  return { ent, ar, ur };
+}
+const needReason = (r: unknown) => { const s = String(r ?? "").trim(); if (!s) throw new HttpError(422, "A reason is needed"); return s.slice(0, 500); };
+const openInvoice = (invId: string) => {
+  const inv = must(db.invoices.find((i) => i.id === invId), "invoice");
+  if (inv.paid) throw new HttpError(409, "Invoice already paid");
+  if (inv.supersededBy) throw new HttpError(409, `Invoice was replaced by ${inv.supersededBy}`);
+  return inv;
+};
+/** Puts an invoice on hold, or releases it. A held invoice cannot be paid. */
+export function holdInvoice(invId: string, userId: string, reason: unknown, release = false) {
+  const inv = openInvoice(invId); const r = needReason(reason);
+  inv.hold = { on: !release, reason: r, by: userId, at: now() };
+  ev("invoice", inv.id, release ? "invoice.hold_released" : "invoice.held", { by: userId, reason: r });
+  save(); return inv;
+}
+/** USD value of an invoice, for step-up and approval limits. */
+export function invoiceUsd(inv: import("./modules/store.js").Invoice) {
+  if ((inv.currency ?? "USD") === "USD") return inv.amount;
+  const ur = FX.cachedRateOn(inv.currency, "USD", inv.invoiceDate) ?? FX.cachedRateOn(inv.currency, "USD");
+  return ur ? FX.convert(inv.amount, ur.rate) : inv.amount;
+}
+/** Accepts a match exception. The person who sent the invoice cannot accept it. */
+export function overrideMatch(invId: string, userId: string, reason: unknown) {
+  const inv = openInvoice(invId); const r = needReason(reason);
+  if (inv.matchStatus !== "exception") throw new HttpError(409, `Invoice match is ${inv.matchStatus}, not an exception`);
+  if (inv.submittedBy && inv.submittedBy === userId) throw new HttpError(403, "You sent this invoice. Someone else must accept the exception.");
+  const po = must(db.pos.find((p) => p.id === inv.poId), "po");
+  const { ent, ar, ur } = invoiceRates(inv, po);
+  inv.matchStatus = "matched"; inv.override = { by: userId, reason: r, at: now() };
+  bookMatched(inv, po, ent, ar, ur);
+  ev("invoice", inv.id, "match.overridden", { by: userId, reason: r });
+  save(); return inv;
+}
+/** A credit note lowers what is owed on an invoice. It cannot take the invoice below zero. */
+export function creditNote(invId: string, userId: string, amount: unknown, reason: unknown) {
+  const inv = openInvoice(invId); const r = needReason(reason);
+  const a = Math.round(Number(amount) * 100) / 100;
+  if (!Number.isFinite(a) || a <= 0) throw new HttpError(422, "Credit amount must be more than 0");
+  if (a > inv.amount + 0.005) throw new HttpError(422, `Credit ${a} is more than the ${inv.amount} still owed on this invoice`);
+  const po = must(db.pos.find((p) => p.id === inv.poId), "po");
+  const ent = invoiceEntity(inv, po);
+  const rate = inv.accrual?.rate ?? ((inv.currency ?? "USD") === ent.currency ? 1 : invoiceRates(inv, po).ar.rate);
+  const fn = FX.convert(a, rate);
+  const o = (inv.currency ?? "USD") !== ent.currency ? { origCurrency: inv.currency, origAmount: a } : {};
+  const j = makeJournal(nextId("jnl"), `Credit note on invoice ${inv.number}`, inv.id, [{ account: "2000 Accounts payable", debit: fn, ...o }, { account: po.category === "logistics" ? "5100 Freight expense" : "1300 Inventory", credit: fn, ...o }], ent.currency);
+  db.journals.push(ej(tenantOf(po), ent.id, j));
+  inv.originalAmount ??= inv.amount;
+  inv.amount = Math.round((inv.amount - a) * 100) / 100;
+  const cn = { id: nextId("cn"), amount: a, reason: r, by: userId, at: now(), journalId: j.id };
+  (inv.creditNotes ??= []).push(cn);
+  ev("invoice", inv.id, "invoice.credit_note", cn);
+  save(); return inv;
+}
+/** Sends a corrected invoice that replaces an open one on the same PO. */
+export async function resubmitInvoice(invId: string, text: string, userId: string) {
+  const old = openInvoice(invId);
+  if (old.matchStatus === "matched") throw new HttpError(409, "Invoice is matched. Use a credit note instead.");
+  const inv = await submitInvoice(old.poId, text, { submittedBy: userId, supersedes: old.id });
+  ev("invoice", old.id, "invoice.superseded", { by: userId, newInvoiceId: inv.id });
+  save(); return inv;
 }
 
 const tj = (tenantId: string, j: import("./modules/store.js").Journal) => ({ ...j, tenantId });
@@ -400,6 +475,8 @@ async function payInvoiceCore(invId: string, idempotencyKey: string, opts: { urg
   const inv = must(db.invoices.find((i) => i.id === invId), "invoice");
   if (inv.matchStatus !== "matched") throw new HttpError(409, "Invoice is not matched");
   if (inv.paid) throw new HttpError(409, "Invoice already paid");
+  if (inv.hold?.on) throw new HttpError(409, `Invoice is on hold: ${inv.hold.reason}`);
+  if (inv.supersededBy) throw new HttpError(409, `Invoice was replaced by ${inv.supersededBy}`);
   if (paidByCard(tenantOf(inv), inv.poId)) throw new HttpError(409, "This order was already paid by a mandate-bound virtual card");
   const open = db.intents.find((p) => p.invoiceId === inv.id && (p.status === "submitted" || p.status === "pending"));
   if (open) throw new HttpError(409, `Payment ${open.id} for this invoice is already in flight`);
