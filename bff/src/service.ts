@@ -296,7 +296,7 @@ export async function submitInvoice(poId: string, text: string, opts: { invoiceD
   const r = await readInvoice(text);
   const invoiceDate = opts.invoiceDate ?? FX.today();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) || invoiceDate > FX.today()) throw new HttpError(422, "invoiceDate must be YYYY-MM-DD and not in the future");
-  const riskSignals = duplicateCheck(tenantOf(po), po.supplierId, r.value.invoiceNumber, r.value.total, invoiceDate);
+  const riskSignals = duplicateCheck(tenantOf(po), po.supplierId, r.value.invoiceNumber, r.value.total, invoiceDate, po.currency ?? "USD");
   const inv = { id: nextId("inv"), invoiceDate, tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? sup.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: paidByCard(tenantOf(po), poId), injection: r.injection, ...(riskSignals.length ? { riskSignals } : {}), ...(sup.terms ? { terms: sup.terms } : {}) };
   db.invoices.push(inv); po.status = po.status === "received" ? "invoiced" : po.status;
   ev("invoice", inv.id, "llm.invoice_extracted", { source: r.source, extract: r.value });
@@ -308,9 +308,9 @@ export async function submitInvoice(poId: string, text: string, opts: { invoiceD
 }
 const normNo = (n: string) => String(n ?? "").replace(/\s+/g, "").toUpperCase();
 const DAY = 86_400_000;
-/** Blocks an exact repeat (same supplier, invoice number and amount in the tenant) and returns near-duplicate risk signals. */
-export function duplicateCheck(tenantId: string, supplierId: string, number: string, amount: number, invoiceDate: string) {
-  const same = db.invoices.filter((i) => (i.tenantId ?? "tnt-acme") === tenantId && i.supplierId === supplierId && Math.abs(i.amount - amount) < 0.005);
+/** Blocks an exact repeat (same supplier, invoice number, amount and currency in the tenant). Check and push run in one sync block after the model await, so concurrent submits cannot both pass. and returns near-duplicate risk signals. */
+export function duplicateCheck(tenantId: string, supplierId: string, number: string, amount: number, invoiceDate: string, currency = "USD") {
+  const same = db.invoices.filter((i) => tenantOf(i) === tenantId && i.supplierId === supplierId && (i.currency ?? "USD") === currency && Math.abs(i.amount - amount) < 0.005);
   const dup = same.find((i) => normNo(i.number) === normNo(number));
   if (dup) throw new HttpError(409, `This invoice was already sent as ${dup.id}. Same supplier, invoice number and amount.`, { duplicateOf: dup.id });
   const at = Date.parse(invoiceDate);

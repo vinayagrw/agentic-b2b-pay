@@ -44,4 +44,10 @@ describe("duplicate invoice check", () => {
     const second = await S.submitInvoice(p.id, text.split(first.number).join(first.number + "B"));
     expect(second.riskSignals ?? []).toHaveLength(0);
   });
+  it("treats the same number and amount in another currency as a different invoice", async () => {
+    const p = po(); const first = await S.submitInvoice(p.id, S.invoiceText(p.id, {}));
+    expect(() => S.duplicateCheck(first.tenantId, first.supplierId, first.number, first.amount, first.invoiceDate, "EUR")).not.toThrow();
+    expect(S.duplicateCheck(first.tenantId, first.supplierId, first.number + "B", first.amount, first.invoiceDate, "EUR")).toHaveLength(0);
+    expect(() => S.duplicateCheck(first.tenantId, first.supplierId, first.number, first.amount, first.invoiceDate, "USD")).toThrow(/already sent/);
+  });
 });
