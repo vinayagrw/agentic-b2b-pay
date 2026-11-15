@@ -12,7 +12,7 @@
 ![Base Sepolia](https://img.shields.io/badge/Base-Sepolia-0052FF?logo=coinbase&logoColor=white)
 ![Claude CLI](https://img.shields.io/badge/Claude-CLI-D97757?logo=anthropic&logoColor=white)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-![Tests](https://img.shields.io/badge/tests-98%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-357%20passed-brightgreen)
 
 [Screenshots](#screenshots) · [How a payment flows](#how-a-payment-flows) · [Quick start](#quick-start) · [Sandbox setup](#sandbox-setup) · [Architecture](#architecture) · [Safety](#safety)
 
@@ -141,6 +141,14 @@ These Stripe test mode PaymentIntents were read back from Stripe and matched to 
 | 8 | Ledger and reconciliation | Double entry journals, trial balance, camt.053 export | `modules/ledger.ts` |
 | 9 | ERP sync | Local SAP and Coupa adapters, payee changes with four eyes and callback | `modules/erp.ts` |
 | 10 | Evidence | Hash chained audit trail for every decision | `modules/evidence.ts` |
+| 11 | Virtual cards | One-time, vendor-locked, recurring and agent cards with limits | `cards.ts` |
+| 12 | Mandate-bound virtual card | One card for one approved order, tied to the signed mandate | `cards.ts` |
+| 13 | Chat approvals | Slack and Teams approval cards, mock preview by default | `chatops.ts` |
+| 14 | Bank-change check | Call-back, second person and a payment hold for supplier bank changes | `bankchange.ts` |
+| 15 | Dispute evidence | One record per paid order with mandates, approvals and charges | `service.ts` |
+| 16 | Terms and early pay | Payment terms, discount dates and pay-early plans | `terms.ts` |
+| 17 | Tariff cash scenario | Duty on PO lines and a 12 week cash view | `tariff.ts` |
+| 18 | Credit line | Simulated lender with maker-checker draws | `credit.ts` |
 
 ### Flow visuals
 
@@ -361,6 +369,41 @@ Each client tenant has several legal entities, each with a functional currency a
 - API: `GET /entities`, `GET /entities/:id/ledger`, `GET /fx/rate?from=EUR&to=USD`, `POST /fx/quotes`, `GET /fx/locks/:id`. `POST /invoices/:id/pay` takes an optional `fxLockId`.
 - Tests mock the rate fetch (`bff/test/fx.test.ts`): conversion, stale fallback, lock expiry, realised FX lines, per entity balance and tenant isolation.
 
+## Cards, gates and working capital
+
+> [!NOTE]
+> What is real and what is simulated. Card, ACH and USDC payments run on real sandboxes. Virtual cards use Stripe Issuing in test mode when the test account has it, else a simulated issuer. Chat approvals are a mock preview until webhook settings are added. Early-pay savings are demo figures. Duty rates are your own inputs. The credit line is a simulated lender. Nothing here moves real money.
+
+| Feature | Where in the app | What to know |
+|---|---|---|
+| Virtual cards | `/app/cards`, `/app/cards/:id` | Four types: one-time, vendor-locked, recurring and agent. The page shows the live issuer label from `cards.ts`: "Stripe Issuing (test mode)" or "Simulated issuer". Only the last 4 digits are stored or shown. Issuing above the step-up threshold needs a second person and a fresh authenticator code. |
+| Mandate-bound virtual card | "Issue card for this order" on `/app/purchase-orders`, "Linked order and mandate" on `/app/cards/:id` | Issued from one approved, received or invoiced order (`POST /orders/:poId/card`). It stores the cart binding hash and the exact cart amount. One charge is approved only when the supplier, the amount and the signed mandate pair still match. Decline codes include `wrong_amount`, `mandate_invalid` and `order_paid`. We call it a mandate-bound virtual card. It is not a card network agent product. |
+| Chat approvals | `/app/chat-approvals` | Order approval cards for Slack and Teams. With no webhook settings the cards land in a mock outbox and the page previews them. A chat decision goes through the same approval rules as the app. |
+| Bank-change check | `/app/bank-changes`, `/operator/bank-changes`, "Change bank details" on `/app/suppliers`, pending requests on `/app/risk` | A change needs a recorded call-back to the phone on the supplier record, then a second person with a fresh authenticator code. Payments to that supplier are held while the request waits and for a cooling-off time after approval (24 hours by default). |
+| Dispute evidence | "Evidence" on `/app/payments/:id` and `/app/cards/:id` | `GET /orders/:poId/evidence` returns one record for a paid order: order, policy checks, signed mandates, agent, approvals, card charges or rail payments, and the audit timeline with hashes. Card numbers show last 4 only. Download as JSON. |
+| Terms and early pay | `/app/invoices`, Treasury forecast | Invoices show `Pay by <date> to save <amount>`. "Ask to pay early" raises a maker-checker change that a second client admin approves. The copilot tool is `discountsAvailable`. |
+| Tariff cash scenario | `/app/purchase-orders`, copilot | Duty and landed cost per order. Ask "Run the tariff cash scenario". Duty rates are entered by you. There is no live tariff feed. |
+| Credit line | `/app/credit`, `/operator/credit` | Simulated lender. The operator sets limit, rate, freeze and a bank exposure cap. A draw needs a second person and step-up over the threshold. Journals post to the entity ledger. The copilot tool is `creditLine`. |
+
+Known limits, stated plainly:
+
+- Mandate-bound virtual card. Stripe webhook charges match the supplier by merchant name only. There is no bank-change hold check at charge time.
+- Bank-change check. The older payee-change API still applies changes without the call-back step, though the cooling-off hold still covers it. Wallet changes have no signature proof in this flow. "Wallet never used before" looks at platform records only, not on-chain history. There is no UI to edit a supplier's call-back phone.
+- Dispute evidence. The record uses the current mandate pair only. There is no list page of all paid orders.
+- Early pay. An approved plan is recorded on the invoice, but the payment still sends the full amount. There is no UI form to edit supplier terms.
+- Tariff. Duty fields come through the API or seed only. Seeded customs entry dates are fixed, so they age out of the 12 week window.
+- Credit line. Repayment is done by one person. Interest is simple and charged at repayment. Operator changes to the line are direct.
+
+Tests: `bff/test/cards.test.ts`, `bff/test/chatops.test.ts`, `bff/test/bankchange.test.ts`, `bff/test/evidence.test.ts`, `bff/test/terms.test.ts`, `bff/test/tariff.test.ts`, `bff/test/credit.test.ts`.
+
+### Market context, November 2026
+
+- ChatGPT Wallet launched on 13 Nov 2026 (Reported, ppc.land 14 Nov and OpenAI commerce guides). The buyer approves in ChatGPT and the merchant's own checkout takes the payment. The token is tied to one transaction and must not be saved or reused. Amex, Mastercard and Visa, US only, Pro tier. Fees, merchant of record and dispute rules are not stated.
+- Visa has a pilot with BILL and Billtrust (paymentsjournal, 20 Oct 2026). It is a pilot.
+- Corpay Agent Card was announced on 29 July 2026.
+- AP2 at FIDO and x402 at the Linux Foundation are Reported from secondary sources.
+- What this means for the build: the agent approves, the merchant or supplier checkout takes payment, and the proof of who approved what is the product. That is why the card is bound to a mandate and every paid order has an evidence record.
+
 ## Copilot chat
 
 A chat panel in the client workspace and the operator console. Open it with the Copilot button in the top bar, or press Ctrl K (Cmd K on a Mac), type a question and pick Ask copilot.
@@ -431,7 +474,7 @@ ChatGPT (developer mode connectors) and claude.ai custom connectors need a publi
 ## Testing
 
 ```bash
-make test          # vitest with LLM_MODE=mock, bff 197 passed and 4 skipped, web 24 passed
+make test          # vitest with LLM_MODE=mock, bff 307 passed and 4 skipped, web 50 passed
 make e2e           # full flow once with the real claude CLI
 cd bff && SANDBOX_TESTS=1 npx vitest run sandbox   # contract tests against real sandboxes
 ```
@@ -466,4 +509,4 @@ agentic-b2b-pay/
 |---|---|
 | [Roadmap](docs/roadmap.md) | Ranked gaps to an enterprise platform. The leader column is unverified. |
 | [Research pack](docs/research/README.md) | Design, red team, ADR and explainer |
-| [Demo script](docs/demo-script.md) | A timed walk through for a bank audience, about 21 minutes |
+| [Demo script](docs/demo-script.md) | A timed walk through for a bank audience, about 30 minutes |

@@ -1,8 +1,8 @@
 # Demo script: agentic B2B payments for a bank
 
-A 20 minute walk through for a bank or PSP executive. The story: the bank white labels this platform, sells it to business clients, and earns a fee on every agent initiated supplier payment, with controls a risk team will sign off.
+A 30 minute walk through for a bank or PSP executive. The story: the bank white labels this platform, sells it to business clients, and earns a fee on every agent initiated supplier payment, with controls a risk team will sign off.
 
-Every number on screen comes from the database or a live rail API. Nothing is mocked. Rails run in sandbox (Stripe test mode, Circle sandbox, Base Sepolia), so no real money moves.
+Every number on screen comes from the database or a live rail API. Rails run in sandbox (Stripe test mode, Circle sandbox, Base Sepolia), so no real money moves. Four things are simulated and say so on screen: the card issuer when Stripe Issuing is off, chat approvals (mock preview), early-pay savings (demo figures) and the credit line (simulated lender). Duty rates are your own inputs. There is no live tariff feed.
 
 ## Before the meeting
 
@@ -12,6 +12,8 @@ Every number on screen comes from the database or a live rail API. Nothing is mo
 4. Fund the Base Sepolia wallet printed in the BFF log with test USDC from https://faucet.circle.com. The faucet has a CAPTCHA, so you do this yourself. 20 test USDC covers the whole demo.
 5. Run `stripe listen --forward-to localhost:8790/webhooks/stripe` so card and ACH payments settle by webhook.
 6. Keep onchain invoices under 10 USD. The phrases below are sized for that.
+7. Restart the bff once before the demo so the newest migrations and seeds load (the mandate card table, the pending bank-change request for sup-contoso, the two duty orders and the credit line).
+8. Never approve a real pending order in a shared environment. Use the seeded demo records.
 
 ## 1. The bank's console (3 minutes)
 
@@ -64,7 +66,33 @@ For Globex (Harbor Trust brand), switch tenant and use `Need 3 shelf label packs
 - **Reconciliation**: run the match. Each settlement is tied to a ledger journal. Export camt.053 for the bank's core or CSV for the client's ERP.
 - **Treasury**: live balances from each rail and the 30 day forecast from open invoices. The sweep from USDC to USD says honestly that Circle Wallets has no fiat payout.
 
-## 7. The business case (1 minute)
+## 7. The agent approves, the checkout takes payment (4 minutes)
+
+Open with the market: "ChatGPT Wallet launched on 13 Nov 2026. The buyer approves in the chat and the merchant's own checkout takes the payment, with a token tied to one transaction that must not be saved or reused. It is US only, Pro tier, on Amex, Mastercard and Visa. Fees, merchant of record and dispute rules are not stated. So the open question is proof. Here is our answer for B2B."
+
+- **Cards** (`/app/cards`): show the issuer label at the top. It reads "Stripe Issuing (test mode)" or "Simulated issuer". Say which one is on screen.
+- **Purchase orders**: on an approved order press **Issue card for this order**. This is the mandate-bound virtual card.
+- **Card page** (`/app/cards/:id`): the "Linked order and mandate" panel shows the live mandate status, the binding hash and the checks.
+- Use the simulate box to charge the wrong amount. It is declined with "The charge must equal the order amount exactly". Then charge the right amount. It is approved once.
+- Press **Evidence**. The drawer shows the order, the signed mandates, the approvals, the charge and the audit timeline. Press **Download JSON**.
+
+Say: "One order, one card, one charge, one evidence record. If there is a dispute, this is the file you send."
+
+## 8. Two gates fraud teams ask for (3 minutes)
+
+- **Chat approvals** (`/app/chat-approvals`): the order from part 3 shows as a Slack and a Teams card. Say that this is a mock preview. The same approval rules apply as in the app.
+- **Suppliers**: open Details and show the **Change bank details** form.
+- **Bank changes** (`/app/bank-changes`): open the seeded request for sup-contoso. Show the warning signs, the call-back step and the second person step. While it waits, payments to that supplier are held. After approval they stay held for the cooling-off time.
+- **Risk** (`/app/risk`): the pending request sits at the top.
+
+## 9. Working capital (3 minutes)
+
+- **Invoices** (`/app/invoices`): the Terms column shows the pay-by date and the saving. Press **Ask to pay early**. A second client admin approves it. Say that savings are demo figures and the payment still sends the full amount.
+- **Purchase orders**: the Duty and Landed cost columns. In the copilot ask `Run the tariff cash scenario`. It draws 12 weeks of cash with and without exclusions. Say that duty rates are entered by you and there is no live tariff feed.
+- **Credit line** (`/app/credit`): the "Simulated lender" banner, the line of 50,000 USD at 9.5 percent, a draw request and the second person approval. The operator view is `/operator/credit`.
+- **Copilot**: ask for a chart, switch the chart type and export the PNG.
+
+## 10. The business case (1 minute)
 
 - **Revenue**: bank fee, rail cost and net, by tenant, rail and month, from settled payments.
 - **Developers**: the client creates API keys (hashed at rest) and webhook endpoints. Deliveries are signed and retried, and the event log shows each try.
@@ -75,4 +103,6 @@ Close: "Agents do the work, your rules decide, your brand is on it, and every st
 
 - A rail shows Not configured: its keys are missing from `.env`. The router skips it, so pick another rail.
 - An onchain payment stays pending: the wallet has no test USDC, or Base Sepolia is slow. Press **Check status now**.
+- A new page is empty or a seeded record is missing: the bff was not restarted after the last update. Restart it.
+- The card page says Simulated issuer: Stripe Issuing is not on for the test account. The flow is the same.
 - The model is slow or offline: the deterministic fallback drafts the PO and the SAR, and the screen says which one ran.
