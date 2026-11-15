@@ -41,7 +41,7 @@ export function ClientHome() {
   }}</Wrap>;
 }
 export const PurchaseOrders = () => <Wrap title="Purchase orders" sub="Agents draft, policy checks, people approve">{(st) => <><F.BuyerDraft /><F.PoTable st={st} /></>}</Wrap>;
-export const Invoices = () => <Wrap title="Invoices" sub="Supplier invoices read by the model and matched against PO and goods receipt">{(st) => <><F.InvoiceDesk st={st} /><F.InvoiceTable st={st} /></>}</Wrap>;
+export const Invoices = () => <Wrap title="Invoices" sub="Supplier invoices read by the model and matched against PO and goods receipt">{(st) => <><F.InvoiceDesk st={st} /><F.EarlyPayCard /><F.InvoiceTable st={st} /></>}</Wrap>;
 export const Approvals = () => <Wrap title="Approvals" sub="Routed by your rules. Approve or reject with a comment.">{(st) => <><Wk.ApprovalsInbox /><F.PayeeChanges st={st} /><F.Alerts st={st} /></>}</Wrap>;
 export const Agents = () => <><Wk.AgentsPage /><div className="mt-4"><F.McpTools /></div></>;
 export const Suppliers = Wk.SuppliersPage;

@@ -294,7 +294,7 @@ export async function submitInvoice(poId: string, text: string, opts: { invoiceD
   const r = await readInvoice(text);
   const invoiceDate = opts.invoiceDate ?? FX.today();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) || invoiceDate > FX.today()) throw new HttpError(422, "invoiceDate must be YYYY-MM-DD and not in the future");
-  const inv = { id: nextId("inv"), invoiceDate, tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? sup.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: paidByCard(tenantOf(po), poId), injection: r.injection };
+  const inv = { id: nextId("inv"), invoiceDate, tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? sup.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: paidByCard(tenantOf(po), poId), injection: r.injection, ...(sup.terms ? { terms: sup.terms } : {}) };
   db.invoices.push(inv); po.status = po.status === "received" ? "invoiced" : po.status;
   ev("invoice", inv.id, "llm.invoice_extracted", { source: r.source, extract: r.value });
   if (r.injection.length) {

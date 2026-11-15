@@ -17,6 +17,7 @@ import * as I from "./iam.js";
 import * as W from "./workspace.js";
 import * as Risk from "./risk.js";
 import * as Ops from "./ops.js";
+import * as TM from "./terms.js";
 
 const now = () => new Date().toISOString();
 const sha = (s: string | Buffer) => crypto.createHash("sha256").update(s).digest("hex");
@@ -358,7 +359,19 @@ export function offersFor(scope: string | null, results: CP.ToolResult[]): CP.Of
   }
   return out;
 }
-CP.extras.push((c, q, results) => ({ proposals: [...alternativesFor(c, q), ...recurringProposals(c, q)], offers: offersFor(c.scope, results) }));
+/** "Pay early and save": when the user asks about early payment or discounts, propose the open ones as maker checker changes.
+ * The user confirms the card, then a second client admin approves in Changes. No money moves from here. The saving is a demo figure. */
+export function earlyPayProposals(c: CP.Ctx, q: string): CP.Proposal[] {
+  if (!c.scope || !/pay(ing)?\s+(it\s+|this\s+|them\s+)?early|early.?pay|discount|save (money|on)/i.test(q)) return [];
+  const want = q.match(/\binv-[\w-]+/i)?.[0].toLowerCase() ?? (c.recordId?.startsWith("inv-") ? c.recordId : undefined);
+  const perm = I.explain(c.user, "changes.request", { tenantId: c.scope });
+  return TM.discountRows(c.scope).filter((r) => r.status === "open" && (!want || r.invoiceId === want)).slice(0, 2).map((r) => ({ id: pid(), kind: "pay_early" as const, method: "POST" as const,
+    label: `Pay early and save ${r.discount.toFixed(2)} ${r.currency} on ${r.number} from ${r.supplier}`, path: "/changes", target: r.invoiceId, allowed: perm.allowed,
+    body: { kind: "payment.early_pay", payload: { invoiceId: r.invoiceId }, tenantId: c.scope },
+    detail: `Terms: ${r.terms}. Pay by ${r.payBy} (${r.daysLeft} days left) and the invoice costs ${r.net.toFixed(2)} ${r.currency} in place of ${r.amount.toFixed(2)}. On the due date ${r.dueDate} it costs the full amount. ${TM.SAVINGS_NOTE} A second client admin approves the plan in Changes, then the invoice is paid through the normal match and payment flow.`,
+    reason: perm.allowed ? "Sent as a maker checker change. No money moves." : perm.reasons.find((x) => !x.ok)?.text ?? "Not allowed" }));
+}
+CP.extras.push((c, q, results) => ({ proposals: [...alternativesFor(c, q), ...recurringProposals(c, q), ...earlyPayProposals(c, q)], offers: offersFor(c.scope, results) }));
 
 // 9. Adoption metrics
 

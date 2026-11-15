@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Area, AreaChart, Bar, CartesianGrid, ComposedChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Download, FileWarning, Landmark, RefreshCw, Scale, ShieldAlert } from "lucide-react";
 import { api, useAct, useGet, type Tenant } from "../lib/api";
 import { usd } from "../lib/utils";
@@ -46,11 +46,13 @@ export function TreasuryPage() {
       <Card title="30 day cash forecast">
         <div className="h-64"><ResponsiveContainer><ComposedChart data={data.forecast} margin={{ left: 0, right: 8, top: 8 }}>
           <CartesianGrid stroke={col.grid} vertical={false} /><XAxis dataKey="day" tick={{ ...axis, fill: col.muted }} tickFormatter={(d) => d.slice(5)} interval={4} /><YAxis tick={{ ...axis, fill: col.muted }} tickFormatter={k} width={48} />
-          <Tooltip {...tip} formatter={(v: any, n: any) => [usd(Number(v)), n === "balance" ? "Projected balance" : "Invoices due"]} />
+          <Tooltip {...tip} formatter={(v: any, n: any) => [usd(Number(v)), n === "balance" ? "Balance, pay on due date" : n === "earlyBalance" ? "Balance, pay early" : "Invoices due"]} />
           <Area type="stepAfter" dataKey="balance" stroke={col.primary} fill={col.primary} fillOpacity={0.12} strokeWidth={2} />
+          {!!data.earlyPay?.payEarly?.saved && <Line type="stepAfter" dataKey="earlyBalance" stroke={col.accent} strokeDasharray="4 3" strokeWidth={2} dot={false} />}
           <Bar dataKey="outflow" fill={col.accent} barSize={8} />
         </ComposedChart></ResponsiveContainer></div>
         {!data.openInvoices && <Muted>No open invoices, so the line stays flat at today's balance.</Muted>}
+        {!!data.earlyPay?.payEarly?.saved && <Muted>Two options. Pay on the due date: {usd(data.earlyPay.payOnDue.outflow)} out on {data.earlyPay.invoices} invoices with a discount. Pay early (dashed line): {usd(data.earlyPay.payEarly.outflow)} out sooner, {usd(data.earlyPay.payEarly.saved)} saved. Savings are demo figures.</Muted>}
       </Card>
       <Card title="Sweeps" pad={false}>{data.sweeps.length ? <Table head={["Sweep", "Rail", "Amount", "Status", "Detail", "By"]}>{data.sweeps.map((s: any) => <tr key={s.id}><td><Mono>{s.id}</Mono></td><td>{railName(s.rail)}</td><td className="tabular-nums">{usd(s.amount)}</td><td><Badge v={s.status} tone={s.status === "unsupported" ? "warn" : undefined} /></td><td><Muted>{s.detail}</Muted></td><td>{s.requestedBy}</td></tr>)}</Table> : <EmptyState title="No sweeps yet" />}</Card>
       <Card title="Ledger positions" pad={false}>{data.ledger.length ? <Table head={["Account", "Debit", "Credit", "Balance"]}>{data.ledger.map((a: any) => <tr key={a.account}><td>{a.account}</td><td className="tabular-nums">{usd(a.debit)}</td><td className="tabular-nums">{usd(a.credit)}</td><td className="tabular-nums">{usd(a.balance)}</td></tr>)}</Table> : <EmptyState title="No journals yet" />}</Card>

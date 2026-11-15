@@ -12,6 +12,7 @@ import * as P from "./platform.js";
 import * as S from "./service.js";
 import * as W from "./workspace.js";
 import * as CARDS from "./cards.js";
+import * as TM from "./terms.js";
 
 const ev = (t: string, id: string, e: string, p: unknown) => appendEvidence(db.evidence, t, id, e, p);
 const now = () => new Date().toISOString();
@@ -27,17 +28,21 @@ export async function treasury(tenantId: string) {
   const cash = balances.reduce((a, b: any) => a + (typeof b.amount === "number" ? b.amount : 0), 0);
   const today = new Date(new Date().toISOString().slice(0, 10));
   const open = db.invoices.filter((i) => tenantOf(i) === tenantId && !i.paid && !db.intents.some((p) => p.invoiceId === i.id && p.status === "settled"));
-  const days = Array.from({ length: 31 }, (_, n) => ({ day: new Date(today.getTime() + n * 864e5).toISOString().slice(0, 10), outflow: 0, invoices: [] as string[] }));
+  // Two options per day: pay each invoice on its due date, or pay on the discount date for the net amount while the discount is open.
+  const days = Array.from({ length: 31 }, (_, n) => ({ day: new Date(today.getTime() + n * 864e5).toISOString().slice(0, 10), outflow: 0, earlyOutflow: 0, invoices: [] as string[] }));
   let beyond = 0;
+  const slot = (d: string) => { const t = Date.parse(d); return Number.isNaN(t) ? 0 : Math.max(0, Math.floor((t - today.getTime()) / 864e5)); };
   for (const i of open) {
-    const due = Date.parse(i.dueDate); const n = Number.isNaN(due) ? 0 : Math.max(0, Math.floor((due - today.getTime()) / 864e5));
+    const legs = TM.forecastLegs(i, days[0].day); const n = slot(legs.onDue.date); const e = slot(legs.early.date);
+    if (e <= 30) days[e].earlyOutflow = r2(days[e].earlyOutflow + legs.early.amount);
     if (n > 30) { beyond += i.amount; continue; }
     days[n].outflow = r2(days[n].outflow + i.amount); days[n].invoices.push(i.number);
   }
-  let bal = cash; const forecast = days.map((d) => { bal = r2(bal - d.outflow); return { ...d, balance: bal }; });
+  let bal = cash; let early = cash; const forecast = days.map((d) => { bal = r2(bal - d.outflow); early = r2(early - d.earlyOutflow); return { ...d, balance: bal, earlyBalance: early }; });
+  const earlyPay = { ...TM.payOptions(tenantId, days[0].day), rows: TM.discountRows(tenantId, days[0].day) };
   const tb = trialBalance(journalsOf(tenantId));
   return { tenantId, balances: balances.map((b: any) => ({ ...b, env: P.railEnv(tenantId, b.rail), sweep: adapter(b.rail).sweep ? { supported: true } : { supported: false, reason: adapter(b.rail).sweepUnsupported ?? "Not supported" } })),
-    configured: rails.filter((r) => r.configured).length, startingCash: r2(cash), openInvoices: open.length, openAmount: r2(open.reduce((a, i) => a + i.amount, 0)), beyond30: r2(beyond), forecast,
+    configured: rails.filter((r) => r.configured).length, startingCash: r2(cash), openInvoices: open.length, openAmount: r2(open.reduce((a, i) => a + i.amount, 0)), beyond30: r2(beyond), forecast, earlyPay,
     ledger: Object.entries(tb.accounts).map(([account, v]) => ({ account, ...v })), sweeps: listSweeps(tenantId) };
 }
 export const listSweeps = (tenantId: string) => (sql.prepare("SELECT data FROM sweeps WHERE tenant_id = ? ORDER BY rowid DESC").all(tenantId) as any[]).map((r) => JSON.parse(r.data));

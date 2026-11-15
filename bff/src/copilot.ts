@@ -20,10 +20,12 @@ import * as T from "./tables.js";
 import { z } from "zod";
 import * as SK from "./skills.js";
 import * as CARDS from "./cards.js";
+import * as TM from "./terms.js";
+import { termsLabel } from "@b2b/shared";
 
 export type Source = { tool: string; ids: string[]; links: { id: string; href: string }[] };
 export type ToolResult = { tool: string; args: Record<string, string>; summary: string; rows: unknown[]; source: Source; error?: string };
-export type ProposalKind = "reroute_payment" | "schedule_payment" | "approve_po" | "reject_po" | "suspend_agent" | "resume_agent" | "supplier_hold" | "supplier_release" | "lock_fx" | "start_sweep" | "draft_policy";
+export type ProposalKind = "reroute_payment" | "schedule_payment" | "approve_po" | "reject_po" | "suspend_agent" | "resume_agent" | "supplier_hold" | "supplier_release" | "lock_fx" | "start_sweep" | "draft_policy" | "pay_early";
 export type Proposal = { id: string; kind: ProposalKind; label: string; method: "POST"; path: string; body: Record<string, unknown>; target: string; allowed: boolean; reason: string; detail?: string; source?: "model" };
 export type ChartType = "bar" | "line" | "area" | "donut" | "stacked" | "table";
 export type ChartSpec = { type: ChartType; title: string; x: string; y: string[]; series?: string; rows: Record<string, string | number>[] };
@@ -89,7 +91,7 @@ export const TOOLS: Tool[] = [
   } },
   { name: "openInvoices", description: "Unpaid invoices with supplier, amount, match status and memo", args: [], run: (c) => {
     const st = scoped(c.scope);
-    const rows = st.invoices.filter((i) => !i.paid).map((i) => ({ invoiceId: i.id, number: i.number, supplier: supName(i.supplierId), amount: i.amount, currency: i.currency, match: i.matchStatus, memo: String((i as any).memo ?? "") }));
+    const rows = st.invoices.filter((i) => !i.paid).map((i) => ({ invoiceId: i.id, number: i.number, supplier: supName(i.supplierId), amount: i.amount, currency: i.currency, match: i.matchStatus, memo: String((i as any).memo ?? ""), dueDate: i.dueDate, terms: termsLabel(i.terms) }));
     const summary = rows.length ? rows.slice(0, 6).map((r) => `${r.number} from ${r.supplier} ${money(r.amount)} ${r.match}`).join(", ") : "No open invoices";
     return { summary, rows, source: src("openInvoices", rows.map((r) => ({ id: r.invoiceId, href: `${c.prefix === "/app" ? "/app/invoices" : "/operator/payments"}` }))) };
   } },
@@ -137,16 +139,26 @@ export const TOOLS: Tool[] = [
     const st = scoped(c.scope); const day0 = Date.parse(new Date().toISOString().slice(0, 10));
     const start = round(S.entitiesView(c.scope).filter((e) => e.currency === "USD").reduce((a, e) => a + e.cash, 0));
     const inflight = st.intents.filter((i) => i.kind !== "refund" && ["created", "routed", "submitted", "pending"].includes(i.status));
-    const weeks = Array.from({ length: 4 }, (_, n) => ({ week: `Week ${n + 1}`, from: new Date(day0 + n * 7 * 864e5).toISOString().slice(0, 10), outflow: 0, items: [] as string[] }));
-    for (const i of inflight) { weeks[0].outflow = round(weeks[0].outflow + i.amount); weeks[0].items.push(i.id); }
-    let later = 0;
+    const weeks = Array.from({ length: 4 }, (_, n) => ({ week: `Week ${n + 1}`, from: new Date(day0 + n * 7 * 864e5).toISOString().slice(0, 10), outflow: 0, early: 0, items: [] as string[] }));
+    for (const i of inflight) { weeks[0].outflow = round(weeks[0].outflow + i.amount); weeks[0].early = round(weeks[0].early + i.amount); weeks[0].items.push(i.id); }
+    let later = 0; let saved = 0; const today = new Date(day0).toISOString().slice(0, 10);
     for (const inv of st.invoices.filter((x) => !x.paid && !inflight.some((i) => i.invoiceId === x.id))) {
       const d = Date.parse(inv.dueDate); const n = Number.isNaN(d) ? 0 : Math.max(0, Math.floor((d - day0) / (7 * 864e5)));
+      // Pay early option: the net amount on the discount date while the discount is open. Otherwise the same as paying on the due date.
+      const leg = TM.forecastLegs(inv, today).early; const e = Math.max(0, Math.floor((Date.parse(leg.date) - day0) / (7 * 864e5)));
+      if (!Number.isNaN(e) && e <= 3) weeks[e].early = round(weeks[e].early + leg.amount); saved = round(saved + leg.saved);
       if (n > 3) { later = round(later + inv.amount); continue; } weeks[n].outflow = round(weeks[n].outflow + inv.amount); weeks[n].items.push(inv.id);
     }
-    let bal = start; const rows = weeks.map((w) => { bal = round(bal - w.outflow); return { week: w.week, from: w.from, outflow: w.outflow, balance: bal, items: w.items.length }; });
-    const summary = `Starting USD ledger cash ${money(start)}. ` + rows.map((r) => `${r.week} out ${money(r.outflow)}, balance ${money(r.balance)}`).join(", ") + (later ? `. ${money(later)} is due after 4 weeks` : "");
+    let bal = start; let eb = start; const rows = weeks.map((w) => { bal = round(bal - w.outflow); eb = round(eb - w.early); return { week: w.week, from: w.from, outflow: w.outflow, balance: bal, items: w.items.length, payEarlyOutflow: w.early, payEarlyBalance: eb }; });
+    const summary = `Starting USD ledger cash ${money(start)}. ` + rows.map((r) => `${r.week} out ${money(r.outflow)}, balance ${money(r.balance)}`).join(", ") + (later ? `. ${money(later)} is due after 4 weeks` : "")
+      + (saved ? `. Pay early option: taking every open early-pay discount saves ${money(saved)} (demo figure) and moves that cash out sooner, week 4 balance ${money(rows[3].payEarlyBalance)} against ${money(rows[3].balance)} when paying on the due date` : "");
     return { summary, rows, source: src("cashForecast", weeks.flatMap((w) => w.items.slice(0, 3)).map((id) => ({ id, href: id.startsWith("pi-") ? `${c.prefix}/payments/${id}` : c.prefix === "/app" ? "/app/invoices" : "/operator/treasury" }))) };
+  } },
+  { name: "discountsAvailable", description: "Early-pay discounts on unpaid invoices: terms, pay-by date, saving (demo figure) and status, plus pay-early against pay-on-due totals", args: [], run: (c) => {
+    const rows = TM.discountRows(c.scope); const o = TM.payOptions(c.scope); const live = rows.filter((r) => r.status !== "missed");
+    const summary = live.length ? `${live.length} open early-pay discounts. ` + live.slice(0, 6).map((r) => `${r.number} from ${r.supplier}: pay by ${r.payBy} to save ${r.discount.toFixed(2)} ${r.currency} (${r.terms}, ${r.status})`).join(", ") + `. Pay early: ${o.payEarly.outflow.toFixed(2)} out, ${o.payEarly.saved.toFixed(2)} saved. Pay on due date: ${o.payOnDue.outflow.toFixed(2)} out, nothing saved. ${TM.SAVINGS_NOTE}`
+      : rows.length ? `No early-pay discount is open. ${rows.length} passed their pay-by date.` : "No unpaid invoice has an early-pay discount in its terms";
+    return { summary, rows, source: src("discountsAvailable", rows.map((r) => ({ id: r.invoiceId, href: c.prefix === "/app" ? "/app/invoices" : "/operator/payments" }))) };
   } },
   { name: "supplierProfile", description: "One supplier: status, hold, screening, rails, spend, open invoices and recent payments", args: ["supplierId"], run: (c, a) => {
     const st = scoped(c.scope); const s = st.suppliers.find((x) => x.id === a.supplierId); if (!s) throw new S.HttpError(404, "supplier not found");
@@ -296,6 +308,7 @@ export function mockPlan(q: string, c: Partial<Ctx> = {}): { name: string; args:
   if (sup && /supplier|vendor|profile|hold|who is|about|tell me/.test(s)) add("supplierProfile", { supplierId: sup });
   if (/draft.*(rule|policy)|(rule|policy).*draft|approval rule|polic/.test(s)) add("approvalRules");
   if (/risk|fraud|flagged|suspicious/.test(s) && !plan.some((p) => p.name === "riskScore")) add("riskInbox");
+  if (/discount|pay(ing)? early|early.?pay|payment terms|\bterms\b|net \d+/.test(s)) add("discountsAvailable");
   if (/forecast|runway|cash flow|next (week|month)|upcoming/.test(s)) add("cashForecast");
   if (/bank detail|bank change|bank account change|payee change|payout change|changed? (their |its )?bank/.test(s)) add("bankChanges");
   if (/\bcards?\b|card spend|virtual card/.test(s)) add("cardSpend");
@@ -392,7 +405,7 @@ export function proposalsFor(c: Ctx, q: string): Proposal[] {
 }
 
 const LABEL: Record<string, string> = { spendBySupplier: "Spend by supplier", paymentsByStatus: "Payments by status", pendingApprovals: "Waiting for approval", entityBalances: "Entity balances", fxExposure: "FX", openInvoices: "Open invoices", whyPayment: "Why", riskInbox: "Risk inbox", bankChanges: "Bank detail changes",
-  mandates: "Mandates", fxLocksAndRates: "FX locks", railHealth: "Rail health", cashForecast: "Cash forecast", supplierProfile: "Supplier", auditSearch: "Evidence", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", query: "Query", dailyDigest: "Today", opsQueues: "Ops queues", riskEscalations: "Risk escalations", recurringPayments: "Recurring payments", tenants: "Clients", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA" };
+  mandates: "Mandates", fxLocksAndRates: "FX locks", railHealth: "Rail health", cashForecast: "Cash forecast", discountsAvailable: "Early-pay discounts", supplierProfile: "Supplier", auditSearch: "Evidence", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", query: "Query", dailyDigest: "Today", opsQueues: "Ops queues", riskEscalations: "Risk escalations", recurringPayments: "Recurring payments", tenants: "Clients", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA" };
 const mockAnswer = (q: string, results: ToolResult[]) => {
   const base = results.map((r) => `${LABEL[r.tool] ?? r.tool}: ${r.summary}.`).join(" ");
   return /\bdraft\b.*\b(rule|policy)\b|\b(rule|policy)\b.*\bdraft\b/i.test(q) ? `Draft rule in plain words: ${parseRuleDraft(q).words} ${base}` : base;

@@ -70,3 +70,24 @@ export type ComplianceResult = {
   /** Sanctions list hits behind any failed sanctions or wallet check. */
   hits?: { source: string; uid: string; sdnName: string; program: string; matchedOn: string; value: string; score: number; asset?: string }[];
 };
+
+/** Payment terms on a supplier or an invoice. Net days, plus an optional discount for paying early (2 percent in 10 days is "2/10 net 30"). */
+export const PaymentTerms = z.object({
+  netDays: z.number().int().min(0).max(180),
+  discountPct: z.number().positive().max(20).optional(),
+  discountDays: z.number().int().min(0).max(180).optional(),
+}).strict().refine((t) => (t.discountPct === undefined) === (t.discountDays === undefined), "Set both the discount percent and the discount days, or neither")
+  .refine((t) => t.discountDays === undefined || t.discountDays <= t.netDays, "Discount days cannot be longer than net days");
+export type PaymentTerms = z.infer<typeof PaymentTerms>;
+export const hasDiscount = (t?: PaymentTerms | null): t is PaymentTerms & { discountPct: number; discountDays: number } => !!t && typeof t.discountPct === "number" && typeof t.discountDays === "number";
+export const termsLabel = (t?: PaymentTerms | null) => !t ? "No terms set" : hasDiscount(t) ? `${t.discountPct} percent off if paid in ${t.discountDays} days, net ${t.netDays}` : `Net ${t.netDays}`;
+export const addDays = (day: string, n: number) => new Date(Date.parse(`${day.slice(0, 10)}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+export type EarlyPay = { pct: number; payBy: string; discount: number; net: number; daysLeft: number; open: boolean };
+/** The early-pay option on one invoice, or null when its terms carry no discount. Amounts are in the invoice currency. */
+export function earlyPayOf(inv: { amount: number; invoiceDate?: string; terms?: PaymentTerms | null }, today: string): EarlyPay | null {
+  if (!hasDiscount(inv.terms) || !inv.invoiceDate || !/^\d{4}-\d{2}-\d{2}/.test(inv.invoiceDate)) return null;
+  const payBy = addDays(inv.invoiceDate, inv.terms.discountDays);
+  const discount = Math.round(inv.amount * inv.terms.discountPct) / 100;
+  const daysLeft = Math.round((Date.parse(`${payBy}T00:00:00Z`) - Date.parse(`${today.slice(0, 10)}T00:00:00Z`)) / 864e5);
+  return { pct: inv.terms.discountPct, payBy, discount, net: Math.round((inv.amount - discount) * 100) / 100, daysLeft, open: daysLeft >= 0 };
+}

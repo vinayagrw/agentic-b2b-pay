@@ -37,6 +37,7 @@ import * as LV from "./live.js";
 import rateLimit from "@fastify/rate-limit";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import * as SP from "./sparky.js";
+import * as TM from "./terms.js";
 import * as CH from "./chatops.js";
 import * as CARDS from "./cards.js";
 import * as BC from "./bankchange.js";
@@ -133,7 +134,7 @@ export async function buildApp() {
     "POST /changes": "changes.request", "POST /copilot/ask": "workspace.read", "POST /copilot/answer": "workspace.read", "POST /copilot/threads/:id": "workspace.read", "DELETE /copilot/threads/:id": "workspace.read", "POST /copilot/feedback": "workspace.read", "POST /copilot/memories": "workspace.read", "PATCH /copilot/memories/:id": "workspace.read", "DELETE /copilot/memories/:id": "workspace.read", "DELETE /copilot/memories": "workspace.read", "DELETE /copilot/answers/:id": "workspace.read", "POST /changes/:id/decide": "changes.decide",
     "POST /workspace/agents": "agents.manage", "PUT /workspace/agents/:id/mandate": "agents.manage", "POST /workspace/agents/:id/keys": "agents.manage", "POST /workspace/agents/:id/:action": "agents.manage",
     "POST /workspace/rules": "rules.edit", "PUT /workspace/rules/:id": "rules.edit", "DELETE /workspace/rules/:id": "rules.edit", "POST /workspace/rules/order": "rules.edit",
-    "POST /workspace/suppliers/invite": "suppliers.invite", "POST /workspace/suppliers/:id/link": "suppliers.invite", "POST /workspace/suppliers/:id/review": "suppliers.review", "POST /workspace/suppliers/:id/hold": "suppliers.review",
+    "POST /workspace/suppliers/invite": "suppliers.invite", "POST /workspace/suppliers/:id/link": "suppliers.invite", "POST /workspace/suppliers/:id/review": "suppliers.review", "POST /workspace/suppliers/:id/hold": "suppliers.review", "POST /workspace/suppliers/:id/terms": "suppliers.review", "POST /invoices/:id/early-pay": "changes.request",
     "POST /workspace/suppliers/:id/payee-change": "suppliers.payee_change", "POST /workspace/suppliers/:id/wallet-message": "workspace.read",
     "GET /ops/treasury": "treasury.read", "POST /ops/treasury/sweep": "treasury.sweep", "POST /ops/recon/run": "treasury.sweep", "GET /ops/recon": "treasury.read", "POST /ops/recon/exceptions/:id/resolve": "treasury.sweep",
     "GET /ops/recon/export.csv": "treasury.read", "GET /ops/compliance": "compliance.read", "POST /ops/cases/:id/sar/draft": "compliance.case.file", "PUT /ops/cases/:id/sar": "compliance.case.file",
@@ -282,7 +283,7 @@ export async function buildApp() {
   });
   // Maker-checker
   app.get("/changes", async (req: any) => { const u = who(req); return P.listChanges(req.query?.status, P.isOperator(u) ? null : u.tenantId); });
-  app.post("/changes", async (req) => { const x = b(req); const u = can(req, x.kind === "rail.settings" ? "settings.live_toggle" : x.kind === "identity.oidc" ? "identity.manage" : "changes.request"); if (x.kind === "rule.draft") { const t = clientOf(req, u); I.requirePermission(u, "rules.edit", { tenantId: t }); return P.requestChange(u, "rule.draft", { ...(x.payload ?? {}), tenantId: t, requestedBy: u.id }, t); } return P.requestChange(u, String(x.kind), x.payload, x.tenantId ?? null); });
+  app.post("/changes", async (req) => { const x = b(req); const u = can(req, x.kind === "rail.settings" ? "settings.live_toggle" : x.kind === "identity.oidc" ? "identity.manage" : "changes.request"); if (x.kind === "payment.early_pay") return TM.requestEarlyPay(u, clientOf(req, u), String(x.payload?.invoiceId ?? "")); if (x.kind === "rule.draft") { const t = clientOf(req, u); I.requirePermission(u, "rules.edit", { tenantId: t }); return P.requestChange(u, "rule.draft", { ...(x.payload ?? {}), tenantId: t, requestedBy: u.id }, t); } return P.requestChange(u, String(x.kind), x.payload, x.tenantId ?? null); });
   app.post("/changes/:id/decide", async (req: any) => { const u = who(req); return P.decideChange(u, req.params.id, !!b(req).approve); });
 
   app.get("/health", async () => ({ ok: true, llmMode: llmMode() }));
@@ -363,6 +364,9 @@ export async function buildApp() {
   app.post("/workspace/suppliers/invite", async (req) => { const { u, t } = ctx(req); return W.inviteSupplier(u, t, b(req)); });
   app.post("/workspace/suppliers/:id/link", async (req: any) => { const { u, t } = ctx(req); return W.newInviteLink(u, t, req.params.id); });
   app.post("/workspace/suppliers/:id/review", async (req: any) => { const { u, t } = ctx(req); return W.reviewSupplier(u, t, req.params.id, !!b(req).verify, String(b(req).note ?? "")); });
+  app.post("/workspace/suppliers/:id/terms", async (req: any) => { const { u, t } = ctx(req); return TM.setSupplierTerms(u, t, req.params.id, b(req).terms); });
+  app.get("/terms/discounts", async (req) => { const t = scopeOf(req); return { rows: TM.discountRows(t), options: TM.payOptions(t), note: TM.SAVINGS_NOTE }; });
+  app.post("/invoices/:id/early-pay", async (req: any) => { const { u, t } = ctx(req); return TM.requestEarlyPay(u, t, String(req.params.id)); });
   app.post("/workspace/suppliers/:id/hold", async (req: any) => { const { u, t } = ctx(req); return W.setSupplierHold(u, t, req.params.id, b(req).hold !== false, String(b(req).reason ?? "")); });
   app.post("/workspace/suppliers/:id/payee-change", async (req: any) => { const { u, t } = ctx(req); return W.requestPayeeChange(u, t, req.params.id, b(req)); });
   app.post("/workspace/suppliers/:id/wallet-message", async (req: any) => { const { t } = ctx(req); return W.walletMessageFor(t, req.params.id, String(b(req).address ?? "")); });
