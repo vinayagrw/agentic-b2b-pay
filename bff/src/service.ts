@@ -161,6 +161,10 @@ function issueMandates(po: PurchaseOrder, mandate: import("./modules/store.js").
   ev("po", po.id, "ap2.intent_signed", { mandate: intent.id, signer: intent.signerId, maxAmount: intent.body.maxAmount, expiresAt: intent.body.expiresAt, hash: intent.hash });
   signCartFor(po, intent, AP2.normLines(po.lines), po.total, sup);
 }
+/** Lines a payment is bound to: the invoice lines plus one negative line per credit note, so they add up to the payable amount. */
+export function payLines(inv: { extract: { lines: { sku: string; qty: number; unitPrice: number }[] }; creditNotes?: { id: string; amount: number }[] }): AP2.MandateLine[] {
+  return [...AP2.normLines(inv.extract.lines), ...(inv.creditNotes ?? []).map((c) => ({ sku: `CREDIT-${c.id}`, qty: 1, unitPrice: -Math.round(c.amount * 100) / 100 }))];
+}
 function signCartFor(po: PurchaseOrder, intent: AP2.SignedMandate<AP2.IntentBody>, lines: AP2.MandateLine[], amount: number, sup: Supplier) {
   const cart = AP2.signCart({ poId: po.id, tenantId: tenantOf(po), agentId: po.agentId, intentHash: intent.hash, supplierId: sup.id, currency: po.currency ?? "USD", amount: round(amount), lines, railHint: sup.preferredRail ?? null });
   ev("po", po.id, "ap2.cart_signed", { mandate: cart.id, signer: cart.signerId, amount: cart.body.amount, lines: lines.length, hash: cart.hash });
@@ -171,7 +175,7 @@ export function mandatesView(intentId: string) {
   const pi = must(db.intents.find((x) => x.id === intentId), "payment");
   const inv = must(db.invoices.find((i) => i.id === pi.invoiceId), "invoice");
   const pair = AP2.currentPair(inv.poId);
-  const result = evaluateMandates(pair.intent, pair.cart, { poId: inv.poId, supplierId: inv.supplierId, currency: pi.currency, amount: pi.amount, lines: inv.extract.lines });
+  const result = evaluateMandates(pair.intent, pair.cart, { poId: inv.poId, supplierId: inv.supplierId, currency: pi.currency, amount: pi.amount, lines: payLines(inv) });
   const po = db.pos.find((p) => p.id === inv.poId);
   return { poId: inv.poId, paid: !!po && orderPaid(po), intent: showMandate(pair.intent), cart: showMandate(pair.cart), ...result };
 }
@@ -396,7 +400,7 @@ function bookMatched(inv: import("./modules/store.js").Invoice, po: PurchaseOrde
   {
     inv.erpApproval = "approved";
     const pair = AP2.currentPair(po.id);
-    if (pair.intent) signCartFor(po, pair.intent, AP2.normLines(inv.extract.lines), inv.amount, supplier(po.supplierId));
+    if (pair.intent) signCartFor(po, pair.intent, payLines(inv), inv.amount, supplier(po.supplierId));
     const fn = FX.convert(inv.amount, ar.rate);
     inv.accrual = { functionalCurrency: ent.currency, rate: ar.rate, usdRate: ur.rate, rateDate: ar.rateDate ?? inv.invoiceDate ?? null, amount: fn, source: ar.source, stale: ar.stale, at: now() };
     const o = (inv.currency ?? "USD") !== ent.currency ? { origCurrency: inv.currency, origAmount: inv.amount } : {};
@@ -474,9 +478,9 @@ export function creditNote(invId: string, userId: string, amount: unknown, reaso
   }
   inv.originalAmount ??= inv.amount;
   inv.amount = Math.round((inv.amount - a) * 100) / 100;
-  if (inv.erpApproval === "approved") { const pair = AP2.currentPair(po.id); if (pair.intent) signCartFor(po, pair.intent, AP2.normLines(inv.extract.lines), inv.amount, supplier(po.supplierId)); }
   const cn = { id: nextId("cn"), amount: a, reason: r, by: userId, at: now(), journalId };
   (inv.creditNotes ??= []).push(cn);
+  if (inv.erpApproval === "approved") { const pair = AP2.currentPair(po.id); if (pair.intent) signCartFor(po, pair.intent, payLines(inv), inv.amount, supplier(po.supplierId)); }
   ev("invoice", inv.id, "invoice.credit_note", cn);
   save(); return inv;
 }
@@ -576,7 +580,7 @@ async function payInvoiceCore(invId: string, idempotencyKey: string, opts: PayOp
   const bankHold = BC.paymentHold(TENANT, sup.id);
   if (bankHold) { intent.holdKind = "bank_change"; return stop("blocked", bankHold); }
   const pair = AP2.currentPair(po.id);
-  const mv = evaluateMandates(pair.intent, pair.cart, { poId: po.id, supplierId: sup.id, currency: invCcy, amount: inv.amount, lines: inv.extract.lines });
+  const mv = evaluateMandates(pair.intent, pair.cart, { poId: po.id, supplierId: sup.id, currency: invCcy, amount: inv.amount, lines: payLines(inv) });
   ev("payment", intent.id, "ap2.mandates_verified", { ok: mv.ok, intent: pair.intent?.hash ?? null, cart: pair.cart?.hash ?? null, failed: mv.checks.filter((c) => !c.pass).map((c) => c.rule) });
   if (!mv.ok) return stop("blocked", mv.reason);
 
@@ -630,7 +634,7 @@ async function payInvoiceCore(invId: string, idempotencyKey: string, opts: PayOp
 
 /** Most rail attempts allowed for one invoice, counting the first payment. */
 export const MAX_PAYMENT_ATTEMPTS = 3;
-const attemptChain = (invoiceId: string) => db.intents.filter((i) => i.invoiceId === invoiceId && i.kind !== "refund" && i.rail);
+const attemptChain = (invoiceId: string) => db.intents.filter((i) => i.invoiceId === invoiceId && i.kind !== "refund" && (i.rail || i.retryOf));
 /** Attempt history for the invoice behind a payment, oldest first. */
 export function paymentAttempts(intentId: string) {
   const pi = must(db.intents.find((i) => i.id === intentId), "payment intent");

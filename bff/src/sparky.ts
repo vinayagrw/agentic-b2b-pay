@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import { db, scoped, tenantOf, save } from "./modules/store.js";
+import { db, scoped, tenantOf, save, isOpenInvoice } from "./modules/store.js";
 import { appendEvidence } from "./modules/evidence.js";
 import { round } from "./modules/match.js";
 import { sql } from "./db.js";
@@ -406,7 +406,7 @@ export function offersFor(scope: string | null, results: CP.ToolResult[]): CP.Of
   if (!scope || !offersEnabled(scope) || !results.length) return [];
   const topics = new Set(results.map((r) => r.tool)); const out: CP.Offer[] = []; const st = scoped(scope);
   if (["fxExposure", "fxLocksAndRates", "fxGainLoss", "openInvoices", "cashForecast"].some((x) => topics.has(x))) {
-    const fx = st.invoices.filter((i) => !i.paid && (i.currency ?? "USD") !== "USD");
+    const fx = st.invoices.filter((i) => isOpenInvoice(i) && (i.currency ?? "USD") !== "USD");
     const by = fx.reduce((m, i) => m.set(i.currency, round((m.get(i.currency) ?? 0) + i.amount)), new Map<string, number>());
     const big = [...by].filter(([, v]) => v >= 1000);
     if (big.length) out.push({ id: pid(), kind: "fx_forward", label: "Offer", title: "FX forward from your bank", trigger: `Open foreign currency payables ${big.map(([c, v]) => `${c} ${v.toFixed(2)}`).join(", ")} across ${fx.length} invoices`, body: `You owe ${big.map(([c, v]) => `${v.toFixed(2)} ${c}`).join(" and ")} on open invoices. A forward fixes the rate for the due dates. Talk to your bank, nothing is booked from here.` });

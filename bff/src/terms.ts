@@ -2,7 +2,7 @@
  * Everything here is read-only except the "payment.early_pay" change, which a second client admin must approve.
  * Savings are demo figures: an approved plan is recorded on the invoice, and the payment still runs through the normal pay flow for the full invoice amount. */
 import { PaymentTerms, earlyPayOf, hasDiscount, termsLabel } from "@b2b/shared";
-import { db, save, scoped, tenantOf, type Invoice } from "./modules/store.js";
+import { db, save, scoped, tenantOf, isOpenInvoice, type Invoice } from "./modules/store.js";
 import { appendEvidence } from "./modules/evidence.js";
 import * as P from "./platform.js";
 
@@ -17,7 +17,7 @@ const requested = (tenantId: string | null) => new Set(P.listChanges("pending", 
 /** Unpaid invoices whose terms carry an early-pay discount, soonest pay-by date first. */
 export function discountRows(scope: string | null, today = day()): DiscountRow[] {
   const asked = requested(scope);
-  return scoped(scope).invoices.filter((i) => !i.paid && !inFlight(i.id)).flatMap((i) => {
+  return scoped(scope).invoices.filter((i) => isOpenInvoice(i) && !inFlight(i.id)).flatMap((i) => {
     const e = earlyPayOf(i, today); if (!e) return [];
     const status: DiscountRow["status"] = !e.open ? "missed" : i.earlyPay?.status === "approved" ? "approved" : asked.has(i.id) ? "requested" : "open";
     return [{ invoiceId: i.id, number: i.number, supplierId: i.supplierId, supplier: supName(i.supplierId), amount: i.amount, currency: i.currency ?? "USD", terms: termsLabel(i.terms), dueDate: i.dueDate, payBy: e.payBy, pct: e.pct, discount: e.discount, net: e.net, daysLeft: e.daysLeft, status, match: i.matchStatus }];

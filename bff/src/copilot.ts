@@ -2,7 +2,7 @@
  * Every answer is grounded on fixed, read-only, tenant scoped query tools. The model only picks tools and writes prose.
  * Actions are proposals parsed from the user's own question, or one model suggestion revalidated by the server. Nothing in record text creates one. Nothing runs without a click. */
 import crypto from "node:crypto";
-import { scoped, tenantOf, db } from "./modules/store.js";
+import { scoped, tenantOf, db, isOpenInvoice } from "./modules/store.js";
 import * as S from "./service.js";
 import * as X from "./explain.js";
 import * as BC from "./bankchange.js";
@@ -93,7 +93,7 @@ export const TOOLS: Tool[] = [
   } },
   { name: "openInvoices", description: "Unpaid invoices with supplier, amount, match status and memo", args: [], run: (c) => {
     const st = scoped(c.scope);
-    const rows = st.invoices.filter((i) => !i.paid).map((i) => ({ invoiceId: i.id, number: i.number, supplier: supName(i.supplierId), amount: i.amount, currency: i.currency, match: i.matchStatus, memo: String((i as any).memo ?? ""), dueDate: i.dueDate, terms: termsLabel(i.terms) }));
+    const rows = st.invoices.filter(isOpenInvoice).map((i) => ({ invoiceId: i.id, number: i.number, supplier: supName(i.supplierId), amount: i.amount, currency: i.currency, match: i.matchStatus, memo: String((i as any).memo ?? ""), dueDate: i.dueDate, terms: termsLabel(i.terms) }));
     const summary = rows.length ? rows.slice(0, 6).map((r) => `${r.number} from ${r.supplier} ${money(r.amount)} ${r.match}`).join(", ") : "No open invoices";
     return { summary, rows, source: src("openInvoices", rows.map((r) => ({ id: r.invoiceId, href: `${c.prefix === "/app" ? "/app/invoices" : "/operator/payments"}` }))) };
   } },
@@ -191,7 +191,7 @@ export const TOOLS: Tool[] = [
     const st = scoped(c.scope); const s = st.suppliers.find((x) => x.id === a.supplierId); if (!s) throw new S.HttpError(404, "supplier not found");
     const invs = st.invoices.filter((i) => i.supplierId === s.id); const pays = st.intents.filter((i) => invs.some((v) => v.id === i.invoiceId));
     const hold = W.holdOf(s);
-    const row = { supplierId: s.id, name: s.name, status: s.onboarding?.status ?? "verified", hold: hold ? `on hold: ${hold.reason}` : "none", screening: s.screeningStatus, preferredRail: s.preferredRail, acceptedRails: s.acceptedRails.join(" "), settled: round(pays.filter((p) => p.status === "settled").reduce((x, p) => x + p.amount, 0)), payments: pays.length, openInvoices: invs.filter((i) => !i.paid).length, bankChangesWaiting: (sql.prepare("SELECT COUNT(*) n FROM bank_change_requests WHERE supplier_id = ? AND status = 'pending'").get(s.id) as { n: number }).n };
+    const row = { supplierId: s.id, name: s.name, status: s.onboarding?.status ?? "verified", hold: hold ? `on hold: ${hold.reason}` : "none", screening: s.screeningStatus, preferredRail: s.preferredRail, acceptedRails: s.acceptedRails.join(" "), settled: round(pays.filter((p) => p.status === "settled").reduce((x, p) => x + p.amount, 0)), payments: pays.length, openInvoices: invs.filter(isOpenInvoice).length, bankChangesWaiting: (sql.prepare("SELECT COUNT(*) n FROM bank_change_requests WHERE supplier_id = ? AND status = 'pending'").get(s.id) as { n: number }).n };
     const summary = `${row.name} (${row.supplierId}) is ${row.status}, hold ${row.hold}, screening ${row.screening}, prefers ${row.preferredRail}. Settled ${money(row.settled)} over ${row.payments} payments, ${row.openInvoices} open invoices`;
     return { summary, rows: [row], source: src("supplierProfile", [{ id: s.id, href: c.prefix === "/app" ? "/app/suppliers" : "/operator/tenants" }, ...pays.slice(-3).map((p) => ({ id: p.id, href: `${c.prefix}/payments/${p.id}` }))]) };
   } },

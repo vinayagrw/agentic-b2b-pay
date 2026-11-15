@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { isUsdc, type Rail } from "@b2b/shared";
 import { sql } from "./db.js";
-import { db, save, nextId, tenantOf, type Journal } from "./modules/store.js";
+import { db, save, nextId, tenantOf, isOpenInvoice, type Journal } from "./modules/store.js";
 import { makeJournal, trialBalance } from "./modules/ledger.js";
 import { appendEvidence } from "./modules/evidence.js";
 import { TRAVEL_RULE_THRESHOLD_USD } from "./modules/compliance.js";
@@ -27,7 +27,7 @@ export async function treasury(tenantId: string) {
   const rails = S.railsView(tenantId);
   const cash = balances.reduce((a, b: any) => a + (typeof b.amount === "number" ? b.amount : 0), 0);
   const today = new Date(new Date().toISOString().slice(0, 10));
-  const open = db.invoices.filter((i) => tenantOf(i) === tenantId && !i.paid && !db.intents.some((p) => p.invoiceId === i.id && p.status === "settled"));
+  const open = db.invoices.filter((i) => tenantOf(i) === tenantId && isOpenInvoice(i) && !db.intents.some((p) => p.invoiceId === i.id && p.status === "settled"));
   // Two options per day: pay each invoice on its due date, or pay on the discount date for the net amount while the discount is open.
   const days = Array.from({ length: 31 }, (_, n) => ({ day: new Date(today.getTime() + n * 864e5).toISOString().slice(0, 10), outflow: 0, earlyOutflow: 0, invoices: [] as string[] }));
   let beyond = 0;

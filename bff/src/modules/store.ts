@@ -227,3 +227,6 @@ export function scoped(tenantId: string | null): Db {
     evidence: db.evidence.filter((e) => subj.has(e.subjectId)), refunds: db.refunds.filter((r) => piIds.has(r.originalIntentId)), erp: db.erp, alerts: db.alerts.filter((a) => tenantOf(a) === tenantId) };
 }
 export function nextId(prefix: string) { db.seq += 1; return `${prefix}-${db.seq}`; }
+
+/** An invoice still waiting to be paid: not paid and not replaced by a corrected invoice. */
+export const isOpenInvoice = (i: { paid?: boolean; supersededBy?: string | null }) => !i.paid && !i.supersededBy;
