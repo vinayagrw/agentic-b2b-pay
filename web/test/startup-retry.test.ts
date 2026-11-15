@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { withStartupRetry, isStartupRetryable, ApiError } from "../src/lib/api";
+import { withStartupRetry, isStartupRetryable, ApiError, startupCall, isStarting, resetStarting, waitForReady } from "../src/lib/api";
 
 const noWait = () => Promise.resolve();
 describe("startup retry", () => {
@@ -25,5 +25,24 @@ describe("startup retry", () => {
     expect(waits.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(10_000);
     expect(waits[0]).toBeLessThan(waits[waits.length - 1] + 1);
     expect(fn.mock.calls.length).toBeGreaterThan(3);
+  });
+  it("only retries until the first startup call works", async () => {
+    resetStarting();
+    const ok = vi.fn().mockRejectedValueOnce(new ApiError(500, "x")).mockResolvedValue("ok");
+    expect(await startupCall(ok, { sleep: noWait })).toBe("ok");
+    expect(isStarting()).toBe(false);
+    const late = vi.fn().mockRejectedValue(new ApiError(500, "boom"));
+    await expect(startupCall(late, { sleep: noWait })).rejects.toThrow("boom");
+    expect(late).toHaveBeenCalledTimes(1);
+    resetStarting();
+  });
+  it("lets the stream open after the budget runs out even if ready fails", async () => {
+    resetStarting();
+    let t = 0;
+    const down = vi.fn().mockRejectedValue(new ApiError(502, "x"));
+    expect(await waitForReady(down, { budgetMs: 1000, now: () => t, sleep: async (ms) => { t += ms; } })).toBe(false);
+    expect(isStarting()).toBe(true);
+    expect(await waitForReady(() => Promise.resolve({}), { sleep: noWait })).toBe(true);
+    resetStarting();
   });
 });

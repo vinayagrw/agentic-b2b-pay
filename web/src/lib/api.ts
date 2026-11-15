@@ -26,7 +26,17 @@ export async function withStartupRetry<T>(fn: () => Promise<T>, o: { budgetMs?: 
     }
   }
 }
-export const startupApi = <T = any,>(path: string) => withStartupRetry(() => api<T>(path));
+/** True until the first startup call works. After that a 500 is a real error and is not retried. */
+let starting = true;
+export const isStarting = () => starting;
+export const resetStarting = () => { starting = true; };
+export async function startupCall<T>(fn: () => Promise<T>, o: Parameters<typeof withStartupRetry>[1] = {}): Promise<T> {
+  if (!starting) return fn();
+  const v = await withStartupRetry(fn, o); starting = false; return v;
+}
+/** Resolves once the bff is ready, or once the retry budget runs out. The stream opens after that whatever the result. */
+export const waitForReady = (fn: () => Promise<unknown> = () => api("/ready"), o: Parameters<typeof withStartupRetry>[1] = {}) => startupCall(fn, o).then(() => true, () => false);
+export const startupApi = <T = any,>(path: string) => startupCall(() => api<T>(path));
 export const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 5_000, retry: false, refetchOnWindowFocus: false } } });
 
 export type Me = { user: { id: string; name: string; role: string; tenantId: string | null; email: string; customRoleId?: string | null }; operator: boolean; tenant: Tenant; theme: Branding; tenants: Tenant[]; llmMode: string; permissions?: string[]; roleName?: string; approveLimit?: number | null };
@@ -45,7 +55,7 @@ export function useLiveEvents() {
   useEffect(() => () => { if (t.current) clearTimeout(t.current); }, []);
   // Wait for the bff to say it is ready before opening the stream, so a dev restart does not log a 500.
   const [up, setUp] = useState(false);
-  useEffect(() => { let live = true; startupApi("/ready").catch(() => null).then(() => { if (live) setUp(true); }); return () => { live = false; }; }, []);
+  useEffect(() => { let live = true; waitForReady().then(() => { if (live) setUp(true); }); return () => { live = false; }; }, []);
   const status = useSSE(up ? "/api/events" : null, ["hello", "change"], (m) => {
     if (m.event !== "change" || t.current) return;
     t.current = setTimeout(() => { t.current = null; qc.invalidateQueries(); }, 150);
