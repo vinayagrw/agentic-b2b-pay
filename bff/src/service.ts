@@ -219,9 +219,9 @@ export function disputeEvidence(scope: string | null, poId: string) {
   const authority = db.mandates.find((m) => m.id === po.mandateId);
   const pair = AP2.currentPair(po.id);
   const name = (id: string) => P.getUser(id)?.name ?? id;
-  const person = (x: { userId: string; at: string; comment?: string }, decision: "approved" | "rejected", level: number, role: string | null) => ({ level, role, decision, userId: x.userId, name: name(x.userId), at: x.at, comment: x.comment ?? "" });
+  const person = (x: { userId: string; at: string; comment?: string; onBehalfOf?: string }, decision: "approved" | "rejected", level: number, role: string | null) => ({ level, role, decision, userId: x.userId, name: name(x.userId), at: x.at, comment: x.comment ?? "", onBehalfOf: x.onBehalfOf ?? null, onBehalfOfName: x.onBehalfOf ? name(x.onBehalfOf) : null });
   const a = po.approval;
-  const past = (a?.history ?? []).flatMap((h) => [...h.levels.flatMap((l, n) => l.approvals.map((x) => ({ ...person(x, "approved", n + 1, l.role), round: h.round }))), ...(h.rejectedBy ? [{ ...person(h.rejectedBy, "rejected", 0, null), round: h.round }] : [])]);
+  const past = (a?.history ?? []).flatMap((h) => [...h.levels.flatMap((l, n) => l.approvals.map((x) => ({ ...person(x, "approved", n + 1, l.role), round: h.round }))), ...(h.rejectedBy ? [{ ...person(h.rejectedBy, "rejected", h.rejectedLevel ?? 0, h.rejectedRole ?? null), round: h.round }] : [])]);
   const approvals = [...past, ...(a?.levels ?? []).flatMap((l, n) => l.approvals.map((x) => person(x, "approved", n + 1, l.role))), ...(a?.rejectedBy ? [person(a.rejectedBy, "rejected", a.current + 1, a.levels[a.current]?.role ?? null)] : [])].sort((x, y) => x.at.localeCompare(y.at));
   const subjects = new Set([po.id, ...invs.map((i) => i.id), ...pis.map((p) => p.id), ...cards.map((c) => c.card.id)]);
   const timeline = db.evidence.filter((e) => subjects.has(e.subjectId)).sort((x, y) => x.seq - y.seq)
@@ -252,16 +252,19 @@ export function requesterOf(po: PurchaseOrder): string | null {
 export function canApprove(po: PurchaseOrder, user: { id: string; role: string; tenantId: string | null }): { ok: boolean; why: string; onBehalfOf?: string } {
   if (po.status !== "pending_approval") return { ok: false, why: `PO is ${po.status}` };
   if (user.tenantId && user.tenantId !== tenantOf(po)) return { ok: false, why: "Wrong tenant" };
-  if (po.requestedBy && po.requestedBy === user.id) return { ok: false, why: "You raised this order, so another person must approve it" };
+  const requester = requesterOf(po);
+  if (requester && requester === user.id) return { ok: false, why: "You raised this order, so another person must approve it" };
   const a = po.approval; if (!a) return { ok: ["approver", "client_admin", "operator_admin"].includes(user.role), why: "Needs an approver" };
   const lvl = a.levels[a.current];
   const approvedBefore = (id: string) => a.levels.some((l) => l.approvals.some((x) => x.userId === id || x.onBehalfOf === id));
   if (approvedBefore(user.id)) return { ok: false, why: "You already approved this PO at an earlier level" };
   if (user.role === lvl.role) return { ok: true, why: "" };
+  // Deliberate: a hand over lets an approver act at the level of the person who handed over (for example a client admin on leave).
+  // The role tier comes from the delegation, which only that person can create. The delegate's own amount limit, step-up and SoD still apply.
   for (const d of DLG.activeFor(user.id, tenantOf(po))) {
     const from = P.getUser(d.fromUser);
     if (!from || from.active === false || from.role !== lvl.role) continue;
-    if (from.id === po.requestedBy) continue;
+    if (from.id === requester) continue;
     if (approvedBefore(from.id)) continue;
     return { ok: true, why: "", onBehalfOf: from.id };
   }
@@ -297,7 +300,7 @@ export function resubmitPo(poId: string, userId: string, note: string) {
   const a = po.approval ?? { ruleId: null, ruleName: "Mandate threshold", levels: [{ role: "approver", count: 1, approvals: [] }], current: 0 };
   const round = a.round ?? 1;
   if ((a.history?.length ?? 0) >= 5) throw new HttpError(409, "This order was sent again too many times. Raise a new order");
-  a.history = [...(a.history ?? []), { round, levels: a.levels.map((l) => ({ ...l, approvals: [...l.approvals] })), ...(a.rejectedBy ? { rejectedBy: a.rejectedBy } : {}), resubmittedBy: userId, resubmittedAt: at, note: c }];
+  a.history = [...(a.history ?? []), { round, levels: a.levels.map((l) => ({ ...l, approvals: [...l.approvals] })), ...(a.rejectedBy ? { rejectedBy: a.rejectedBy, rejectedLevel: a.current + 1, rejectedRole: a.levels[a.current]?.role ?? null } : {}), resubmittedBy: userId, resubmittedAt: at, note: c }];
   a.levels = a.levels.map((l) => ({ ...l, approvals: [] })); a.current = 0; delete a.rejectedBy; a.round = round + 1;
   po.approval = a; po.status = "pending_approval";
   ev("po", po.id, "approval.resubmitted", { by: userId, note: c, round: a.round });

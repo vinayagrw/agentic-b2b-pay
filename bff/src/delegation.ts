@@ -1,6 +1,7 @@
 /**
  * Approval delegation. An approver hands their approvals to another user with the approver role for a date range.
- * The delegate still acts as themselves: their own amount limit, step-up and separation of duties apply.
+ * The delegate may act at the level of the person who handed over (that is the point of a hand over), but
+ * still acts as themselves: their own amount limit, step-up and separation of duties apply.
  */
 import crypto from "node:crypto";
 import { sql } from "./db.js";

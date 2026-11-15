@@ -42,11 +42,11 @@ describe("approval rules", () => {
   it("routes a large PO through two levels with comments and blocks the wrong role", () => {
     const po = S.createPo({ supplierId: "sup-northwind", category: "components", currency: "USD", lines: [{ sku: "NW-MTR-750", description: "Servo", qty: 70, unitPrice: 420 }], justification: "Line 4 retrofit" });
     expect(po.status).toBe("pending_approval"); expect(po.approval?.ruleName).toBe("Large spend");
-    expect(() => S.decideApproval(po.id, true, "usr-cfo-jane")).toThrow(/approver/);
+    expect(() => S.decideApproval(po.id, true, "usr-acme-amara")).toThrow(/approver/);
     S.decideApproval(po.id, true, "usr-controller-sam", "Budget ok");
     expect(po.status).toBe("pending_approval"); expect(po.approval!.current).toBe(1);
     expect(() => S.decideApproval(po.id, true, "usr-treasurer-lee")).toThrow(/client admin/);
-    S.decideApproval(po.id, true, "usr-cfo-jane", "Go");
+    S.decideApproval(po.id, true, "usr-acme-amara", "Go");
     expect(po.status).toBe("approved"); expect(po.approval!.levels[0].approvals[0].comment).toBe("Budget ok");
   });
   it("the inbox shows who can act", () => {

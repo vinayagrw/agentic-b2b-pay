@@ -13,7 +13,8 @@ beforeEach(() => { useDb(":memory:"); reload(); reset(); P.seedPlatform(); S.boo
 const user = (id: string) => P.getUser(id)!;
 const login = async (app: any, userId: string) => { const r = await app.inject({ method: "POST", url: "/auth/login", payload: { userId } }); return `sid=${r.cookies.find((x: any) => x.name === "sid").value}`; };
 const day = (n: number) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
-const bigPo = (qty = 70) => S.createPo({ supplierId: "sup-northwind", category: "components", currency: "USD", lines: [{ sku: "NW-MTR-750", description: "Servo", qty, unitPrice: 420 }], justification: "Line 4 retrofit" });
+const agentPo = (qty = 70) => S.createPo({ supplierId: "sup-northwind", category: "components", currency: "USD", lines: [{ sku: "NW-MTR-750", description: "Servo", qty, unitPrice: 420 }], justification: "Line 4 retrofit" });
+const bigPo = (qty = 70) => { const po = agentPo(qty); po.requestedBy = "usr-clerk-pat"; return po; };
 const audits = (event: string) => sql.prepare("SELECT * FROM audit WHERE event = ?").all(event) as any[];
 
 describe("approval delegation", () => {
@@ -47,7 +48,7 @@ describe("approval delegation", () => {
     expect(S.canApprove(po, user("usr-treasurer-lee")).ok).toBe(true);
     po.requestedBy = "usr-treasurer-lee"; expect(S.canApprove(po, user("usr-treasurer-lee")).ok).toBe(false);
     po.requestedBy = "usr-cfo-jane"; expect(S.canApprove(po, user("usr-treasurer-lee")).ok).toBe(false);
-    delete po.requestedBy; po.approval!.levels[0].approvals[0].userId = "usr-treasurer-lee";
+    po.requestedBy = "usr-clerk-pat"; po.approval!.levels[0].approvals[0].userId = "usr-treasurer-lee";
     expect(S.canApprove(po, user("usr-treasurer-lee")).why).toMatch(/already approved/);
   });
 
@@ -90,5 +91,52 @@ describe("resubmit after rejection", () => {
     expect((await app.inject({ method: "POST", url: `/approvals/${id}/resubmit`, headers: { cookie: pat }, payload: { note: "Again" } })).statusCode).toBe(409);
     S.decideApproval(id, true, "usr-controller-sam"); S.decideApproval(id, true, "usr-cfo-jane");
     expect(po.status).toBe("approved");
+  });
+
+  it("blocks the mandate principal on an agent order, directly and through a delegate", () => {
+    const po = agentPo(); expect(po.requestedBy).toBeUndefined(); expect(S.requesterOf(po)).toBe("usr-cfo-jane");
+    S.decideApproval(po.id, true, "usr-controller-sam");
+    expect(S.canApprove(po, user("usr-cfo-jane")).why).toMatch(/You raised this order/);
+    DLG.create(user("usr-cfo-jane"), "tnt-acme", { toUserId: "usr-treasurer-lee", startsOn: day(0), endsOn: day(5) });
+    expect(S.canApprove(po, user("usr-treasurer-lee")).ok).toBe(false);
+    expect(S.canApprove(po, user("usr-acme-amara")).ok).toBe(true);
+  });
+
+  it("lets an approver act at a higher role level only through a hand over, by design", () => {
+    const po = bigPo(); S.decideApproval(po.id, true, "usr-controller-sam");
+    expect(po.approval!.levels[1].role).toBe("client_admin");
+    expect(S.canApprove(po, user("usr-treasurer-lee")).ok).toBe(false);
+    DLG.create(user("usr-cfo-jane"), "tnt-acme", { toUserId: "usr-treasurer-lee", startsOn: day(0), endsOn: day(5) });
+    expect(S.canApprove(po, user("usr-treasurer-lee"))).toMatchObject({ ok: true, onBehalfOf: "usr-cfo-jane" });
+  });
+
+  it("ignores a delegation from another tenant", () => {
+    DLG.create(user("usr-globex-gina"), "tnt-globex", { toUserId: "usr-globex-gus", startsOn: day(0), endsOn: day(5) });
+    const po = bigPo(); S.decideApproval(po.id, true, "usr-controller-sam");
+    expect(S.canApprove(po, user("usr-globex-gus")).ok).toBe(false);
+    expect(DLG.activeFor("usr-globex-gus", "tnt-acme")).toEqual([]);
+  });
+
+  it("caps resubmits at 5 and keeps the rejecting level and delegate in the evidence", () => {
+    DLG.create(user("usr-cfo-jane"), "tnt-acme", { toUserId: "usr-treasurer-lee", startsOn: day(0), endsOn: day(5) });
+    const po = bigPo();
+    S.decideApproval(po.id, true, "usr-controller-sam"); S.decideApproval(po.id, false, "usr-treasurer-lee", "No");
+    S.resubmitPo(po.id, "usr-clerk-pat", "Fewer units");
+    expect(po.approval!.history![0]).toMatchObject({ rejectedLevel: 2, rejectedRole: "client_admin" });
+    for (let i = 0; i < 4; i++) { S.decideApproval(po.id, false, "usr-controller-sam", "No"); S.resubmitPo(po.id, "usr-clerk-pat", `Try ${i}`); }
+    S.decideApproval(po.id, false, "usr-controller-sam", "No");
+    expect(() => S.resubmitPo(po.id, "usr-clerk-pat", "Again")).toThrow(/too many/);
+    po.status = "paid";
+    const rej = S.disputeEvidence("tnt-acme", po.id).approvals.decisions.find((d: any) => d.decision === "rejected" && d.round === 1);
+    expect(rej).toMatchObject({ level: 2, role: "client_admin", userId: "usr-treasurer-lee", onBehalfOf: "usr-cfo-jane" });
+  });
+
+  it("lets a requester without flow.operate resubmit through the route", async () => {
+    const r = I.saveRole(user("usr-cfo-jane"), "tnt-acme", { name: "Read only", baseRole: "ap_clerk", permissions: ["workspace.read"] });
+    I.assignRole(user("usr-cfo-jane"), "usr-clerk-pat", r.id);
+    const po = bigPo(); S.decideApproval(po.id, false, "usr-controller-sam", "No");
+    const app = await buildApp(); const pat = await login(app, "usr-clerk-pat");
+    const res = await app.inject({ method: "POST", url: `/approvals/${po.id}/resubmit`, headers: { cookie: pat }, payload: { note: "Fewer units" } });
+    expect(res.statusCode).toBe(200); expect(res.json().status).toBe("pending_approval");
   });
 });
