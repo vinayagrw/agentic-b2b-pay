@@ -18,6 +18,11 @@ const bank = (o: any = {}) => ({ kind: "bank", bank: { holderName: "Northwind Co
 const ask = (app: any, cookie: string, supplierId = "sup-northwind", body: any = bank()) => app.inject({ method: "POST", url: `/suppliers/${supplierId}/bank-changes`, headers: { cookie }, payload: body });
 const callback = (app: any, cookie: string, id: string, outcome = "confirmed") => app.inject({ method: "POST", url: `/bank-changes/${id}/callback`, headers: { cookie }, payload: { outcome, spokeTo: "Dana at Northwind", note: "Called the number on file" } });
 const decide = (app: any, cookie: string, id: string, approve = true) => app.inject({ method: "POST", url: `/bank-changes/${id}/decide`, headers: { cookie }, payload: { approve, note: "Checked by phone" } });
+const signed = async (app: any, cookie: string, supplierId: string, address: string) => {
+  const n = (await app.inject({ method: "POST", url: `/suppliers/${supplierId}/bank-changes/wallet-nonce`, headers: { cookie }, payload: { address } })).json();
+  const sig = (await app.inject({ method: "POST", url: `/suppliers/${supplierId}/bank-changes/wallet-sandbox-sign`, headers: { cookie }, payload: { nonce: n.nonce } })).json();
+  return { nonce: n.nonce, signature: sig.signature, message: n.message };
+};
 const pay = async () => { const r = await S.runFlow("Need 50 sealed 6204 bearings"); return db.intents.find((i) => i.id === r.intentId) ?? db.intents.at(-1)!; };
 const northwind = () => db.suppliers.find((s) => s.id === "sup-northwind")!;
 
@@ -121,7 +126,7 @@ describe("supplier bank-detail change check", () => {
     const a = await ask(app, pat, "sup-northwind", { ...bank(), channelNote: `Please pay to ${IBAN} from now on` });
     const b = await ask(app, pat, "sup-contoso", { kind: "bank", bank: { holderName: "Contoso Logistics Ltd", bankName: "Chase", country: "US", routingNumber: ROUTING, accountNumber: ACCOUNT }, channel: "phone", channelNote: `Caller read out account ${ACCOUNT}` });
     const WALLET = "0x52908400098527886E0F7030069857D2E4169EE7";
-    const w = await ask(app, pat, "sup-fabrikam", { kind: "wallet", wallet: { address: WALLET }, channel: "portal", channelNote: "Asked in the portal" });
+    const w = await ask(app, pat, "sup-fabrikam", { kind: "wallet", wallet: { address: WALLET, proof: await signed(app, pat, "sup-fabrikam", WALLET).then(({ message, ...p }) => p) }, channel: "portal", channelNote: "Asked in the portal" });
     expect(a.json().new.last4).toBe(IBAN.slice(-4)); expect(b.json().new.last4).toBe(ACCOUNT.slice(-4)); expect(w.json().new.last4).toBe(WALLET.slice(-4));
     expect(w.json().signals.map((s: any) => s.code)).toContain("new_wallet");
     const id = a.json().id; const cb = await callback(app, sam, id); await stepUp(app, sam); const ok = await decide(app, sam, id);
@@ -218,5 +223,43 @@ describe("ERP vendor master changes go through the bank-change check", () => {
     const r = await ask(app, pat, "sup-northwind", { ...bank(), channel: "erp" });
     expect(r.statusCode).toBe(422);
     expect(sql.prepare("SELECT COUNT(*) AS n FROM bank_change_requests WHERE channel = 'erp'").get()).toEqual({ n: 0 });
+  });
+
+  describe("wallet change proof", () => {
+    const WALLET = "0x52908400098527886E0F7030069857D2E4169EE7"; const OTHER = "0x8617E340B3D01FA5F11F306F4090FD50E238070D";
+    const body = (proof?: any) => ({ kind: "wallet", wallet: { address: WALLET, ...(proof ? { proof } : {}) }, channel: "portal", channelNote: "Asked in the portal" });
+    it("refuses a wallet change with no proof", async () => {
+      const app = await buildApp(); const pat = await login(app, "usr-clerk-pat");
+      const r = await ask(app, pat, "sup-fabrikam", body()); expect(r.statusCode).toBe(422); expect(r.body).toContain("Sign with the new wallet");
+      expect(sql.prepare("SELECT COUNT(*) n FROM bank_change_requests").get()).toEqual({ n: 0 });
+    });
+    it("refuses a proof signed for another wallet, a bad signature, or a reused nonce", async () => {
+      const app = await buildApp(); const pat = await login(app, "usr-clerk-pat");
+      const other = await signed(app, pat, "sup-fabrikam", OTHER);
+      expect((await ask(app, pat, "sup-fabrikam", body({ nonce: other.nonce, signature: other.signature }))).statusCode).toBe(422);
+      const mine = await signed(app, pat, "sup-fabrikam", WALLET);
+      expect((await ask(app, pat, "sup-fabrikam", body({ nonce: mine.nonce, signature: other.signature }))).statusCode).toBe(422);
+      expect((await ask(app, pat, "sup-fabrikam", body({ nonce: mine.nonce, signature: "0x1234" }))).statusCode).toBe(422);
+      const ok = await ask(app, pat, "sup-fabrikam", body({ nonce: mine.nonce, signature: mine.signature })); expect(ok.statusCode).toBe(200);
+      expect(mine.message).not.toContain(WALLET); expect(ok.json().walletProof.mode).toBe("sandbox");
+      const sam = await login(app, "usr-controller-sam"); await decide(app, sam, ok.json().id, false);
+      expect((await ask(app, pat, "sup-fabrikam", body({ nonce: mine.nonce, signature: mine.signature }))).statusCode).toBe(422);
+    });
+    it("approves a wallet change with a valid proof, call-back and second person", async () => {
+      const app = await buildApp(); const pat = await login(app, "usr-clerk-pat"); const sam = await login(app, "usr-controller-sam");
+      const { message, ...proof } = await signed(app, pat, "sup-fabrikam", WALLET);
+      const r = await ask(app, pat, "sup-fabrikam", body(proof)); expect(r.statusCode).toBe(200);
+      expect(r.json().signals.find((s: any) => s.code === "new_wallet").detail).toContain("Checked against our records only, not on-chain");
+      await stepUp(app, sam); expect((await decide(app, sam, r.json().id)).statusCode).toBe(409);
+      await callback(app, sam, r.json().id); const ok = await decide(app, sam, r.json().id); expect(ok.statusCode).toBe(200);
+      expect(db.suppliers.find((x) => x.id === "sup-fabrikam")!.walletAddress).toBe(WALLET);
+    });
+    it("will not approve a stored wallet request that has no proof", async () => {
+      const app = await buildApp(); const pat = await login(app, "usr-clerk-pat"); const sam = await login(app, "usr-controller-sam");
+      const { message, ...proof } = await signed(app, pat, "sup-fabrikam", WALLET);
+      const r = await ask(app, pat, "sup-fabrikam", body(proof)); sql.prepare("UPDATE bank_change_requests SET wallet_proof = NULL").run();
+      await callback(app, sam, r.json().id); await stepUp(app, sam);
+      const d = await decide(app, sam, r.json().id); expect(d.statusCode).toBe(409); expect(d.body).toContain("no checked signature");
+    });
   });
 });

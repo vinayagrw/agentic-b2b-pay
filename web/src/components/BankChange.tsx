@@ -12,7 +12,7 @@ type Signal = { code: string; label: string; detail: string; tone: "bad" | "warn
 export type BankChange = { id: string; tenantId: string; supplierId: string; supplierName: string; kind: "bank" | "wallet"; status: "pending" | "approved" | "rejected"; old: Masked; new: Masked; signals: Signal[];
   channel: string; channelText: string; channelNote: string; requestedBy: string; requestedByName: string | null; createdAt: string; callbackPhone: string | null;
   callback: { by: string; byName: string | null; at: string; phone: string; outcome: "confirmed" | "denied" | "no_answer"; spokeTo: string; note: string } | null;
-  decidedBy: string | null; decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; holdUntil: string | null; coolingOff: boolean; paymentsHeld: boolean };
+  decidedBy: string | null; decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; holdUntil: string | null; coolingOff: boolean; paymentsHeld: boolean; walletProof?: { mode: "wallet" | "sandbox"; verifiedAt: string } | null };
 type ListResp = { requests: BankChange[]; settings: { coolingOffHours: number } | null };
 
 const when = (iso: string | null) => (iso ? `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC` : "");
@@ -38,12 +38,16 @@ export function BankChangeForm({ supplierId, onDone }: { supplierId: string; onD
   const { run, busy, error } = useAct();
   const [kind, setKind] = useState<"bank" | "wallet">("bank"); const [type, setType] = useState<"iban" | "local">("iban");
   const [b, setB] = useState({ holderName: "", bankName: "", country: "", iban: "", routingNumber: "", accountNumber: "" });
-  const [address, setAddress] = useState(""); const [channel, setChannel] = useState("email"); const [note, setNote] = useState("");
-  const ready = note.trim().length >= 3 && (kind === "wallet" ? /^0x[0-9a-fA-F]{40}$/.test(address) : !!b.holderName && !!b.bankName && b.country.length === 2 && (type === "iban" ? b.iban.length > 10 : !!b.routingNumber && !!b.accountNumber));
+  const [address, setAddress] = useState(""); const [proof, setProof] = useState<{ nonce: string; signature: string; address: string } | null>(null); const [channel, setChannel] = useState("email"); const [note, setNote] = useState("");
+  const ready = note.trim().length >= 3 && (kind === "wallet" ? /^0x[0-9a-fA-F]{40}$/.test(address) && proof?.address === address : !!b.holderName && !!b.bankName && b.country.length === 2 && (type === "iban" ? b.iban.length > 10 : !!b.routingNumber && !!b.accountNumber));
+  const sign = async () => {
+    const r = await run(async () => { const n = await api<{ nonce: string }>(`/suppliers/${supplierId}/bank-changes/wallet-nonce`, { address }); const s = await api<{ signature: string }>(`/suppliers/${supplierId}/bank-changes/wallet-sandbox-sign`, { nonce: n.nonce }); return { nonce: n.nonce, signature: s.signature, address }; });
+    if (r) setProof(r);
+  };
   const submit = async () => {
     const bank = type === "iban" ? { holderName: b.holderName, bankName: b.bankName, country: b.country, iban: b.iban } : { holderName: b.holderName, bankName: b.bankName, country: b.country, routingNumber: b.routingNumber, accountNumber: b.accountNumber };
-    const r = await run(() => api(`/suppliers/${supplierId}/bank-changes`, kind === "wallet" ? { kind, wallet: { address }, channel, channelNote: note } : { kind, bank, channel, channelNote: note }));
-    if (r) { setB({ holderName: "", bankName: "", country: "", iban: "", routingNumber: "", accountNumber: "" }); setAddress(""); setNote(""); onDone?.(); }
+    const r = await run(() => api(`/suppliers/${supplierId}/bank-changes`, kind === "wallet" ? { kind, wallet: { address, proof: proof ? { nonce: proof.nonce, signature: proof.signature } : undefined }, channel, channelNote: note } : { kind, bank, channel, channelNote: note }));
+    if (r) { setB({ holderName: "", bankName: "", country: "", iban: "", routingNumber: "", accountNumber: "" }); setAddress(""); setProof(null); setNote(""); onDone?.(); }
   };
   return <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3" data-testid="bank-change-form">
     <div className="flex flex-wrap items-center gap-2 text-[13px] font-medium"><Landmark size={14} aria-hidden />Change bank details</div>
@@ -56,7 +60,9 @@ export function BankChangeForm({ supplierId, onDone }: { supplierId: string; onD
       <div><Label>Account type</Label><Select value={type} onChange={(e) => setType(e.target.value as "iban" | "local")}><option value="iban">IBAN</option><option value="local">Routing and account number</option></Select></div>
       {type === "iban" ? <div className="sm:col-span-2"><Label>IBAN</Label><Input autoComplete="off" value={b.iban} onChange={(e) => { const iban = e.target.value.toUpperCase(); setB({ ...b, iban, country: /^[A-Z]{2}/.test(iban) ? iban.slice(0, 2) : b.country }); }} /></div>
         : <><div><Label>Routing number</Label><Input inputMode="numeric" autoComplete="off" value={b.routingNumber} onChange={(e) => setB({ ...b, routingNumber: e.target.value.trim() })} /></div><div><Label>Account number</Label><Input inputMode="numeric" autoComplete="off" value={b.accountNumber} onChange={(e) => setB({ ...b, accountNumber: e.target.value.trim() })} /></div></>}
-    </div> : <div><Label>New wallet address</Label><Input placeholder="0x..." autoComplete="off" value={address} onChange={(e) => setAddress(e.target.value.trim())} /></div>}
+    </div> : <div className="flex flex-col gap-2"><div><Label>New wallet address</Label><Input placeholder="0x..." autoComplete="off" value={address} onChange={(e) => { setAddress(e.target.value.trim()); setProof(null); }} /></div>
+      <div className="flex flex-wrap items-center gap-2"><Button size="sm" disabled={busy || !/^0x[0-9a-fA-F]{40}$/.test(address) || proof?.address === address} onClick={sign}>Sign with the new wallet (simulated)</Button>
+        <Muted>{proof?.address === address ? "Signed. The server checks this signature before anyone can approve." : "The new wallet must sign a one-time message from us. In this sandbox the server signs for it. No funds move."}</Muted></div></div>}
     <div className="grid gap-2 sm:grid-cols-[200px_1fr]">
       <div><Label>How did the request arrive</Label><Select value={channel} onChange={(e) => setChannel(e.target.value)}><option value="email">Email</option><option value="phone">Phone</option><option value="portal">Supplier portal</option><option value="other">Other</option></Select></div>
       <div><Label>Describe how it was requested</Label><Textarea className="min-h-12 font-sans text-[13px]" placeholder="Who asked, when, and what they said. Do not paste account numbers here." value={note} onChange={(e) => setNote(e.target.value)} /></div>
@@ -91,6 +97,7 @@ export function BankChangeCard({ r }: { r: BankChange }) {
         <div className="flex flex-wrap gap-1">{r.signals.map((s) => <Badge key={s.code} v={s.label} tone={s.tone} />)}</div>
         <ul className="mt-1.5 flex flex-col gap-0.5 text-xs text-muted">{r.signals.map((s) => <li key={s.code}>{s.detail}</li>)}</ul>
       </div>
+      {r.kind === "wallet" && <div className="rounded-lg bg-subtle p-2.5 text-xs" data-testid="wallet-proof"><span className="font-medium">Wallet proof.</span> {r.walletProof ? `Signed by the new wallet${r.walletProof.mode === "sandbox" ? " (simulated in sandbox)" : ""}, checked ${when(r.walletProof.verifiedAt)}.` : "No signed proof. This request cannot be approved."}</div>}
       <div className="rounded-lg bg-subtle p-2.5 text-xs"><span className="font-medium">How it was requested.</span> {r.channelText}. {r.channelNote || "No description given."}</div>
       {r.paymentsHeld && <div className="rounded-lg border border-bad/30 bg-bad/10 p-2.5 text-xs" role="status">{pending ? "Payments to this supplier are held until this request is approved or rejected." : `Cooling-off time. Payments to this supplier are held until ${when(r.holdUntil)}.`}</div>}
       <div className="rounded-lg border border-border p-2.5">

@@ -15,6 +15,8 @@ import type { Supplier } from "./modules/store.js";
 import * as P from "./platform.js";
 import * as I from "./iam.js";
 import * as SU from "./stepup.js";
+import { recoverMessageAddress, keccak256, toHex } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 
 export class BankChangeError extends P.AuthError {}
 export type Kind = "bank" | "wallet";
@@ -22,7 +24,7 @@ export type Signal = { code: "different_country" | "different_bank" | "large_pay
 export type Masked = { kind: Kind; holderName: string | null; bankName: string | null; country: string | null; accountType: "IBAN" | "Account" | "Wallet" | "On file"; last4: string | null };
 export type Callback = { by: string; at: string; phone: string; outcome: "confirmed" | "denied" | "no_answer"; spokeTo: string; note: string };
 type Full = { kind: Kind; holderName?: string; bankName?: string; country?: string; iban?: string; routingNumber?: string; accountNumber?: string; address?: string; ref?: string };
-type Row = { id: string; tenant_id: string; supplier_id: string; kind: Kind; status: "pending" | "approved" | "rejected"; old_enc: string | null; new_enc: string; old_masked: string; new_masked: string; account_hash: string; signals: string; channel: string; channel_note: string; requested_by: string; callback: string | null; decided_by: string | null; decided_at: string | null; decision_note: string | null; hold_until: string | null; created_at: string };
+type Row = { id: string; tenant_id: string; supplier_id: string; kind: Kind; status: "pending" | "approved" | "rejected"; old_enc: string | null; new_enc: string; old_masked: string; new_masked: string; account_hash: string; signals: string; channel: string; channel_note: string; requested_by: string; callback: string | null; decided_by: string | null; decided_at: string | null; decision_note: string | null; wallet_proof?: string | null; hold_until: string | null; created_at: string };
 
 const DAY = 864e5;
 const now = () => new Date().toISOString();
@@ -45,7 +47,7 @@ const mask = (f: Full): Masked => f.kind === "wallet"
 // Input
 
 const BankInput = z.object({ holderName: z.string().trim().min(2).max(80), bankName: z.string().trim().min(2).max(80), country: z.string().trim().length(2), iban: z.string().optional(), routingNumber: z.string().optional(), accountNumber: z.string().optional() });
-export const RequestInput = z.object({ kind: z.enum(["bank", "wallet"]).default("bank"), bank: BankInput.optional(), wallet: z.object({ address: z.string().trim().regex(/^0x[0-9a-fA-F]{40}$/, "Enter a 0x wallet address") }).optional(),
+export const RequestInput = z.object({ kind: z.enum(["bank", "wallet"]).default("bank"), bank: BankInput.optional(), wallet: z.object({ address: z.string().trim().regex(/^0x[0-9a-fA-F]{40}$/, "Enter a 0x wallet address"), proof: z.object({ nonce: z.string().max(80), signature: z.string().regex(/^0x[0-9a-fA-F]+$/).max(200) }).optional() }).optional(),
   channel: z.enum(["email", "portal", "phone", "other"]), channelNote: z.string().trim().max(500).default("") });
 function fullOf(x: z.infer<typeof RequestInput>): Full {
   if (x.kind === "wallet") { if (!x.wallet) throw new BankChangeError(422, "Enter the new wallet address"); return { kind: "wallet", address: x.wallet.address }; }
@@ -74,6 +76,7 @@ export function view(r: Row) {
   return { id: r.id, tenantId: r.tenant_id, supplierId: r.supplier_id, supplierName: sup?.name ?? r.supplier_id, kind: r.kind, status: r.status, old: JSON.parse(r.old_masked) as Masked, new: JSON.parse(r.new_masked) as Masked,
     signals: JSON.parse(r.signals) as Signal[], channel: r.channel, channelText: CHANNEL_TEXT[r.channel] ?? r.channel, channelNote: r.channel_note, requestedBy: r.requested_by, requestedByName: nameOf(r.requested_by), createdAt: r.created_at,
     callbackPhone: sup?.contactPhone ?? null, callback: cb ? { ...cb, byName: nameOf(cb.by) } : null, decidedBy: r.decided_by, decidedByName: nameOf(r.decided_by), decidedAt: r.decided_at, decisionNote: r.decision_note,
+    walletProof: r.wallet_proof ? (JSON.parse(r.wallet_proof) as WalletProof) : null,
     holdUntil: r.hold_until, coolingOff: cooling, paymentsHeld: r.status === "pending" || cooling };
 }
 export type BankChangeView = ReturnType<typeof view>;
@@ -133,7 +136,7 @@ function signalsFor(u: P.User, tenantId: string, sup: Supplier, f: Full, old: Pa
     const here = dup.filter((d) => d.tenantId === tenantId).map((d) => db.suppliers.find((s) => s.id === d.supplierId)?.name ?? d.supplierId);
     out.push({ code: "duplicate_account", label: "Account used by another supplier", detail: here.length ? `The same account is on ${here.join(", ")}` : "The same account is on another supplier on the platform", tone: "bad" });
   }
-  if (f.kind === "wallet" && !dup.length) out.push({ code: "new_wallet", label: "Wallet never used before", detail: "No supplier on the platform has been paid to this wallet before", tone: "warn" });
+  if (f.kind === "wallet" && !dup.length) out.push({ code: "new_wallet", label: "Wallet never used before (our records only, not on-chain)", detail: "No supplier on the platform has been paid to this wallet before. Checked against our records only, not on-chain.", tone: "warn" });
   const phoneAt = db.evidence.filter((e) => e.subjectId === sup.id && e.event === PHONE_EVENT).map((e) => Date.parse(e.createdAt)).filter((t) => at - t <= 30 * DAY).sort().at(-1);
   if (phoneAt) out.push({ code: "phone_changed", label: "Call-back phone changed lately", detail: `The call-back phone on the supplier record was changed on ${new Date(phoneAt).toISOString().slice(0, 10)}. Check the number another way before you call.`, tone: "bad" });
   out.push({ code: "channel", label: CHANNEL_TEXT[channel] ?? channel, detail: channel === "portal" ? "The supplier asked in the portal" : "Requests by email or phone are a common fraud route. Call back on the number on file.", tone: channel === "portal" ? "neutral" : "warn" });
@@ -172,22 +175,64 @@ export function requestFromErp(u: P.User, tenantId: string, raw: any) {
 }
 
 /** The maker asks for a change. Nothing is applied here. */
-export function request(u: P.User, tenantId: string, supplierId: string, raw: unknown, opts: { erp?: boolean } = {}) {
+export function request(u: P.User, tenantId: string, supplierId: string, raw: unknown, opts: { erp?: boolean; proof?: WalletProof | null } = {}) {
   if (!opts.erp) I.requirePermission(u, "suppliers.payee_change", { tenantId });
   if (!isPerson(u)) throw new BankChangeError(403, "Only a signed-in person can ask for a bank detail change. Agent keys and API keys cannot.");
   const sup = supplierIn(tenantId, supplierId); const parsed = RequestInput.parse(raw); const x = { ...parsed, channel: opts.erp ? "erp" : parsed.channel }; const f = fullOf(parsed);
   // Without a phone on file the call-back can never happen, so the request would hold payments with no way to approve it.
   if (!sup.contactPhone) throw new BankChangeError(409, "There is no call-back phone on the supplier record. An admin must add one on the supplier page before a change can be asked for.");
   if (sql.prepare("SELECT 1 FROM bank_change_requests WHERE supplier_id = ? AND kind = ? AND status = 'pending'").get(sup.id, f.kind)) throw new BankChangeError(409, "A change for this supplier is already waiting for a check");
+  if (f.kind === "wallet" && !opts.proof) throw new BankChangeError(422, "Sign with the new wallet first. A wallet change needs a signed proof from the new wallet.");
   const old = current(sup, f.kind); const hash = accountHash(f);
   if (old && old.hash === hash) throw new BankChangeError(422, "These are the details already on file");
   const signals = signalsFor(u, tenantId, sup, f, old, x.channel); const m = mask(f);
   const id = `bcr-${crypto.randomUUID().slice(0, 10)}`;
   const emptyOld: Masked = { kind: f.kind, holderName: null, bankName: null, country: null, accountType: f.kind === "wallet" ? "Wallet" : "On file", last4: null };
-  sql.prepare("INSERT INTO bank_change_requests (id, tenant_id, supplier_id, kind, status, old_enc, new_enc, old_masked, new_masked, account_hash, signals, channel, channel_note, requested_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .run(id, tenantId, sup.id, f.kind, "pending", old?.enc ?? null, I.seal(JSON.stringify(f)), JSON.stringify(old?.masked ?? emptyOld), JSON.stringify(m), hash, JSON.stringify(signals), x.channel, scrub(x.channelNote), u.id, now());
-  P.audit(u.id, "supplier", sup.id, "bank_change.requested", { request: id, kind: f.kind, newLast4: m.last4, newCountry: m.country, newBank: m.bankName, channel: x.channel, signals: signals.map((s) => s.code) });
+  sql.prepare("INSERT INTO bank_change_requests (id, tenant_id, supplier_id, kind, status, old_enc, new_enc, old_masked, new_masked, account_hash, signals, channel, channel_note, requested_by, created_at, wallet_proof) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id, tenantId, sup.id, f.kind, "pending", old?.enc ?? null, I.seal(JSON.stringify(f)), JSON.stringify(old?.masked ?? emptyOld), JSON.stringify(m), hash, JSON.stringify(signals), x.channel, scrub(x.channelNote), u.id, now(), f.kind === "wallet" ? JSON.stringify(opts.proof) : null);
+  P.audit(u.id, "supplier", sup.id, "bank_change.requested", { request: id, kind: f.kind, newLast4: m.last4, newCountry: m.country, newBank: m.bankName, channel: x.channel, signals: signals.map((s) => s.code), walletProof: f.kind === "wallet" ? opts.proof?.mode : undefined });
   return detail(tenantId, id);
+}
+
+// Wallet proof. The new wallet signs a one-time message from the server, so a fraudster who only knows an address cannot ask for it.
+// Sandbox only: no real wallet is connected, so "Sign with the new wallet (simulated)" signs with a key derived for that address on the server.
+// The message holds only the last 4 characters of the address. The nonce is bound to the tenant, supplier and address on the server.
+export type WalletProof = { mode: "wallet" | "sandbox"; nonce: string; verifiedAt: string };
+type Nonce = { tenantId: string; supplierId: string; addr: string; message: string; exp: number };
+const nonces = new Map<string, Nonce>();
+const NONCE_TTL = 10 * 60_000;
+const sandboxAccount = (address: string) => privateKeyToAccount(keccak256(toHex(crypto.createHmac("sha256", hashKey()).update(`sandbox-wallet:${address.toLowerCase()}`).digest("hex"))));
+const addrOk = (a: unknown): a is string => typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.test(a);
+export function walletNonce(u: P.User, tenantId: string, supplierId: string, raw: any) {
+  I.requirePermission(u, "suppliers.payee_change", { tenantId });
+  const sup = supplierIn(tenantId, supplierId); const address = raw?.address;
+  if (!addrOk(address)) throw new BankChangeError(422, "Enter a 0x wallet address");
+  const nonce = crypto.randomBytes(16).toString("hex"); const exp = Date.now() + NONCE_TTL;
+  for (const [k, v] of nonces) if (v.exp < Date.now()) nonces.delete(k);
+  const message = `Agentic B2B Pay wallet check\nSupplier: ${sup.id}\nNew wallet ending: ${last4(address)}\nNonce: ${nonce}\nSandbox only. No funds move.`;
+  nonces.set(nonce, { tenantId, supplierId: sup.id, addr: address.toLowerCase(), message, exp });
+  return { nonce, message, expiresAt: new Date(exp).toISOString() };
+}
+/** Sandbox stand-in for a wallet app. Signs the server message with the key derived for that address. */
+export async function sandboxSign(u: P.User, tenantId: string, supplierId: string, raw: any) {
+  I.requirePermission(u, "suppliers.payee_change", { tenantId });
+  const n = nonces.get(String(raw?.nonce ?? ""));
+  if (!n || n.exp < Date.now() || n.tenantId !== tenantId || n.supplierId !== supplierId) throw new BankChangeError(422, "That sign request has expired. Start again.");
+  return { signature: await sandboxAccount(n.addr).signMessage({ message: n.message }), simulated: true };
+}
+/** Checks the proof and uses up the nonce. Throws when it is missing, expired, for another address, or signed by another key. */
+export async function verifyWalletProof(tenantId: string, supplierId: string, raw: any): Promise<WalletProof | null> {
+  if (raw?.kind !== "wallet") return null;
+  const address = raw?.wallet?.address; const proof = raw?.wallet?.proof;
+  if (!addrOk(address)) return null; // the normal input check gives the message
+  if (!proof?.nonce || !proof?.signature) throw new BankChangeError(422, "Sign with the new wallet first. A wallet change needs a signed proof from the new wallet.");
+  const n = nonces.get(String(proof.nonce));
+  if (!n || n.exp < Date.now() || n.tenantId !== tenantId || n.supplierId !== supplierId || n.addr !== address.toLowerCase()) throw new BankChangeError(422, "The wallet proof has expired or is for another wallet. Sign again.");
+  let signer = ""; try { signer = (await recoverMessageAddress({ message: n.message, signature: proof.signature })).toLowerCase(); } catch { signer = ""; }
+  const mode = signer === n.addr ? "wallet" : signer && signer === sandboxAccount(n.addr).address.toLowerCase() ? "sandbox" : null;
+  if (!mode) throw new BankChangeError(422, "The wallet proof is not signed by the new wallet");
+  nonces.delete(proof.nonce);
+  return { mode, nonce: proof.nonce, verifiedAt: now() };
 }
 
 const checker = (u: P.User, r: Row, what: string) => {
@@ -221,12 +266,14 @@ export function decide(u: P.User, tenantId: string, sessionId: string | null, id
   const cb = r.callback ? (JSON.parse(r.callback) as Callback) : null;
   if (cb?.outcome !== "confirmed") throw new BankChangeError(409, "Record a confirmed call-back to the phone number on the supplier record first");
   const f = JSON.parse(I.unseal(r.new_enc)) as Full; const m = mask(f);
+  const proof = r.wallet_proof ? (JSON.parse(r.wallet_proof) as WalletProof) : null;
+  if (f.kind === "wallet" && !proof?.verifiedAt) throw new BankChangeError(409, "This wallet change has no checked signature from the new wallet. Reject it and ask again.");
   const addRails = (rails: Supplier["acceptedRails"]) => { sup.acceptedRails = [...new Set([...sup.acceptedRails, ...rails])]; };
   if (f.kind === "wallet") {
     // The pay flow reads the wallet from the supplier record, so the approved address is stored there in full.
     sup.walletAddress = f.address!; addRails(["circle_usdc", "onchain_usdc"]);
-    // No signed proof here. An empty verifiedAt tells the supplier page this wallet was checked by call-back, not by signature.
-    if (sup.onboarding) sup.onboarding.wallet = { address: f.address!, message: "", signature: "", verifiedAt: "" };
+    // The signed message is not copied here. verifiedAt records when the new wallet's signature was checked.
+    if (sup.onboarding) sup.onboarding.wallet = { address: f.address!, message: "", signature: "", verifiedAt: proof!.verifiedAt };
   } else {
     sup.bankDetailsRef = `bank-chg-${r.id}`; addRails(["stripe_ach", "stripe_card"]);
     if (sup.onboarding?.bank) sup.onboarding.bank = { tokenId: sup.bankDetailsRef, last4: m.last4 ?? "", bankName: m.bankName, routingNumber: "", holderName: m.holderName ?? sup.name };
