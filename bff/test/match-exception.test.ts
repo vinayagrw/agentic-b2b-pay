@@ -69,8 +69,7 @@ describe("match exception path", () => {
     const c = await app.inject({ method: "POST", url: `/invoices/${inv.id}/credit-notes`, headers: { cookie: sam }, payload: { amount: 84, reason: "Price over PO" } });
     expect(c.statusCode).toBe(200);
     expect(inv.amount).toBeCloseTo(before - 84); expect(inv.originalAmount).toBe(before); expect(inv.creditNotes?.[0]).toMatchObject({ amount: 84, reason: "Price over PO", by: "usr-controller-sam" });
-    expect(db.journals.length).toBe(jn + 1);
-    const j: any = db.journals[db.journals.length - 1]; expect(j.ref).toBe(inv.id);
+    expect(db.journals.length).toBe(jn); expect(inv.creditNotes?.[0].journalId).toBeNull();
     expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/credit-notes`, headers: { cookie: sam }, payload: { amount: inv.amount + 0.5, reason: "x" } })).statusCode).toBe(422);
   });
   it("resubmit makes a corrected invoice that supersedes the old one", async () => {
@@ -84,5 +83,50 @@ describe("match exception path", () => {
     expect(S.matchInvoice(n.id).status).toBe("matched");
     expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/override`, headers: { cookie: await login(app, "usr-controller-sam") }, payload: { reason: "x" } })).statusCode).toBe(409);
     expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/resubmit`, headers: { cookie: pat }, payload: { text } })).statusCode).toBe(409);
+  });
+
+  it("credit on an accrued invoice posts a journal, re-signs the cart and the override books the lower amount", async () => {
+    const app = await buildApp(); const pat = await login(app, "usr-clerk-pat"); const sam = await login(app, "usr-controller-sam");
+    const { inv } = await exceptionInvoice(app, pat); const before = inv.amount;
+    expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/credit-notes`, headers: { cookie: sam }, payload: { amount: 84, reason: "Price over PO" } })).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/override`, headers: { cookie: sam }, payload: { reason: "Agreed" } })).statusCode).toBe(200);
+    expect(inv.accrual!.amount).toBeCloseTo(before - 84);
+    const jn = db.journals.length;
+    expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/credit-notes`, headers: { cookie: sam }, payload: { amount: 10, reason: "Damaged" } })).statusCode).toBe(200);
+    expect(db.journals.length).toBe(jn + 1); expect((db.journals.at(-1) as any).ref).toBe(inv.id);
+  });
+  it("credit is blocked for the submitter and while a payment is in flight", async () => {
+    const app = await buildApp(); const amara = await login(app, "usr-acme-amara"); const sam = await login(app, "usr-controller-sam");
+    const { inv } = await exceptionInvoice(app, amara);
+    expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/credit-notes`, headers: { cookie: amara }, payload: { amount: 5, reason: "x" } })).statusCode).toBe(403);
+    db.intents.push({ id: "pi-fake", invoiceId: inv.id, status: "pending" } as any);
+    expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/credit-notes`, headers: { cookie: sam }, payload: { amount: 5, reason: "x" } })).statusCode).toBe(409);
+  });
+  it("credit above the step-up threshold needs a fresh code", async () => {
+    process.env.STEP_UP_THRESHOLD_USD = "50";
+    const app = await buildApp(); const pat = await login(app, "usr-clerk-pat"); const sam = await login(app, "usr-controller-sam");
+    const { inv } = await exceptionInvoice(app, pat);
+    const r = await app.inject({ method: "POST", url: `/invoices/${inv.id}/credit-notes`, headers: { cookie: sam }, payload: { amount: 84, reason: "x" } });
+    expect(r.statusCode).toBe(403); expect(inv.creditNotes).toBeUndefined();
+  });
+  it("override fails closed when the submitter is unknown", async () => {
+    const app = await buildApp(); const pat = await login(app, "usr-clerk-pat"); const sam = await login(app, "usr-controller-sam");
+    const { inv } = await exceptionInvoice(app, pat); delete inv.submittedBy;
+    expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/override`, headers: { cookie: sam }, payload: { reason: "ok" } })).statusCode).toBe(409);
+  });
+  it("resubmit with the same number and total is not a duplicate of the replaced invoice", async () => {
+    const app = await buildApp(); const pat = await login(app, "usr-clerk-pat");
+    const { p, inv } = await exceptionInvoice(app, pat);
+    const text = S.invoiceText(p.id, { priceBumpPct: 10 });
+    const r = await app.inject({ method: "POST", url: `/invoices/${inv.id}/resubmit`, headers: { cookie: pat }, payload: { text } });
+    expect(r.statusCode).toBe(200);
+  });
+  it("release needs an active hold and the holder needs approve rights to release", async () => {
+    const app = await buildApp(); const pat = await login(app, "usr-clerk-pat"); const sam = await login(app, "usr-controller-sam");
+    const { inv } = await exceptionInvoice(app, pat);
+    expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/hold`, headers: { cookie: sam }, payload: { release: true, reason: "x" } })).statusCode).toBe(409);
+    expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/hold`, headers: { cookie: pat }, payload: { reason: "check" } })).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/hold`, headers: { cookie: pat }, payload: { release: true, reason: "done" } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "POST", url: `/invoices/${inv.id}/hold`, headers: { cookie: sam }, payload: { release: true, reason: "done" } })).statusCode).toBe(200);
   });
 });

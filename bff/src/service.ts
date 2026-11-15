@@ -296,7 +296,7 @@ export async function submitInvoice(poId: string, text: string, opts: { invoiceD
   const r = await readInvoice(text);
   const invoiceDate = opts.invoiceDate ?? FX.today();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) || invoiceDate > FX.today()) throw new HttpError(422, "invoiceDate must be YYYY-MM-DD and not in the future");
-  const riskSignals = duplicateCheck(tenantOf(po), po.supplierId, r.value.invoiceNumber, r.value.total, invoiceDate, po.currency ?? "USD");
+  const riskSignals = duplicateCheck(tenantOf(po), po.supplierId, r.value.invoiceNumber, r.value.total, invoiceDate, po.currency ?? "USD", opts.supersedes);
   const inv = { id: nextId("inv"), invoiceDate, tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? sup.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: paidByCard(tenantOf(po), poId), injection: r.injection, ...(riskSignals.length ? { riskSignals } : {}), ...(sup.terms ? { terms: sup.terms } : {}), ...(opts.submittedBy ? { submittedBy: opts.submittedBy } : {}), ...(opts.supersedes ? { supersedes: opts.supersedes } : {}) };
   if (opts.supersedes) { const old = must(db.invoices.find((i) => i.id === opts.supersedes), "invoice"); if (old.supersededBy) throw new HttpError(409, `Invoice ${old.id} was already replaced by ${old.supersededBy}`); old.supersededBy = inv.id; }
   db.invoices.push(inv); po.status = po.status === "received" ? "invoiced" : po.status;
@@ -310,8 +310,8 @@ export async function submitInvoice(poId: string, text: string, opts: { invoiceD
 const normNo = (n: string) => String(n ?? "").replace(/\s+/g, "").toUpperCase();
 const DAY = 86_400_000;
 /** Blocks an exact repeat (same supplier, invoice number, amount and currency in the tenant). Check and push run in one sync block after the model await, so concurrent submits cannot both pass. and returns near-duplicate risk signals. */
-export function duplicateCheck(tenantId: string, supplierId: string, number: string, amount: number, invoiceDate: string, currency = "USD") {
-  const same = db.invoices.filter((i) => tenantOf(i) === tenantId && i.supplierId === supplierId && (i.currency ?? "USD") === currency && Math.abs(i.amount - amount) < 0.005);
+export function duplicateCheck(tenantId: string, supplierId: string, number: string, amount: number, invoiceDate: string, currency = "USD", replacing?: string) {
+  const same = db.invoices.filter((i) => i.id !== replacing && !i.supersededBy && tenantOf(i) === tenantId && i.supplierId === supplierId && (i.currency ?? "USD") === currency && Math.abs(i.amount - amount) < 0.005);
   const dup = same.find((i) => normNo(i.number) === normNo(number));
   if (dup) throw new HttpError(409, `This invoice was already sent as ${dup.id}. Same supplier, invoice number and amount.`, { duplicateOf: dup.id });
   const at = Date.parse(invoiceDate);
@@ -375,6 +375,7 @@ const openInvoice = (invId: string) => {
 /** Puts an invoice on hold, or releases it. A held invoice cannot be paid. */
 export function holdInvoice(invId: string, userId: string, reason: unknown, release = false) {
   const inv = openInvoice(invId); const r = needReason(reason);
+  if (release && !inv.hold?.on) throw new HttpError(409, "Invoice is not on hold");
   inv.hold = { on: !release, reason: r, by: userId, at: now() };
   ev("invoice", inv.id, release ? "invoice.hold_released" : "invoice.held", { by: userId, reason: r });
   save(); return inv;
@@ -389,7 +390,8 @@ export function invoiceUsd(inv: import("./modules/store.js").Invoice) {
 export function overrideMatch(invId: string, userId: string, reason: unknown) {
   const inv = openInvoice(invId); const r = needReason(reason);
   if (inv.matchStatus !== "exception") throw new HttpError(409, `Invoice match is ${inv.matchStatus}, not an exception`);
-  if (inv.submittedBy && inv.submittedBy === userId) throw new HttpError(403, "You sent this invoice. Someone else must accept the exception.");
+  if (!inv.submittedBy) throw new HttpError(409, "We do not know who sent this invoice, so the exception cannot be accepted. Send a corrected invoice instead.");
+  if (inv.submittedBy === userId) throw new HttpError(403, "You sent this invoice. Someone else must accept the exception.");
   const po = must(db.pos.find((p) => p.id === inv.poId), "po");
   const { ent, ar, ur } = invoiceRates(inv, po);
   inv.matchStatus = "matched"; inv.override = { by: userId, reason: r, at: now() };
@@ -403,16 +405,24 @@ export function creditNote(invId: string, userId: string, amount: unknown, reaso
   const a = Math.round(Number(amount) * 100) / 100;
   if (!Number.isFinite(a) || a <= 0) throw new HttpError(422, "Credit amount must be more than 0");
   if (a > inv.amount + 0.005) throw new HttpError(422, `Credit ${a} is more than the ${inv.amount} still owed on this invoice`);
+  if (inv.submittedBy === userId) throw new HttpError(403, "You sent this invoice. Someone else must add the credit note.");
+  const open = db.intents.find((p) => p.invoiceId === inv.id && (p.status === "submitted" || p.status === "pending"));
+  if (open) throw new HttpError(409, `Payment ${open.id} for this invoice is already in flight`);
   const po = must(db.pos.find((p) => p.id === inv.poId), "po");
-  const ent = invoiceEntity(inv, po);
-  const rate = inv.accrual?.rate ?? ((inv.currency ?? "USD") === ent.currency ? 1 : invoiceRates(inv, po).ar.rate);
-  const fn = FX.convert(a, rate);
-  const o = (inv.currency ?? "USD") !== ent.currency ? { origCurrency: inv.currency, origAmount: a } : {};
-  const j = makeJournal(nextId("jnl"), `Credit note on invoice ${inv.number}`, inv.id, [{ account: "2000 Accounts payable", debit: fn, ...o }, { account: po.category === "logistics" ? "5100 Freight expense" : "1300 Inventory", credit: fn, ...o }], ent.currency);
-  db.journals.push(ej(tenantOf(po), ent.id, j));
+  let journalId: string | null = null;
+  // Only an accrued invoice has AP to reverse. Before the match books it, lowering the amount is enough.
+  if (inv.erpApproval === "approved") {
+    const ent = invoiceEntity(inv, po);
+    const rate = inv.accrual?.rate ?? ((inv.currency ?? "USD") === ent.currency ? 1 : invoiceRates(inv, po).ar.rate);
+    const fn = FX.convert(a, rate);
+    const o = (inv.currency ?? "USD") !== ent.currency ? { origCurrency: inv.currency, origAmount: a } : {};
+    const j = makeJournal(nextId("jnl"), `Credit note on invoice ${inv.number}`, inv.id, [{ account: "2000 Accounts payable", debit: fn, ...o }, { account: po.category === "logistics" ? "5100 Freight expense" : "1300 Inventory", credit: fn, ...o }], ent.currency);
+    db.journals.push(ej(tenantOf(po), ent.id, j)); journalId = j.id;
+  }
   inv.originalAmount ??= inv.amount;
   inv.amount = Math.round((inv.amount - a) * 100) / 100;
-  const cn = { id: nextId("cn"), amount: a, reason: r, by: userId, at: now(), journalId: j.id };
+  if (inv.erpApproval === "approved") { const pair = AP2.currentPair(po.id); if (pair.intent) signCartFor(po, pair.intent, AP2.normLines(inv.extract.lines), inv.amount, supplier(po.supplierId)); }
+  const cn = { id: nextId("cn"), amount: a, reason: r, by: userId, at: now(), journalId };
   (inv.creditNotes ??= []).push(cn);
   ev("invoice", inv.id, "invoice.credit_note", cn);
   save(); return inv;
