@@ -130,3 +130,36 @@ expect(text).not.toContain("4242 4242 4242 4242"); expect(text).not.toContain("4
     expect(JSON.stringify(S.disputeEvidence("tnt-acme", po.id))).not.toContain("globex only");
   });
 });
+
+describe("dispute evidence leftovers", () => {
+  it("keeps superseded mandates as a history list", async () => {
+    const { po } = await paidByCard();
+    const old = AP2.currentPair(po.id).cart!;
+    const { type, id, createdAt, ...body } = old.body as any; AP2.signCart(body);
+    const e = S.disputeEvidence("tnt-acme", po.id);
+    expect(e.mandates.cart!.id).not.toBe(old.id);
+    expect(e.mandates.history.map((m: any) => m.id)).toContain(old.id);
+    expect(e.mandates.history.find((m: any) => m.id === old.id)!.supersededAt).toBeTruthy();
+  });
+
+  it("lists paid orders only, per tenant", async () => {
+    const { po } = await paidByCard();
+    const unpaid = S.createPo((await S.draftPo("Need 50 sealed 6204 bearings")).value);
+    const ids = S.evidenceOrders("tnt-acme").map((o) => o.id);
+    expect(ids).toContain(po.id); expect(ids).not.toContain(unpaid.id);
+    expect(S.evidenceOrders("tnt-acme").find((o) => o.id === po.id)!.method).toBe("card");
+    expect(S.evidenceOrders("tnt-globex").map((o) => o.id)).not.toContain(po.id);
+    const app = await buildApp();
+    const r = await app.inject({ url: "/evidence-orders", headers: { cookie: await login(app, "usr-clerk-pat") } });
+    expect(r.statusCode).toBe(200); expect(r.json().map((o: any) => o.id)).toContain(po.id);
+  });
+
+  it("copilot tool disputeEvidence sums up a paid order and is tenant scoped", async () => {
+    const { po } = await paidByCard();
+    const CP = await import("../src/copilot.js");
+    const r = CP.runTool({ user: pat(), scope: "tnt-acme", prefix: "/app" }, "disputeEvidence", { poId: po.id });
+    expect(r.error).toBeFalsy(); expect(r.rows[0]).toMatchObject({ poId: po.id, method: "card", chainValid: true }); expect(r.summary).toContain(po.id);
+    const g = CP.runTool({ user: P.getUser("usr-globex-gina")!, scope: "tnt-globex", prefix: "/app" }, "disputeEvidence", { poId: po.id });
+    expect(g.error).toMatch(/not found|permission|not allowed/i); expect(g.rows.length).toBe(0);
+  });
+});

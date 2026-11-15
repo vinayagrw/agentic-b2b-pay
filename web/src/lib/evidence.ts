@@ -6,7 +6,7 @@ export type EvEvent = { seq: number; at: string; subjectType: string; subjectId:
 export type Evidence = {
   generatedAt: string; tenantId: string;
   order: { id: string; status: string; supplier: string; total: number; currency: string; createdAt: string; erpRef: string | null; policy: { outcome: string; reasons: string[] } };
-  mandates: { intent: EvMandate | null; cart: EvMandate | null };
+  mandates: { intent: EvMandate | null; cart: EvMandate | null; history?: (EvMandate & { supersededAt: string | null })[] };
   agent: { id: string; name: string; kyaStatus: string; status: string; keyFingerprint: string | null; authority: { id: string; principal: string; perTxnMax: number; approvalThreshold: number } | null } | null;
   approvals: { rule: string | null; needed: boolean; decisions: { level: number; role: string | null; decision: "approved" | "rejected"; userId: string; name: string; at: string; comment: string }[] };
   payment: { method: "card" | "rail"; cards: EvCard[]; railPayments: { id: string; kind: string; rail: string | null; amount: number; currency: string; status: string; createdAt: string | null }[] };
@@ -27,4 +27,9 @@ export function paidLine(e: Pick<Evidence, "payment" | "order">) {
 export function downloadJson(name: string, data: unknown) {
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
   const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+export type EvidenceOrder = { id: string; supplier: string; total: number; currency: string; status: string; createdAt: string; method: "card" | "rail" };
+/** True when the order has been paid, so an evidence record exists. Unpaid orders get no Evidence button. */
+export function orderIsPaid(st: { pos?: { id: string; status: string }[]; invoices?: { poId: string; paid: boolean }[] } | undefined, poId: string) {
+  return !!st && (st.pos?.find((p) => p.id === poId)?.status === "paid" || !!st.invoices?.some((i) => i.poId === poId && i.paid));
 }

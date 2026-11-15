@@ -182,6 +182,11 @@ export const TOOLS: Tool[] = [
       : rows.length ? `No early-pay discount is open. ${rows.length} passed their pay-by date.` : "No unpaid invoice has an early-pay discount in its terms";
     return { summary, rows, source: src("discountsAvailable", rows.map((r) => ({ id: r.invoiceId, href: c.prefix === "/app" ? "/app/invoices" : "/operator/payments" }))) };
   } },
+  { name: "disputeEvidence", description: "Dispute evidence summary for one paid order: mandates, agent, approvals, payment and chain check", args: ["poId"], run: (c, a) => {
+    const e = S.disputeEvidence(c.scope, String(a.poId ?? ""));
+    const row = { poId: e.order.id, supplier: e.order.supplier, total: e.order.total, currency: e.order.currency, method: e.payment.method, intentSigned: !!e.mandates.intent?.signatureValid, cartSigned: !!e.mandates.cart?.signatureValid, olderMandates: e.mandates.history.length, agent: e.agent?.name ?? "none", approvals: e.approvals.decisions.length, events: e.timeline.length, chainValid: e.chain.valid };
+    return { rows: [row], summary: `Order ${row.poId} for ${row.supplier}, ${row.total} ${row.currency}, paid by ${row.method}. ${row.approvals} approval decisions, ${row.events} evidence events, chain ${row.chainValid ? "valid" : "broken"}.`, source: src("disputeEvidence", [{ id: row.poId, href: `${c.prefix}/evidence` }]) };
+  } },
   { name: "supplierProfile", description: "One supplier: status, hold, screening, rails, spend, open invoices and recent payments", args: ["supplierId"], run: (c, a) => {
     const st = scoped(c.scope); const s = st.suppliers.find((x) => x.id === a.supplierId); if (!s) throw new S.HttpError(404, "supplier not found");
     const invs = st.invoices.filter((i) => i.supplierId === s.id); const pays = st.intents.filter((i) => invs.some((v) => v.id === i.invoiceId));
@@ -429,7 +434,7 @@ export function proposalsFor(c: Ctx, q: string): Proposal[] {
 }
 
 const LABEL: Record<string, string> = { spendBySupplier: "Spend by supplier", paymentsByStatus: "Payments by status", pendingApprovals: "Waiting for approval", entityBalances: "Entity balances", fxExposure: "FX", openInvoices: "Open invoices", whyPayment: "Why", riskInbox: "Risk inbox", bankChanges: "Bank detail changes",
-  mandates: "Mandates", fxLocksAndRates: "FX locks", railHealth: "Rail health", cashForecast: "Cash forecast", tariffScenario: "Tariff cash scenario", creditLine: "Credit line (simulated lender)", discountsAvailable: "Early-pay discounts", supplierProfile: "Supplier", auditSearch: "Evidence", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", query: "Query", dailyDigest: "Today", opsQueues: "Ops queues", riskEscalations: "Risk escalations", recurringPayments: "Recurring payments", tenants: "Clients", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA" };
+  mandates: "Mandates", fxLocksAndRates: "FX locks", railHealth: "Rail health", cashForecast: "Cash forecast", tariffScenario: "Tariff cash scenario", creditLine: "Credit line (simulated lender)", discountsAvailable: "Early-pay discounts", supplierProfile: "Supplier", auditSearch: "Evidence", disputeEvidence: "Dispute evidence", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", query: "Query", dailyDigest: "Today", opsQueues: "Ops queues", riskEscalations: "Risk escalations", recurringPayments: "Recurring payments", tenants: "Clients", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA" };
 const mockAnswer = (q: string, results: ToolResult[]) => {
   const base = results.map((r) => `${LABEL[r.tool] ?? r.tool}: ${r.summary}.`).join(" ");
   return /\bdraft\b.*\b(rule|policy)\b|\b(rule|policy)\b.*\bdraft\b/i.test(q) ? `Draft rule in plain words: ${parseRuleDraft(q).words} ${base}` : base;

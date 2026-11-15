@@ -19,6 +19,7 @@ const EntityLedgerPage = lz(() => import("./pages/entities"), (m) => m.EntityLed
 const SupplierPortal = lz(() => import("./pages/sparky"), (m) => m.SupplierPortal);
 const ChatApprovals = lz(() => import("./pages/chat"), (m) => m.ChatApprovals);
 const CardsPage = lz(() => import("./pages/cards"), (m) => m.CardsPage); const CardDetailPage = lz(() => import("./pages/cards"), (m) => m.CardDetailPage);
+const EvidencePage = lz(() => import("./pages/evidence"), (m) => m.EvidencePage);
 const CreditPage = lz(() => import("./pages/credit"), (m) => m.CreditPage); const OperatorCredit = lz(() => import("./pages/credit"), (m) => m.OperatorCredit);
 const BankChanges = lz(() => import("./components/BankChange"), (m) => m.BankChangesPage);
 const RiskInbox = lz(() => import("./pages/risk"), (m) => m.RiskInboxPage);
@@ -48,7 +49,7 @@ export function App() {
     </Route>
     <Route path="/app" element={<Gate kind="client" />}>
       <Route index element={S(<C.ClientHome />)} /><Route path="purchase-orders" element={S(<C.PurchaseOrders />)} /><Route path="invoices" element={S(<C.Invoices />)} />
-      <Route path="approvals" element={S(<C.Approvals />)} /><Route path="chat-approvals" element={S(<ChatApprovals />)} /><Route path="risk" element={S(<RiskInbox />)} /><Route path="bank-changes" element={S(<BankChanges />)} /><Route path="cards" element={S(<CardsPage />)} /><Route path="cards/:id" element={S(<CardDetailPage />)} /><Route path="credit" element={S(<CreditPage />)} /><Route path="agents" element={S(<C.Agents />)} /><Route path="suppliers" element={S(<C.Suppliers />)} />
+      <Route path="approvals" element={S(<C.Approvals />)} /><Route path="chat-approvals" element={S(<ChatApprovals />)} /><Route path="risk" element={S(<RiskInbox />)} /><Route path="bank-changes" element={S(<BankChanges />)} /><Route path="cards" element={S(<CardsPage />)} /><Route path="cards/:id" element={S(<CardDetailPage />)} /><Route path="credit" element={S(<CreditPage />)} /><Route path="evidence" element={S(<EvidencePage />)} /><Route path="agents" element={S(<C.Agents />)} /><Route path="suppliers" element={S(<C.Suppliers />)} />
       <Route path="payments" element={S(<C.Payments />)} /><Route path="payments/:id" element={S(<FlowPage />)} /><Route path="transactions" element={S(<TransactionsPage operator={false} />)} /><Route path="rules" element={S(<C.Rules />)} /><Route path="ledger" element={S(<EntityLedgerPage />)} /><Route path="developers" element={S(<O.Developers />)} /><Route path="roles" element={S(<IAM.RolesPage />)} /><Route path="sessions" element={S(<IAM.SessionsPage />)} />
     </Route>
     <Route path="*" element={<Navigate to="/" replace />} />

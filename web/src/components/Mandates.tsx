@@ -7,7 +7,7 @@ import { useState } from "react";
 import { CreditCard, Download, FileCheck2 } from "lucide-react";
 import { Badge, Button, Card, EmptyState, ErrorNote, Mono, Muted } from "./ui";
 import { Skeleton, SlidePanel, StatusDot } from "./kit";
-import { downloadJson, eventText, evidenceFileName, paidLine, type Evidence } from "../lib/evidence";
+import { downloadJson, eventText, evidenceFileName, orderIsPaid, paidLine, type Evidence } from "../lib/evidence";
 
 type M = { id: string; kind: "intent" | "cart"; signerId: string; signerKind: "user" | "agent"; hash: string; createdAt: string; keyFingerprint: string | null; signatureValid: boolean; body: any };
 type View = { poId: string; intent: M | null; cart: M | null; ok: boolean; reason: string; checks: { rule: string; pass: boolean; detail: string }[] };
@@ -33,7 +33,7 @@ export function MandatesCard({ id }: { id: string }) {
   if (!data) return <Card title="Signed mandates"><Skeleton lines={3} /></Card>;
   if (!data.intent && !data.cart) return <Card title="Signed mandates"><EmptyState title="No signed mandates" body="This purchase order was created before signed mandates were switched on, so it has no signed Intent or Cart and the payment is blocked. Raise a new purchase order or reset the demo data." /></Card>;
   const plain = data.ok ? "The user approved this purchase and the agent's cart fits inside that approval. The payment matches the cart exactly." : `This payment is held. ${data.reason}`;
-  return <Card title="Signed mandates" action={<span className="flex items-center gap-2">{canIssueFromMandate(data.ok, st?.pos?.find((p: any) => p.id === data.poId)?.status) && can(me, "flow.operate") && <Button size="sm" disabled={busy} title="A card that works only for this order and its exact amount" onClick={async () => { const r = await run(() => api<{ card: { id: string } }>(`/orders/${data.poId}/card`, {})); if (r?.card) nav(`/app/cards/${r.card.id}`); }}><CreditCard size={13} aria-hidden />Issue card</Button>}<EvidenceButton poId={data.poId} /><Badge v={data.ok ? "valid" : "blocked"} tone={data.ok ? "ok" : "bad"} /></span>}>
+  return <Card title="Signed mandates" action={<span className="flex items-center gap-2">{canIssueFromMandate(data.ok, st?.pos?.find((p: any) => p.id === data.poId)?.status) && can(me, "flow.operate") && <Button size="sm" disabled={busy} title="A card that works only for this order and its exact amount" onClick={async () => { const r = await run(() => api<{ card: { id: string } }>(`/orders/${data.poId}/card`, {})); if (r?.card) nav(`/app/cards/${r.card.id}`); }}><CreditCard size={13} aria-hidden />Issue card</Button>}{orderIsPaid(st as any, data.poId) && <EvidenceButton poId={data.poId} />}<Badge v={data.ok ? "valid" : "blocked"} tone={data.ok ? "ok" : "bad"} /></span>}>
     <ErrorNote msg={error} />
     <p className="text-sm mb-3">{plain}</p>
     <div className="grid gap-3 md:grid-cols-2">
@@ -68,6 +68,7 @@ export function EvidenceDrawer({ poId, onClose }: { poId: string; onClose: () =>
       <div className="mt-1 space-y-2">
         {e.mandates.intent && <MandateBlock m={e.mandates.intent} title="Intent, signed by the user" />}
         {e.mandates.cart && <MandateBlock m={e.mandates.cart} title="Cart, signed by the agent" />}
+        {!!e.mandates.history?.length && <div><Muted>Older mandates, replaced by the ones above</Muted>{e.mandates.history.map((m) => <MandateBlock key={m.id} m={m} title={`Old ${m.kind}, replaced ${m.supersededAt ? new Date(m.supersededAt).toLocaleString() : ""}`} />)}</div>}
       </div>
 
       <Head>Agent identity</Head>

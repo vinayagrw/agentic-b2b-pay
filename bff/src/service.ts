@@ -205,6 +205,13 @@ function maskPans<T>(v: T): T {
  * Dispute evidence for one paid order: the signed Intent and Cart mandates, the agent identity, who approved and when,
  * the card decision and reason, and the audit events in time order. Scope is the caller's client tenant, or null for an operator.
  */
+/** True when an order was paid by rail, by invoice or by a mandate-bound card. */
+export function orderPaid(po: PurchaseOrder) { return po.status === "paid" || db.invoices.some((i) => i.poId === po.id && i.paid) || !!paidByCard(tenantOf(po), po.id); }
+/** Paid orders in a tenant, newest first, for the evidence list page. */
+export function evidenceOrders(scope: string | null) {
+  return db.pos.filter((p) => (!scope || tenantOf(p) === scope) && orderPaid(p)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((p) => ({ id: p.id, supplier: db.suppliers.find((s) => s.id === p.supplierId)?.name ?? p.supplierId, total: p.total, currency: p.currency ?? "USD", status: p.status, createdAt: p.createdAt, method: paidByCard(tenantOf(p), p.id) ? "card" as const : "rail" as const }));
+}
 export function disputeEvidence(scope: string | null, poId: string) {
   const po = db.pos.find((p) => p.id === poId && (!scope || tenantOf(p) === scope));
   if (!po) throw new HttpError(404, "purchase order not found");
@@ -212,7 +219,7 @@ export function disputeEvidence(scope: string | null, poId: string) {
   const invs = db.invoices.filter((i) => i.poId === po.id);
   const cards = orderCards(tenantId, po.id);
   const byCard = paidByCard(tenantId, po.id);
-  if (!byCard && po.status !== "paid" && !invs.some((i) => i.paid)) throw new HttpError(409, "This order is not paid yet, so it has no evidence record");
+  if (!orderPaid(po)) throw new HttpError(409, "This order is not paid yet, so it has no evidence record");
   const pis = db.intents.filter((p) => invs.some((i) => i.id === p.invoiceId));
   const sup = db.suppliers.find((s) => s.id === po.supplierId);
   const agent = db.agents.find((a) => a.id === po.agentId);
@@ -230,7 +237,7 @@ export function disputeEvidence(scope: string | null, poId: string) {
     generatedAt: new Date().toISOString(), tenantId,
     order: { id: po.id, status: po.status, supplierId: po.supplierId, supplier: sup?.name ?? po.supplierId, category: po.category, total: po.total, currency: po.currency ?? "USD", lines: po.lines, justification: po.justification, erpRef: po.erpRef, createdAt: po.createdAt, requestedBy: po.requestedBy ?? null,
       policy: { outcome: po.policy.outcome, reasons: po.policy.reasons, checks: po.policy.checks }, invoices: invs.map((i) => ({ id: i.id, number: i.number, amount: i.amount, currency: i.currency, matchStatus: i.matchStatus, paid: i.paid })) },
-    mandates: { intent: showMandate(pair.intent), cart: showMandate(pair.cart) },
+    mandates: { intent: showMandate(pair.intent), cart: showMandate(pair.cart), history: AP2.mandatesForPo(po.id).filter((m) => m.id !== pair.intent?.id && m.id !== pair.cart?.id).map((m) => ({ ...showMandate(m)!, supersededAt: m.supersededAt })) },
     agent: agent ? { id: agent.id, name: agent.name, kyaStatus: agent.kyaStatus, status: agent.status, orgId: agent.orgId, erpRole: agent.erpRole, protocols: agent.protocols, keyFingerprint: AP2.keyFingerprint(agent.publicKey),
       authority: authority ? { id: authority.id, principalUserId: authority.principalUserId, principal: name(authority.principalUserId), perTxnMax: authority.perTxnMax, approvalThreshold: authority.approvalThreshold, validFrom: authority.validFrom, validTo: authority.validTo } : null } : null,
     approvals: { rule: a?.ruleName ?? null, needed: !!a, decisions: approvals },
