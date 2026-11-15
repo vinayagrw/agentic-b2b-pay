@@ -166,7 +166,7 @@ export async function buildApp() {
   const PUBLIC = new Set(["/health", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle", "/webhooks/stripe-issuing", "/mcp", "/integrations/slack/actions", "/integrations/teams/actions"]);
   const ROUTE_PERMS: Record<string, I.Permission> = {
     "POST /reset": "platform.reset", "POST /kill-switch": "agents.manage", "POST /agents": "agents.manage", "POST /agents/:id/verify": "agents.manage", "POST /agents/:id/suspend": "agents.manage", "POST /agents/:id/resume": "agents.manage",
-    "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /invoices/:id/override": "payments.approve", "POST /invoices/:id/credit-notes": "payments.approve", "POST /invoices/:id/hold": "flow.operate", "POST /refunds": "payments.refund",
+    "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /invoices/:id/override": "payments.approve", "POST /invoices/:id/credit-notes": "payments.approve", "POST /invoices/:id/hold": "flow.operate", "POST /refunds": "payments.refund", "POST /payments/:id/retry": "payments.pay", "POST /payments/:id/ach-return": "payments.refund",
     "POST /erp/vendor-master/changes": "erp.vendor_master",
     "GET /rails/balances": "rails.balances", "GET /users": "users.read", "PATCH /tenants/:id/branding": "settings.branding", "POST /tenants/:id/logo": "settings.branding",
     "POST /changes": "changes.request", "POST /copilot/ask": "workspace.read", "POST /copilot/answer": "workspace.read", "POST /copilot/threads/:id": "workspace.read", "DELETE /copilot/threads/:id": "workspace.read", "POST /copilot/feedback": "workspace.read", "POST /copilot/memories": "workspace.read", "PATCH /copilot/memories/:id": "workspace.read", "DELETE /copilot/memories/:id": "workspace.read", "DELETE /copilot/memories": "workspace.read", "DELETE /copilot/answers/:id": "workspace.read", "POST /changes/:id/decide": "changes.decide",
@@ -389,7 +389,18 @@ export async function buildApp() {
   app.post("/views", async (req) => TB.saveView(who(req), b(req)));
   app.delete("/views/:id", async (req: any) => TB.deleteView(who(req), req.params.id));
   app.get("/export/:kind", async (req: any, reply) => { const u = who(req); const ids = req.query?.ids ? new Set(String(req.query.ids).split(",").filter(Boolean).slice(0, 1000)) : undefined; const csv = TB.exportCsv(req.params.kind, scopeOf(req), u, () => clientOf(req, u), ids); return reply.type("text/csv; charset=utf-8").header("content-disposition", `attachment; filename="${req.params.kind}.csv"`).send(csv); });
-  app.get("/payments/:id", async (req: any) => { const i = db.intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); Risk.ensureScores([i]); return { intent: i, riskReview: Risk.reviewOf(i.id), settlement: db.settlements.find((s) => s.id === i.settlementId) ?? null, evidence: db.evidence.filter((e) => e.subjectId === i.id) }; });
+  app.get("/payments/:id", async (req: any) => { const i = db.intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); Risk.ensureScores([i]); return { intent: i, riskReview: Risk.reviewOf(i.id), settlement: db.settlements.find((s) => s.id === i.settlementId) ?? null, attempts: i.kind === "refund" ? [] : S.paymentAttempts(i.id), maxAttempts: S.MAX_PAYMENT_ATTEMPTS, evidence: db.evidence.filter((e) => e.subjectId === i.id) }; });
+  app.post("/payments/:id/retry", async (req: any) => {
+    const key = req.headers["idempotency-key"]; if (!key) throw new S.HttpError(400, "Idempotency-Key header required");
+    const u = who(req); const i = scoped(scopeOf(req)).intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found");
+    const mode = b(req).mode === "reroute" ? "reroute" : b(req).mode === "same" ? "same" : null; if (!mode) throw new S.HttpError(422, "mode must be same or reroute");
+    payGuard(u, i.invoiceId);
+    const r = await S.retryPayment(i.id, mode, String(key)); if (!r.replay) P.audit(u.id, "payment", i.id, "payment.retry_requested", { mode, newIntentId: r.intent.id }); return r;
+  });
+  app.post("/payments/:id/ach-return", async (req: any) => {
+    const u = who(req); const i = scoped(scopeOf(req)).intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found");
+    const r = S.achReturn(i.id, String(b(req).code ?? "R01"), u.id); P.audit(u.id, "payment", i.id, "payment.ach_return_simulated", { code: r.achReturn!.code }); return r;
+  });
   app.post("/payments/poll", async () => ({ checked: await S.pollSettlements() }));
   app.get("/cases", async (req) => S.listCases(scopeOf(req)));
   app.post("/webhooks/stripe", async (req: any) => S.ingestWebhook("stripe", req.rawBody ?? Buffer.alloc(0), req.headers));

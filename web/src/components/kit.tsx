@@ -25,7 +25,7 @@ export function StatusDot({ tone, label, pulse, className }: { tone: Tone; label
 }
 export function toneOf(status: string): Tone {
   if (/settled|paid|approved|verified|active|matched|done|clear/.test(status)) return "ok";
-  if (/blocked|denied|failed|rejected|flagged|exception/.test(status)) return "bad";
+  if (/blocked|denied|failed|returned|rejected|flagged|exception/.test(status)) return "bad";
   if (/pending|submitted|waiting|routed|draft|running/.test(status)) return "warn";
   return "neutral";
 }

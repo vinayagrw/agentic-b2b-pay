@@ -473,12 +473,13 @@ async function withBalances<T extends { rail: Rail; configured: boolean; env: Ra
 }
 
 /** Pays an invoice, then stores a rule based risk score on the payment. */
-export async function payInvoice(invId: string, idempotencyKey: string, opts: { urgency?: "standard" | "urgent"; approvers?: string[]; fxLockId?: string } = {}) {
+export async function payInvoice(invId: string, idempotencyKey: string, opts: PayOpts = {}) {
   const r = await payInvoiceCore(invId, idempotencyKey, opts);
   if (!r.replay) Risk.scoreAndStore(r.intent);
   return r;
 }
-async function payInvoiceCore(invId: string, idempotencyKey: string, opts: { urgency?: "standard" | "urgent"; approvers?: string[]; fxLockId?: string } = {}) {
+type PayOpts = { urgency?: "standard" | "urgent"; approvers?: string[]; fxLockId?: string; rails?: Rail[]; retryOf?: string; attempt?: number };
+async function payInvoiceCore(invId: string, idempotencyKey: string, opts: PayOpts = {}) {
   const key = sql.prepare("SELECT intent_id FROM idempotency_keys WHERE key = ?").get(idempotencyKey) as { intent_id: string } | undefined;
   const prior = key && db.intents.find((p) => p.id === key.intent_id);
   if (prior) return { intent: prior, replay: true };
@@ -510,6 +511,7 @@ async function payInvoiceCore(invId: string, idempotencyKey: string, opts: { urg
     lock = FX.useLock(lock.id, TENANT, intent.id, { from: invCcy, to: "USD", entityId: ent.id });
     intent.fx = { lockId: lock.id, invoiceCurrency: invCcy, invoiceAmount: inv.amount, settlementCurrency: "USD", settlementAmount: usdAmount, rate: lock.rate, functionalCurrency: lock.functionalCurrency, functionalRate: lock.functionalRate, source: lock.source, rateDate: lock.rateDate, fetchedAt: lock.fetchedAt, stale: lock.stale, lockedAt: lock.lockedAt, expiresAt: lock.expiresAt };
   }
+  if (opts.retryOf) { intent.retryOf = opts.retryOf; intent.attempt = opts.attempt; }
   db.intents.push(intent);
   sql.prepare("INSERT INTO idempotency_keys (key, intent_id, created_at) VALUES (?, ?, ?)").run(idempotencyKey, intent.id, now());
   mark(intent, "created", "platform", "Payment intent created");
@@ -525,7 +527,7 @@ async function payInvoiceCore(invId: string, idempotencyKey: string, opts: { urg
   ev("payment", intent.id, "ap2.mandates_verified", { ok: mv.ok, intent: pair.intent?.hash ?? null, cart: pair.cart?.hash ?? null, failed: mv.checks.filter((c) => !c.pass).map((c) => c.rule) });
   if (!mv.ok) return stop("blocked", mv.reason);
 
-  const route = routePayment({ amount: usdAmount, urgency: opts.urgency ?? "standard", mandateRails: mandate.allowedRails, supplierRails: sup.acceptedRails, supplierPreferred: sup.preferredRail, supplierHasWallet: !!sup.walletAddress, supplierScreening: sup.screeningStatus, supplierCountry: so.country, candidates: await withBalances(railCandidates(TENANT, usdAmount)) });
+  const route = routePayment({ amount: usdAmount, urgency: opts.urgency ?? "standard", mandateRails: opts.rails ? mandate.allowedRails.filter((r) => opts.rails!.includes(r)) : mandate.allowedRails, supplierRails: sup.acceptedRails, supplierPreferred: sup.preferredRail, supplierHasWallet: !!sup.walletAddress, supplierScreening: sup.screeningStatus, supplierCountry: so.country, candidates: await withBalances(railCandidates(TENANT, usdAmount)) });
   intent.route = route; mark(intent, "routed", "platform", route.reason);
   const ex = await explainRoute(route, usdAmount, sup.name);
   intent.explanation = ex.value; intent.explainedBy = ex.source;
@@ -571,6 +573,68 @@ async function payInvoiceCore(invId: string, idempotencyKey: string, opts: { urg
     ev("payment", intent.id, "rail.failed", { rail, env, error: e.message });
   }
   save(); return { intent, replay: false };
+}
+
+/** Most rail attempts allowed for one invoice, counting the first payment. */
+export const MAX_PAYMENT_ATTEMPTS = 3;
+const attemptChain = (invoiceId: string) => db.intents.filter((i) => i.invoiceId === invoiceId && i.kind !== "refund" && i.rail);
+/** Attempt history for the invoice behind a payment, oldest first. */
+export function paymentAttempts(intentId: string) {
+  const pi = must(db.intents.find((i) => i.id === intentId), "payment intent");
+  return attemptChain(pi.invoiceId).map((i, n) => ({ id: i.id, attempt: n + 1, rail: i.rail ?? null, status: i.status, reason: i.blockedReason ?? null, retryOf: i.retryOf ?? null, createdAt: i.createdAt ?? null }));
+}
+/** Sandbox retry of a failed payment. "same" uses the same rail, "reroute" asks the router for another eligible rail.
+ * The new attempt is a new intent linked to the failed one. A key replay returns the same attempt, a failed payment
+ * can be retried once, the invoice paid check stops a double payment, and attempts are capped. */
+export async function retryPayment(intentId: string, mode: "same" | "reroute", idempotencyKey: string) {
+  const key = sql.prepare("SELECT intent_id FROM idempotency_keys WHERE key = ?").get(idempotencyKey) as { intent_id: string } | undefined;
+  const prior = key && db.intents.find((p) => p.id === key.intent_id);
+  if (prior) return { intent: prior, replay: true };
+  const pi = must(db.intents.find((i) => i.id === intentId), "payment intent");
+  if (pi.kind === "refund") throw new HttpError(409, "A refund cannot be retried");
+  if (pi.status !== "failed") throw new HttpError(409, `Only a failed payment can be retried. This one is ${pi.status}.`);
+  if (pi.retriedBy) throw new HttpError(409, `Payment was already retried as ${pi.retriedBy}`);
+  if ((pi.env ?? "sandbox") !== "sandbox") throw new HttpError(409, "Retry works in sandbox only");
+  const chain = attemptChain(pi.invoiceId);
+  if (chain.length >= MAX_PAYMENT_ATTEMPTS) throw new HttpError(409, `Attempt limit reached: ${chain.length} of ${MAX_PAYMENT_ATTEMPTS}`);
+  let rails: Rail[];
+  if (mode === "same") rails = [pi.rail!];
+  else {
+    const tried = new Set(chain.filter((i) => i.status === "failed").map((i) => i.rail!));
+    rails = allAdapters().map((a) => a.id as Rail).filter((r) => !tried.has(r));
+    if (!rails.length) throw new HttpError(409, "No other rail left to try");
+  }
+  const r = await payInvoice(pi.invoiceId, idempotencyKey, { rails, retryOf: pi.id, attempt: chain.length + 1 });
+  pi.retriedBy = r.intent.id;
+  ev("payment", pi.id, "payment.retried", { mode, newIntentId: r.intent.id, rail: r.intent.rail ?? null, attempt: chain.length + 1 });
+  save(); return r;
+}
+
+/** Simulated ACH return codes. Sandbox only. */
+export const ACH_RETURN_CODES: Record<string, string> = { R01: "Insufficient funds", R02: "Account closed", R03: "No account or unable to locate account", R04: "Invalid account number", R29: "Corporate customer advises not authorized" };
+/** Simulates an ACH return on a settled sandbox ACH payment. Reverses its ledger entries, reopens the invoice and records the code. */
+export function achReturn(intentId: string, code: string, by: string) {
+  const pi = must(db.intents.find((i) => i.id === intentId), "payment intent");
+  const reason = ACH_RETURN_CODES[code];
+  if (!reason) throw new HttpError(422, `Unknown return code ${code}. Use one of ${Object.keys(ACH_RETURN_CODES).join(", ")}`);
+  if (pi.rail !== "stripe_ach" || pi.kind === "refund") throw new HttpError(409, "Only an ACH payment can be returned");
+  if (pi.status === "returned") throw new HttpError(409, `Payment was already returned with ${pi.achReturn?.code}`);
+  if (pi.status !== "settled") throw new HttpError(409, "Only a settled payment can be returned");
+  if ((pi.env ?? "sandbox") !== "sandbox") throw new HttpError(409, "ACH returns are simulated in sandbox only");
+  const inv = must(db.invoices.find((i) => i.id === pi.invoiceId), "invoice");
+  const po = db.pos.find((p) => p.id === inv.poId);
+  const journalIds: string[] = [];
+  for (const j of db.journals.filter((x) => x.ref === pi.id)) {
+    const lines = j.entries.map((e) => ({ account: e.account, debit: e.credit, credit: e.debit, ...(e.origCurrency ? { origCurrency: e.origCurrency, origAmount: e.origAmount } : {}) }));
+    const rj = { ...makeJournal(nextId("jnl"), `ACH return ${code}: reverses ${j.memo}`, pi.id, lines as any, j.entries[0]?.currency), tenantId: j.tenantId, entityId: j.entityId };
+    db.journals.push(rj); journalIds.push(rj.id);
+  }
+  inv.paid = false; if (po && po.status === "paid") po.status = "invoiced";
+  pi.achReturn = { code, reason, at: now(), by, journalIds };
+  mark(pi, "returned", "platform", `ACH return ${code}: ${reason}`); pi.blockedReason = `ACH return ${code}: ${reason}`;
+  ev("payment", pi.id, "payment.ach_returned", { code, reason, journalIds, invoice: inv.id });
+  publish(tenantOf(pi), "payment.returned", { id: pi.id, amount: pi.amount, code, reason });
+  save(); return pi;
 }
 
 /** Called after a payment is blocked by screening. The compliance module opens a case. */

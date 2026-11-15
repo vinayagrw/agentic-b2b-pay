@@ -7,7 +7,7 @@ import * as S from "./service.js";
 const now = () => new Date().toISOString();
 const sha = (s: string) => crypto.createHash("sha256").update(s).digest("hex");
 const err = (s: number, m: string) => new S.HttpError(s, m);
-export const EVENT_TYPES = ["payment.settled", "payment.failed", "payment.refunded", "purchase_order.approved", "supplier.verified", "case.opened"] as const;
+export const EVENT_TYPES = ["payment.settled", "payment.failed", "payment.refunded", "payment.returned", "purchase_order.approved", "supplier.verified", "case.opened"] as const;
 
 // API keys
 

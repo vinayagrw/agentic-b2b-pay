@@ -8,6 +8,7 @@ import { api, useAct, useGet } from "../lib/api";
 import { usd } from "../lib/utils";
 import { SmartTable } from "../components/TableKit";
 import { RiskChip } from "../components/RiskChip";
+import { ACH_CODES, canAchReturn, retryState } from "../lib/payments";
 import { Badge, Button, Card, DataTable, EmptyState, ErrorNote, Mono, Muted, Table } from "../components/ui";
 
 export type RailRow = { rail: Rail; label: string; feeUsd: number; maxAmount: number; settleMinutes: number; configured: boolean; notConfiguredReason?: string; env: "sandbox" | "live"; address?: string };
@@ -60,6 +61,11 @@ export function PaymentDrawer({ id, onClose }: { id: string | null; onClose: () 
           {pi.blockedReason && <ErrorNote msg={pi.blockedReason} />}
           {pi.kind === "refund" && <Muted>Refund linked to payment {pi.linkedIntentId}</Muted>}
           {!!pi.refundIds?.length && <Muted>Refunds: {pi.refundIds.join(", ")}</Muted>}
+          {pi.achReturn && <div className="rounded-lg bg-subtle p-3 text-[13px]"><div className="text-xs font-medium">ACH return</div>Code <Mono>{pi.achReturn.code}</Mono>: {pi.achReturn.reason}. Ledger entries reversed and the invoice is open again.</div>}
+          {!!data.attempts?.length && pi.kind !== "refund" && <div className="flex flex-col gap-1"><div className="text-xs font-semibold uppercase tracking-wide text-muted">Attempts ({data.attempts.length} of {data.maxAttempts})</div>
+            <Table head={["#", "Payment", "Rail", "Status"]}>{data.attempts.map((a: any) => <tr key={a.id}><td>{a.attempt}</td><td><Mono>{a.id}</Mono></td><td>{railName(a.rail)}</td><td><Badge v={a.status} /></td></tr>)}</Table></div>}
+          {pi.status === "failed" && pi.kind !== "refund" && <RetryBox pi={pi} attempts={data.attempts?.length ?? 1} max={data.maxAttempts ?? 3} />}
+          {canAchReturn(pi) && <AchReturnBox pi={pi} />}
           {pi.status === "settled" && pi.kind !== "refund" && <RefundBox pi={pi} />}
           <div className="text-xs font-semibold uppercase tracking-wide text-muted">Timeline</div>
           <ol className="relative ml-2 border-l border-border">
@@ -90,5 +96,26 @@ function RefundBox({ pi }: { pi: any }) {
   return <div className="flex flex-col gap-2 rounded-lg bg-subtle p-3"><div className="text-xs font-medium">Refund</div>
     <div className="flex gap-2"><input className="h-8 w-24 rounded-md border border-border bg-surface px-2 text-[13px]" type="number" min={0} aria-label="Refund amount" placeholder="Amount" value={amount} onChange={(e) => setAmount(e.target.value)} /><input className="h-8 flex-1 rounded-md border border-border bg-surface px-2 text-[13px]" aria-label="Refund reason" placeholder="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
       <Button size="sm" disabled={busy || !Number(amount) || !reason} onClick={() => run(() => api("/refunds", { paymentIntentId: pi.id, amount: Number(amount), reason }))}>Refund</Button></div>
+    <ErrorNote msg={error} /></div>;
+}
+
+/** Sandbox retry of a failed payment, on the same rail or on another rail the router picks. */
+function RetryBox({ pi, attempts, max }: { pi: any; attempts: number; max: number }) {
+  const { run, busy, error } = useAct(); const st = retryState(pi, attempts, max);
+  const go = (mode: "same" | "reroute") => run(() => api(`/payments/${pi.id}/retry`, { mode }, { headers: { "Idempotency-Key": `ui-retry-${pi.id}-${mode}` } }));
+  return <div className="flex flex-col gap-2 rounded-lg bg-subtle p-3"><div className="text-xs font-medium">Try again</div>
+    {st.note ? <Muted>{st.note}</Muted> : <div className="flex gap-2">
+      <Button size="sm" disabled={busy} onClick={() => go("same")}>Retry</Button>
+      <Button size="sm" variant="ghost" disabled={busy} onClick={() => go("reroute")}>Re-route</Button></div>}
+    <Muted>Retry uses the same rail. Re-route picks another rail that can take this payment.</Muted>
+    <ErrorNote msg={error} /></div>;
+}
+
+/** Test only: simulates a bank sending an ACH payment back. */
+function AchReturnBox({ pi }: { pi: any }) {
+  const { run, busy, error } = useAct(); const [code, setCode] = useState("R01");
+  return <div className="flex flex-col gap-2 rounded-lg bg-subtle p-3"><div className="text-xs font-medium">Simulate ACH return (test only)</div>
+    <div className="flex gap-2"><select aria-label="Return code" className="h-8 flex-1 rounded-md border border-border bg-surface px-2 text-[13px]" value={code} onChange={(e) => setCode(e.target.value)}>{ACH_CODES.map(([c, l]) => <option key={c} value={c}>{c} {l}</option>)}</select>
+      <Button size="sm" disabled={busy} onClick={() => run(() => api(`/payments/${pi.id}/ach-return`, { code }))}>Send return</Button></div>
     <ErrorNote msg={error} /></div>;
 }
