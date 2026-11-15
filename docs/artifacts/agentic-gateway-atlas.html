@@ -1,0 +1,867 @@
+<title>Agentic Gateway Atlas</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#eef1ef;--panel:#ffffff;--ink:#0f1a17;--mute:#5b6b66;--line:#c9d3cf;--grid:#dfe6e3;
+  --acc:#0a8f5a;--acc2:#d97706;--bad:#c2410c;--wire:#7c8b86;--chip:#e3ebe7;--on-acc:#04130c;--on-acc2:#1a1000;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --sans:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0a0f0d;--panel:#111a17;--ink:#d9e8e1;--mute:#86978f;--line:#24332d;--grid:#16211d;
+  --acc:#35e08f;--acc2:#f5a524;--bad:#ff7a45;--wire:#4b5c55;--chip:#18251f;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0a0f0d;--panel:#111a17;--ink:#d9e8e1;--mute:#86978f;--line:#24332d;--grid:#16211d;
+  --acc:#35e08f;--acc2:#f5a524;--bad:#ff7a45;--wire:#4b5c55;--chip:#18251f;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:17px;line-height:1.45;
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:32px 32px}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+section{padding:56px 0;border-bottom:1px dashed var(--line)}
+.tag{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--acc)}
+h1{font-size:clamp(40px,8vw,88px);line-height:.95;margin:8px 0 12px;font-weight:700;letter-spacing:-.02em}
+h2{font-size:clamp(26px,4vw,40px);margin:6px 0 18px;line-height:1.05}
+p.lede{color:var(--mute);max-width:56ch;margin:0 0 20px}
+.mono{font-family:var(--mono)}
+button,input,select{font:inherit}
+.btn{font-family:var(--mono);font-size:14px;padding:9px 14px;border:1px solid var(--ink);background:var(--panel);color:var(--ink);cursor:pointer}
+.btn[aria-pressed="true"],.btn.on{background:var(--ink);color:var(--bg)}
+.btn.go{background:var(--acc);border-color:var(--acc);color:var(--on-acc);font-weight:600}
+.btn.warn{border-color:var(--bad);color:var(--bad)}
+:focus-visible{outline:3px solid var(--acc2);outline-offset:2px}
+.seg{display:inline-flex;flex-wrap:wrap;gap:0}
+.seg .btn+.btn{border-left:0}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);background:var(--panel)}
+svg text{font-family:var(--mono);fill:var(--ink)}
+.panel{background:var(--panel);border:1px solid var(--line);padding:16px}
+.grid2{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px}
+@media (max-width:820px){.grid2{grid-template-columns:minmax(0,1fr)}}
+/* hero */
+.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:24px;align-items:end}
+@media (max-width:820px){.hero{grid-template-columns:minmax(0,1fr)}}
+.stat{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:13px;color:var(--mute);margin-top:14px}
+.stat b{display:block;font-size:26px;color:var(--ink)}
+.wire{stroke:var(--wire);stroke-width:2;fill:none}
+.wire.live{stroke:var(--acc);stroke-dasharray:6 6;animation:flow 1.2s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-24}}
+.node rect{fill:var(--panel);stroke:var(--ink);stroke-width:1.5}
+.node.hot rect{stroke:var(--acc);stroke-width:3}
+.node{cursor:pointer}
+.node:focus-visible rect{stroke:var(--acc2);stroke-width:3}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;font-size:15px}
+.kv dt{font-family:var(--mono);font-size:12px;color:var(--mute);text-transform:uppercase;padding-top:3px}
+.kv dd{margin:0}
+/* stack */
+.stack{display:grid;gap:6px}
+.layer{display:grid;grid-template-columns:120px 1fr 1fr;gap:6px;align-items:stretch}
+.layer>div{padding:10px;border:1px solid var(--line);background:var(--panel);font-size:15px}
+.layer .lname{font-family:var(--mono);font-size:12px;text-transform:uppercase;color:var(--mute);background:transparent;border-style:dashed}
+.layer .ag{border-left:4px solid var(--acc)}
+.layer .td{border-left:4px solid var(--wire)}
+.dim{opacity:.35}
+@media (max-width:600px){.layer{grid-template-columns:minmax(0,1fr)}}
+input[type=range]{width:100%;accent-color:var(--acc)}
+/* timeline */
+.tl{min-width:860px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0;margin-top:16px;border-top:2px solid var(--ink)}
+.card{padding:14px 14px 18px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.card h3{margin:0 0 6px;font-size:19px}
+.card .mono{font-size:12px;color:var(--acc)}
+/* gallery */
+.filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.filters label{font-family:var(--mono);font-size:12px;color:var(--mute);display:flex;flex-direction:column;gap:4px}
+.filters select{padding:7px;border:1px solid var(--ink);background:var(--panel);color:var(--ink)}
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.uc{background:var(--panel);border:1px solid var(--line);padding:14px;position:relative}
+.uc:nth-child(3n+1){border-top:3px solid var(--acc)}
+.uc .em{font-size:64px;line-height:1;display:block;margin-bottom:8px}
+.uc h3{margin:0 0 4px;font-size:18px}
+.uc .meta{font-family:var(--mono);font-size:11px;color:var(--mute)}
+.bars{display:inline-flex;gap:2px;vertical-align:middle}
+.bars i{width:8px;height:10px;background:var(--line)}
+.bars i.f{background:var(--acc)}
+/* migration */
+.pipe{display:flex;gap:0;flex-wrap:wrap;margin-bottom:14px}
+.pipe span{font-family:var(--mono);font-size:12px;padding:8px 10px;border:1px solid var(--line);background:var(--panel);margin:0 -1px -1px 0}
+.pipe span.done{background:var(--acc);color:var(--on-acc);border-color:var(--acc)}
+.pipe span.cur{outline:2px solid var(--acc2);outline-offset:-2px}
+.pipe span.flag{background:var(--acc2);color:var(--on-acc2)}
+pre{font-family:var(--mono);font-size:12.5px;margin:0;white-space:pre;overflow-x:auto;max-height:340px;padding:12px;background:var(--chip);border:1px solid var(--line)}
+.diff{font-family:var(--mono);font-size:13px}
+.diff div{padding:4px 8px;border-bottom:1px dotted var(--line)}
+.diff .ok::before{content:"\2713  ";color:var(--acc)}
+.diff .fl{background:color-mix(in srgb,var(--acc2) 18%,transparent)}
+.diff .fl::before{content:"!  ";color:var(--acc2);font-weight:700}
+.big{font-family:var(--mono);font-size:40px;font-weight:600}
+/* arch */
+.arch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media (max-width:760px){.arch{grid-template-columns:minmax(0,1fr)}}
+.opt{background:var(--panel);border:1px solid var(--line);padding:14px}
+.opt.win{border:2px solid var(--acc);box-shadow:6px 6px 0 var(--acc)}
+.opt .score{font-family:var(--mono);font-size:34px}
+.sl{display:grid;grid-template-columns:190px 1fr 40px;gap:10px;align-items:center;font-family:var(--mono);font-size:13px;margin:6px 0}
+@media (max-width:480px){.sl{grid-template-columns:minmax(0,1fr) 40px}.sl input{grid-column:1/-1;order:3}}
+/* guard */
+.meter{height:18px;border:1px solid var(--ink);background:var(--panel);position:relative}
+.meter i{position:absolute;left:0;top:0;bottom:0;background:var(--acc);transition:width .2s}
+.meter.hot i{background:var(--bad)}
+.log{font-family:var(--mono);font-size:12.5px;height:200px;overflow:auto;background:var(--chip);border:1px solid var(--line);padding:8px}
+.log .d{color:var(--bad)}.log .a{color:var(--acc)}
+.breaker{font-family:var(--mono);font-size:22px;padding:18px;border:3px solid var(--acc);text-align:center}
+.breaker.open{border-color:var(--bad);color:var(--bad)}
+/* roadmap */
+.road{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-left:2px solid var(--ink)}
+@media (max-width:700px){.road{grid-template-columns:minmax(0,1fr)}}
+.road>div{padding:16px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.road .yr{font-family:var(--mono);font-size:48px;color:var(--acc);line-height:1}
+.road ul{padding-left:18px;margin:8px 0 0}
+details{background:var(--panel);border:1px solid var(--line);padding:12px 16px}
+summary{cursor:pointer;font-family:var(--mono)}
+details ol{font-family:var(--mono);font-size:12.5px;word-break:break-all}
+details a{color:var(--acc)}
+/* 101 */
+.t101{font:inherit;color:inherit;background:none;border:0;padding:0;border-bottom:2px dotted var(--acc);cursor:help;line-height:inherit}
+.t101:hover{color:var(--acc)}
+#pop{position:fixed;z-index:20;left:8px;top:8px;width:340px;max-width:calc(100vw - 16px);background:var(--panel);color:var(--ink);border:1px solid var(--ink);box-shadow:4px 4px 0 var(--acc);padding:12px 14px;font-size:15px}
+#pop[hidden]{display:none}
+#pop .ph{font-size:20px;font-weight:700;margin:4px 0}
+#pop p{margin:6px 0}#pop .p1{font-weight:600}#pop .ex{color:var(--mute);font-size:14px}
+.g101{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(230px,100%),1fr));gap:12px}
+.gc{background:var(--panel);border:1px solid var(--line);padding:14px;min-width:0}
+.gc .em{font-size:64px;line-height:1;display:block;margin-bottom:8px}
+.gc h3{margin:0 0 4px;font-size:19px}
+.gc .gp{font-family:var(--mono);font-size:11px;color:var(--acc);text-transform:uppercase;letter-spacing:.1em}
+.gc p{margin:6px 0;font-size:15px}.gc .ex{color:var(--mute);font-size:14px}
+.search{width:100%;max-width:420px;padding:9px 12px;border:1px solid var(--ink);background:var(--panel);color:var(--ink)}
+.tabs{display:flex;flex-wrap:wrap;margin:16px 0 12px}
+.tabs .btn+.btn{border-left:0}
+.tabs .btn[aria-selected="true"]{background:var(--ink);color:var(--bg)}
+.zone{fill:color-mix(in srgb,var(--acc) 8%,transparent);stroke:var(--acc);stroke-dasharray:4 4}
+.zone.cde{fill:color-mix(in srgb,var(--acc2) 10%,transparent);stroke:var(--acc2)}
+.zone.rail{fill:color-mix(in srgb,var(--wire) 12%,transparent);stroke:var(--wire)}
+.wire.rb{stroke:var(--acc2);stroke-dasharray:8 5}
+.pipe span[data-t]{cursor:help}
+.pc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
+@media (max-width:760px){.pc{grid-template-columns:minmax(0,1fr)}}
+.pc ul{margin:6px 0 0;padding-left:18px;font-size:15px}
+.badge{font-family:var(--mono);font-size:11px;border:1px solid var(--acc2);color:var(--acc2);padding:2px 6px;display:inline-block;margin-top:6px}
+.theme{position:fixed;right:max(12px,env(safe-area-inset-right,0px));top:max(12px,env(safe-area-inset-top,0px));z-index:5}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.vmap{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:22px;margin-top:16px}
+.vnode{background:var(--panel);border:1px solid var(--line);padding:14px;position:relative;text-align:center}
+.vnode .em{font-size:64px;line-height:1;display:block;margin-bottom:6px}
+.vnode h3{margin:0 0 6px;font-size:17px}
+.vnode p{margin:0 0 8px;font-size:14px;text-align:left}
+.vnode .cap{font-family:var(--mono);font-size:12px;padding:3px 8px;border:1px solid var(--ink);display:inline-block}
+.vnode.top .cap{background:var(--acc);border-color:var(--acc);color:var(--on-acc)}
+.vnode+.vnode::before{content:"\2192";position:absolute;left:-20px;top:40px;font-size:20px;color:var(--acc)}
+@media (max-width:760px){.vmap{grid-template-columns:minmax(0,1fr)}.vnode+.vnode::before{content:"\2193";left:50%;top:-22px}}
+a.src{font-family:var(--mono);font-size:11px;color:var(--acc);margin-left:4px;white-space:nowrap}
+.verdict{border:2px solid var(--acc);background:var(--panel);box-shadow:8px 8px 0 var(--acc);padding:18px}
+.verdict h2{margin:4px 0 10px}
+.conds{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:10px;margin-top:12px}
+.conds>div{border:1px solid var(--line);padding:12px;background:var(--bg)}
+.conds b.n{font-family:var(--mono);font-size:28px;color:var(--acc);display:block;line-height:1}
+.ce{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr));gap:10px;margin-top:12px}
+.ce>div{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--bad);padding:12px;font-size:14px}
+.ce b.k{display:block;font-family:var(--mono);font-size:26px;color:var(--bad)}
+.tbl{border-collapse:collapse;width:100%;min-width:640px;font-size:14px}
+.tbl th,.tbl td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+.tbl th{font-family:var(--mono);font-size:11px;text-transform:uppercase;color:var(--mute);background:var(--chip)}
+.st{font-family:var(--mono);font-size:11px;padding:2px 6px;border:1px solid currentColor;white-space:nowrap}
+.st.ok{color:var(--acc)}.st.wip{color:var(--acc2)}.st.no{color:var(--bad)}
+.xg{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:12px;margin-top:12px}
+.xg details{padding:12px 14px}
+.xg summary{display:flex;gap:10px;align-items:center;font-family:var(--sans);font-weight:600;font-size:17px}
+.xg summary .em{font-size:64px;line-height:1}
+.xg details p{font-size:15px;margin:8px 0 0}
+.why{font-family:var(--mono);font-size:11px;border:1px solid var(--line);background:none;color:var(--acc);cursor:pointer;padding:0 5px;margin-left:4px}
+.whyt{grid-column:1/-1;font-family:var(--sans);font-size:13px;color:var(--mute);margin:-2px 0 4px}
+.whyt[hidden]{display:none}
+@media (max-width:480px){.sl .whyt{order:4}}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr));gap:0;border-top:2px solid var(--ink);margin-top:12px}
+.steps>div{padding:12px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--panel);font-size:15px}
+.steps .em{font-size:64px;line-height:1;display:block;margin-bottom:6px}
+.iso-teal{--iso-hi:#87C4B5;--iso-mid:#0F8A6B;--iso-lo:#084C3B;}
+.iso-amber{--iso-hi:#DCBA87;--iso-mid:#B8740F;--iso-lo:#654008;}
+.iso-coral{--iso-hi:#E8AA96;--iso-mid:#D2552D;--iso-lo:#742F19;}
+.iso-violet{--iso-hi:#A5A2D4;--iso-mid:#4B44A8;--iso-lo:#29255C;}
+.iso-slate{--iso-hi:#ADB2B8;--iso-mid:#5B6472;--iso-lo:#32373F;}
+.iso-red{--iso-hi:#E48896;--iso-mid:#C8102E;--iso-lo:#6E0919;}
+
+.ico{display:block;flex:none;overflow:visible}.ico.ico-hero{width:88px;height:88px}.ico.ico-sec{width:64px;height:64px;margin-bottom:6px}.ico.ico-card{width:44px;height:44px;margin-bottom:8px}.ico.ico-chip{width:32px;height:32px;display:inline-block;vertical-align:middle;margin:0 6px 0 0}
+</style>
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true"><defs>
+<linearGradient id="g-top" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient>
+<linearGradient id="g-left" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".9"/><stop offset="1" stop-color="#fff" stop-opacity=".1"/></linearGradient>
+<linearGradient id="g-right" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#000" stop-opacity=".05"/><stop offset="1" stop-color="#000" stop-opacity=".35"/></linearGradient>
+<radialGradient id="g-shadow"><stop offset="0" stop-color="#000" stop-opacity=".35"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+<mask id="m-top" maskContentUnits="userSpaceOnUse"><rect x="16" y="14" width="88" height="52" fill="url(#g-top)"/></mask>
+<linearGradient id="g-shine" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+</defs><symbol id="i-llm-drafter" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/><path d="M19 15l.7 1.5L21 17l-1.3.6L19 19l-.7-1.4L17 17l1.3-.5z"/></g></symbol><symbol id="i-pm" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M14 12.5h-3a1.25 1.25 0 0 0 0 2.5h2a1.25 1.25 0 0 1 0 2.5h-3M12 11.5v7.5"/></g></symbol><symbol id="i-risk" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4"/><circle cx="12" cy="17" r=".8" fill="currentColor"/></g></symbol><symbol id="i-measure" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15L15 4l5 5L9 20z"/><path d="M8 11l2 2M11 8l2 2M14 5l1 1M5 14l1 1"/></g></symbol><symbol id="i-kpi" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7"/><path d="M3 20h18"/><circle cx="20" cy="7" r="1" fill="currentColor"/></g></symbol><symbol id="i-security" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><rect x="9" y="11" width="6" height="5" rx="1"/><path d="M10 11V9.5a2 2 0 0 1 4 0V11"/></g></symbol><symbol id="i-event-stream" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h12M3 12h18M3 17h9"/><circle cx="18" cy="7" r="1.5"/><circle cx="15" cy="17" r="1.5"/></g></symbol><symbol id="i-clearinghouse" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-6 9 6"/><path d="M5 10v9M9.7 10v9M14.3 10v9M19 10v9"/><path d="M3 21h18"/></g></symbol><symbol id="i-payer" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V8l6-4 6 4v13"/><path d="M15 12h6v9"/><path d="M7 10h4M7 14h4M7 18h4"/><path d="M2 21h20"/></g></symbol><symbol id="i-explain" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.4.3.5.7.5 1.1h6c0-.4.1-.8.5-1.1A6 6 0 0 0 12 3z"/><path d="M12 7v4"/><circle cx="12" cy="13" r=".1" fill="currentColor"/></g></symbol><symbol id="i-monitor" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M6 11h3l2-3 2 5 2-2h3"/><path d="M9 20h6M12 16v4"/></g></symbol><symbol id="i-canary" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h6"/><path d="M9 13l8-6M9 13l8 6"/><path d="M14 5h3v3M14 21h3v-3"/><path d="M19 10l-4 4"/><circle cx="15.5" cy="10.5" r=".8"/><circle cx="19" cy="13.5" r=".8"/></g></symbol><symbol id="i-vault" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="15" rx="2"/><circle cx="12" cy="11.5" r="3.5"/><path d="M12 8v1.5M15.5 11.5H14M6 19v2M18 19v2"/></g></symbol><symbol id="i-webhook" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="17" r="2.5"/><circle cx="18" cy="17" r="2.5"/><circle cx="12" cy="6" r="2.5"/><path d="M10.7 8.2L7.3 14.8M13.3 8.2l3.4 6.6M8.5 17h7"/></g></symbol><symbol id="i-submit" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-7-6 17-3-7z"/><path d="M12 14l9-10"/></g></symbol><symbol id="i-agent" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 4v4"/><circle cx="12" cy="3.5" r="1"/><circle cx="9.5" cy="13" r="1" fill="currentColor"/><circle cx="14.5" cy="13" r="1" fill="currentColor"/><path d="M10 16.5h4"/></g></symbol><symbol id="i-approve" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></g></symbol><symbol id="i-remit-835" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/><circle cx="15" cy="15.5" r=".6" fill="currentColor"/></g></symbol><symbol id="i-claim-837" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 16h4"/><circle cx="16" cy="17" r=".6" fill="currentColor"/></g></symbol><symbol id="i-executive" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="3.5"/><path d="M5 21a7 7 0 0 1 14 0"/><path d="M12 14l-1.3 2 1.3 3 1.3-3z"/></g></symbol><symbol id="i-kubernetes" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l8 4v9l-8 6-8-6v-9z"/><circle cx="12" cy="12" r="3"/><path d="M12 5v4M12 15v4M6 9l3.4 2M18 9l-3.4 2"/></g></symbol><symbol id="i-replay" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 3v4h-4"/><path d="M10 9l5 3-5 3z"/></g></symbol><symbol id="i-lake" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M7 13c1.5 1 3.5 1 5 0s3.5-1 5 0"/></g></symbol><symbol id="i-mcp" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="6" height="8" rx="1.5"/><rect x="15" y="8" width="6" height="8" rx="1.5"/><path d="M9 12h6"/><path d="M12 4v4M12 16v4"/><circle cx="12" cy="12" r="1" fill="currentColor"/></g></symbol><symbol id="i-model" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></g></symbol><symbol id="i-denial" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></g></symbol><symbol id="i-appeal" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M12 16V9M9 12l3-3 3 3"/></g></symbol><symbol id="i-roadmap" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/><circle cx="18" cy="9" r=".8" fill="currentColor"/></g></symbol><symbol id="i-gateway" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V9l8-6 8 6v12"/><path d="M9 21v-7h6v7"/><circle cx="12" cy="9" r="1" fill="currentColor"/></g></symbol><symbol id="i-cache" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L5 13h6l-1 9 8-11h-6z"/></g></symbol><symbol id="i-network" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><circle cx="12" cy="13" r="1.2" fill="currentColor"/><path d="M12 7v5M6.5 17.5l4.5-3.5M17.5 17.5L13 14"/></g></symbol><symbol id="i-eval" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/><path d="M7.5 15h9"/><circle cx="11" cy="18" r=".6" fill="currentColor"/></g></symbol><symbol id="i-rollback" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v6h6"/><path d="M4.5 10A8 8 0 1 1 6 17.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></g></symbol><symbol id="i-policy-doc" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18H6z"/><path d="M9 7h6M9 10h6"/><path d="M12 13l3 1.2v1.8c0 1.8-1.3 2.8-3 3.5-1.7-.7-3-1.7-3-3.5v-1.8z"/></g></symbol><symbol id="i-rule-brick" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9h18v10H3z"/><path d="M3 14h18M9 9v5M15 14v5"/><path d="M7 9V6h4v3M13 9V6h4v3"/></g></symbol><symbol id="i-coder" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="7" r="3.5"/><path d="M3 21a7 7 0 0 1 11-5.7"/><path d="M17 15l-2 2.5 2 2.5M20 15l2 2.5-2 2.5"/></g></symbol><symbol id="i-sdk" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6"/><path d="M13.5 5l-3 14"/></g></symbol><symbol id="i-pattern-miner" viewBox="0 0 120 120"><ellipse cx="60" cy="98" rx="50" ry="13" fill="url(#g-shadow)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="16,40 60,66 60,90 16,64" style="fill:var(--iso-mid,#0F8A6B)" mask="url(#m-top)" opacity=".6"/><polygon points="104,40 60,66 60,90 104,64" style="fill:var(--iso-lo,#08523F)"/><polygon points="104,40 60,66 60,90 104,64" fill="url(#g-right)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-mid,#0F8A6B)"/><polygon points="60,14 104,40 60,66 16,40" style="fill:var(--iso-hi,#87C5B5)" mask="url(#m-top)"/><polygon points="60,14 104,40 60,66 16,40" fill="url(#g-shine)"/><polyline points="16,40 60,66 104,40" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1"/><g transform="translate(44.4 24.4) scale(1.3)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6"/><path d="M14.5 14.5L20 20"/><path d="M7 11l2-2 2 2 2-2"/></g></symbol></svg>
+
+<div id="pop" role="dialog" aria-label="Term definition" hidden></div>
+<button class="btn theme" id="themeBtn" type="button" aria-label="Dark theme" aria-pressed="false">theme</button>
+
+<!-- 1 HERO -->
+<section id="hero"><div class="wrap hero">
+  <div>
+    <div class="tag">ch.01 / signal path</div>
+    <h1>Agentic Gateway Atlas</h1>
+    <p class="lede">How a <button type="button" class="t101" data-t="Payment gateway">payment gateway</button> changes when the buyer, the <button type="button" class="t101" data-t="Merchant">merchant</button> and the operator are all software agents (<button type="button" class="t101" data-t="AI agent">AI agents</button>).</p>
+    <div class="seg" role="group" aria-label="Mode">
+      <button class="btn" id="heroToday" aria-pressed="true" type="button">Today</button>
+      <button class="btn" id="heroAgent" aria-pressed="false" type="button">Agentic</button>
+    </div>
+    <div class="stat" id="heroStat"></div>
+  </div>
+  <div class="scroll"><svg id="heroSvg" viewBox="0 0 640 260" width="100%" style="min-width:520px" role="img" aria-label="Packet moving through the gateway"></svg></div>
+</div></section>
+
+<!-- 1a VERDICT -->
+<section id="verdict"><div class="wrap"><div class="verdict">
+  <div class="tag">verdict / the call</div>
+  <h2>A now, built to grow into B. Use scheme KYA.</h2>
+  <div class="stat" style="margin-top:0"><span><b>3.65</b>A edge adapter</span><span><b>3.50</b>C protocol hub</span><span><b>2.70</b>B agent-native</span><span><b>0.15</b>lead, was 0.40 before red team</span></div>
+  <div class="conds">
+    <div><b class="n">1</b>Adapter is treated as in PCI scope and passes QSA review.</div>
+    <div><b class="n">2</b>Year one supports two protocols only, TAP and ACP.</div>
+    <div><b class="n">3</b>Dispute evidence pilot. If schemes give mandate evidence no weight, switch to C.</div>
+  </div>
+  <p class="mono" style="font-size:12px;color:var(--mute);margin:12px 0 0">Two hard rules in every option. No AI in the CDE. No LLM on the synchronous auth path. Roadmap only, not proposed, not priced.</p>
+</div></div></section>
+
+<!-- 1b PAYMENTS 101 -->
+<section id="p101"><div class="wrap">
+  <div class="tag">ch.01b / payments 101</div>
+  <h2>Payments 101</h2>
+  <p class="lede"><span id="n101">55</span> terms in plain words. Search, filter by group, or hover any dotted term on the page.</p>
+  <label class="mono" for="q101" style="font-size:12px;color:var(--mute);display:block;margin-bottom:4px">search terms</label>
+  <input class="search" id="q101" type="search" placeholder="try token, mandate, chargeback" autocomplete="off">
+  <div class="seg" role="group" aria-label="Term group" id="grp101" style="margin:12px 0"></div>
+  <div class="mono" id="cnt101" style="font-size:12px;color:var(--mute);margin-bottom:8px" aria-live="polite"></div>
+  <div class="g101" id="g101"></div>
+</div></section>
+
+<!-- 2 FLOW -->
+<section id="flow"><div class="wrap">
+  <div class="tag">ch.02 / hop by hop</div>
+  <h2>Click a hop. See the wire.</h2>
+  <p class="lede">Hover or focus a hop for its 101. Today the card goes through the <button type="button" class="t101" data-t="Vault">vault</button> and <button type="button" class="t101" data-t="3DS">3DS</button>. Tomorrow an agent carries a signed <button type="button" class="t101" data-t="Mandate">mandate</button>.</p>
+  <div class="seg" role="group" aria-label="Flow">
+    <button class="btn" id="flowToday" aria-pressed="true" type="button">Today flow</button>
+    <button class="btn" id="flowAgent" aria-pressed="false" type="button">Agentic flow</button>
+    <button class="btn" id="flowNext" type="button">Next hop &rarr;</button>
+  </div>
+  <div class="grid2" style="margin-top:14px">
+    <div class="scroll"><svg id="flowSvg" viewBox="0 0 760 300" width="100%" style="min-width:680px" role="group" aria-label="Payment hops, each one a button"></svg></div>
+    <div class="panel" id="hopPanel" aria-live="polite"></div>
+  </div>
+</div></section>
+
+<!-- 3 STACK -->
+<section id="stack"><div class="wrap">
+  <div class="tag">ch.03 / layer stack</div>
+  <h2>Same rails. New layers on top.</h2>
+  <label class="mono" for="stackSlider" style="font-size:13px;color:var(--mute)">slide: today &larr; &rarr; agentic</label>
+  <input type="range" id="stackSlider" min="0" max="100" value="50">
+  <div class="stack" id="stackBox" style="margin-top:12px"></div>
+</div></section>
+
+<!-- 4 TIMELINE -->
+<section id="timeline"><div class="wrap">
+  <div class="tag">ch.04 / it happened before</div>
+  <h2>Manual, API, algo, agent.</h2>
+  <p class="lede">Trading went first. Ads, travel and payments follow the same curve. Every wave needed a <button type="button" class="t101" data-t="Kill switch">kill switch</button>.</p>
+  <div class="scroll"><svg id="tlSvg" class="tl" viewBox="0 0 900 300" width="100%" role="img" aria-label="Timeline of manual, API, algo and agent eras in trading, ads, travel and payments"></svg></div>
+  <div class="cards" id="patterns"></div>
+</div></section>
+
+<!-- 4b WHY: WHO CAPTURES VALUE -->
+<section id="why"><div class="wrap">
+  <div class="tag">ch.04b / why move, who captures value</div>
+  <h2>Networks set the rules. Processors distribute. Gateways adapt.</h2>
+  <p class="lede">Payment flow from agent to network. Value captured rises to the right. Each box has a 101 line.</p>
+  <div class="vmap" role="list" aria-label="Value chain map">
+    <div class="vnode" role="listitem"><svg class="ico ico-sec iso-coral" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-agent"/></svg><h3>Agent platforms</h3><p><b class="mono">101</b> Own the buyer interface and the identity signals banks read.</p><span class="cap">Interface</span></div>
+    <div class="vnode" role="listitem"><svg class="ico ico-sec iso-violet" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-pm"/></svg><h3>Wallets and rails</h3><p><b class="mono">101</b> Stablecoin and wallet firms seek a seat via standards. Volumes unproven.</p><span class="cap">Seat, unproven</span></div>
+    <div class="vnode" role="listitem"><svg class="ico ico-sec iso-coral" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-mcp"/></svg><h3>Acquirers, gateways</h3><p><b class="mono">101</b> Adapt to scheme rails. Shift4, Evertec and Yuno sit in the alliance.</p><span class="cap">Adapter role</span></div>
+    <div class="vnode" role="listitem"><svg class="ico ico-sec iso-slate" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-kubernetes"/></svg><h3>Processors</h3><p><b class="mono">101</b> Fiserv and FIS roll out scheme protocols at scale.</p><span class="cap">Distribution</span></div>
+    <div class="vnode top" role="listitem"><svg class="ico ico-sec iso-slate" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-network"/></svg><h3>Networks</h3><p><b class="mono">101</b> Visa and Mastercard own agent trust, tokens and rules.</p><span class="cap">Most value</span></div>
+  </div>
+  <div class="cards">
+    <div class="card"><div class="mono">processors</div><h3>Fiserv on TAP and Agent Pay</h3><div>Adopted Dec 2025, background. FIS gives banks an agent platform, Jan 2026. <a class="src" href="https://www.digitaltransactions.net/fiserv-adopts-agentic-commerce-protocols-from-visa-and-mastercard/" target="_blank" rel="noopener">src</a></div></div>
+    <div class="card"><div class="mono">alliance</div><h3>26 founders, 18 Aug 2026</h3><div>Rain launched the Agentic Payments Alliance. Visa, Mastercard and Fiserv are founders. <a class="src" href="https://www.rain.xyz/resources/rain-launches-the-agentic-payments-alliance" target="_blank" rel="noopener">src</a></div></div>
+    <div class="card"><div class="mono">merchant-own checkout</div><h3>Agent approves, merchant charges</h3><div>ChatGPT Wallet, 13 Nov 2026, Reported. The buyer approves in chat. The merchant's own checkout takes payment with a token tied to one transaction, not to be saved or reused. Amex, Mastercard, Visa. US only, Pro tier. <a class="src" href="https://ppc.land/openai-hands-its-ai-agents-a-wallet-without-the-real-card-number-in-it/" target="_blank" rel="noopener">src</a><a class="src" href="https://developers.openai.com/commerce" target="_blank" rel="noopener">guides</a></div></div>
+    <div class="card"><div class="mono">caution</div><h3>No agent effect shown</h3><div>Fiserv guides 2026 organic growth at -1% to 0% and names no cause.</div></div>
+  </div>
+  <div class="panel" style="margin-top:16px;font-size:15px">
+    <p style="margin:0;color:var(--acc)"><b>So what. Whoever owns the merchant-facing agent integration keeps the merchant.</b></p>
+    <p style="margin:6px 0 0">That risk is scored as <a href="#arch" style="color:var(--acc)">integration control</a> in ch.07, weight 10%. It is why C, the hub, loses.</p>
+  </div>
+  <h3 style="margin:24px 0 4px;font-size:22px">Counter-evidence. Volumes are small today.</h3>
+  <div class="ce">
+    <div><b class="k">&lt;1%</b>Stripe says bot-driven payment traffic is under 1% of volume. <a class="src" href="https://www.emarketer.com/content/adyen-stripe-deepen-agentic-infrastructure-merchants" target="_blank" rel="noopener">src</a></div>
+    <div><b class="k">3%</b>Checkout.com puts agent involvement at 3%. <a class="src" href="https://www.checkout.com/newsroom/consumer-demand-for-ai-shopping-is-forming-fast-but-trust-for-agentic-commerce-is-still-catching-up" target="_blank" rel="noopener">src</a></div>
+    <div><b class="k">&gt;40%</b>Gartner predicts agentic AI projects cancelled by end 2027. <a class="src" href="https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027" target="_blank" rel="noopener">src</a></div>
+    <div><b class="k">flat</b>Forrester calls B2C agentic payments low and stagnant. <a class="src" href="https://www.forrester.com/blogs/agentic-payments-in-b2c-commerce-where-we-are-now/" target="_blank" rel="noopener">src</a></div>
+    <div><b class="k">$190B</b>Morgan Stanley US 2030 low end, up to $385B. Bain says $300B to $500B. <a class="src" href="https://www.morganstanley.com/insights/articles/agentic-commerce-market-impact-outlook" target="_blank" rel="noopener">src</a></div>
+    <div><b class="k">$3-5T</b>McKinsey global 2030. A hedged forecast, not observed volume, not for planning. <a class="src" href="https://www.digitalcommerce360.com/2025/10/20/mckinsey-forecast-5-trillion-agentic-commerce-sales-2030/" target="_blank" rel="noopener">src</a></div>
+  </div>
+  <p class="mono" style="font-size:12px;color:var(--mute);margin:10px 0 0">Reading. The case rests on standards timing, fraud value and integration control, not near-term agent GMV.</p>
+</div></section>
+
+<!-- 5 GALLERY -->
+<section id="gallery"><div class="wrap">
+  <div class="tag">ch.05 / agent roster</div>
+  <h2>Agents inside the gateway</h2>
+  <div class="filters">
+    <label for="fAuto">autonomy<select id="fAuto"><option value="">all</option><option>Assist</option><option>Recommend</option><option>Act with approval</option><option>Autonomous</option></select></label>
+    <label for="fVal">min value<select id="fVal"><option value="0">any</option><option value="4">4+</option><option value="5">5</option></select></label>
+    <label for="fMat">maturity<select id="fMat"><option value="">all</option><option>live</option><option>pilot</option><option>concept</option></select></label>
+  </div>
+  <div class="mono" id="galCount" style="font-size:12px;color:var(--mute);margin-bottom:8px"></div>
+  <div class="gal" id="gal"></div>
+  <p class="mono" style="font-size:12px;color:var(--mute);margin-top:10px">Source: lane A5. Autonomy shown at the approval-first stance. Value is an analyst score.</p>
+</div></section>
+
+<!-- 6 MIGRATION -->
+<section id="migrate"><div class="wrap">
+  <div class="tag">ch.06 / migration agent</div>
+  <h2>Move a POS menu. Watch every step.</h2>
+  <p class="lede">The agent does the <button type="button" class="t101" data-t="Schema mapping">schema mapping</button>, runs a <button type="button" class="t101" data-t="Dry run">dry run</button>, waits for a <button type="button" class="t101" data-t="Human in the loop">human</button> and ends with <button type="button" class="t101" data-t="Reconciliation">reconciliation</button>.</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+    <button class="btn go" id="runMig" type="button">&#9654; Run migration</button>
+    <button class="btn" id="approveMig" type="button" disabled>Approve flagged item</button>
+    <button class="btn" id="resetMig" type="button">Reset</button>
+  </div>
+  <div class="pipe" id="pipe" role="list" aria-label="Migration steps"></div>
+  <div class="grid2">
+    <div><div class="mono" style="font-size:12px;color:var(--mute)">source.json</div><pre id="srcJson"></pre></div>
+    <div class="panel">
+      <div class="mono" style="font-size:12px;color:var(--mute)">mapping diff</div>
+      <div class="diff" id="diff"><div>Press run to start.</div></div>
+      <div style="margin-top:14px" class="mono" id="recon"></div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 7 ARCH -->
+<section id="arch"><div class="wrap">
+  <div class="tag">ch.07 / pick an architecture</div>
+  <h2>Three ways in. Pick one.</h2>
+  <p class="lede">Each tab animates one option. Click a node for detail. Hover or focus it for the 101.</p>
+  <div class="tabs" role="tablist" aria-label="Architecture option" id="archTabs"></div>
+  <div class="grid2" id="archPanel" role="tabpanel" tabindex="0">
+    <div class="scroll"><svg id="archSvg" viewBox="0 0 1110 300" width="100%" style="min-width:820px" role="group" aria-label="Option flow diagram"></svg></div>
+    <div class="panel" id="archNode" aria-live="polite"></div>
+  </div>
+  <div class="pc" id="archPC"></div>
+  <h3 style="margin:28px 0 10px;font-size:24px">Move the weights. Watch the winner.</h3>
+  <p class="mono" style="font-size:12px;color:var(--mute);margin:0 0 10px">The report's 9 criteria and fit scores, section 10. Press why for each weight.</p>
+  <div class="seg" role="group" aria-label="Weight presets" id="presets" style="margin-bottom:12px"><button class="btn" type="button" data-p="report" aria-pressed="true">Report weights</button><button class="btn" type="button" data-p="ic0" aria-pressed="false">Integration control 0</button><button class="btn" type="button" data-p="fast" aria-pressed="false">Cost and speed x2</button><button class="btn" type="button" data-p="liab" aria-pressed="false">Liability and control x2</button></div>
+  <div class="grid2">
+    <div class="panel" id="weights"></div>
+    <div class="panel mono" style="font-size:13px" id="archNote"></div>
+  </div>
+  <div class="arch" id="archCards" style="margin-top:14px"></div>
+  <h3 style="margin:28px 0 4px;font-size:24px">Merchant migration path</h3>
+  <div class="steps">
+    <div><svg class="ico ico-card iso-coral" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-mcp"/></svg><b>Same API</b><br>Merchants keep the existing merchant API. No new contract.</div>
+    <div><svg class="ico ico-card iso-coral" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-agent"/></svg><b>Own checkout</b><br>The agent approves. The merchant's own checkout takes payment through the same gateway.</div>
+    <div><svg class="ico ico-card iso-amber" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-risk"/></svg><b>Opt-in flag</b><br>Merchant sets an agent flag on the existing API.</div>
+    <div><svg class="ico ico-card iso-amber" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-rule-brick"/></svg><b>Adapter routes</b><br>Agent traffic goes through the edge adapter, per protocol.</div>
+    <div><svg class="ico ico-card iso-slate" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-rollback"/></svg><b>Rollback</b><br>Flag off per merchant or globally. Human-path rules apply.</div>
+    <div><svg class="ico ico-card iso-violet" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-sql"/></svg><b>Ledger kept</b><br>Read only, in region, for the full dispute window.</div>
+  </div>
+  <h3 style="margin:28px 0 8px;font-size:24px">CTO build checklist</h3>
+  <div class="scroll"><table class="tbl"><thead><tr><th>Item</th><th>What year one needs</th><th>Status</th></tr></thead><tbody>
+    <tr><td>Refunds and partial capture</td><td>Refund and partial capture carry the mandate hash back to the ledger</td><td><span class="st wip">design needed</span></td></tr>
+    <tr><td>MIT and CIT recurring mandates</td><td>Map intent mandates to merchant-initiated recurring flags per scheme</td><td><span class="st wip">design needed</span></td></tr>
+    <tr><td>3DS 2.3.1 and 2.4, SCA</td><td>Step-up above mandate thresholds. SCA exemptions per region</td><td><span class="st wip">design needed</span></td></tr>
+    <tr><td>Per-agent card limits</td><td>A virtual card per agent or per order with an amount cap, a merchant lock and an expiry. A mandate-bound virtual card approves one charge only when supplier, amount and signed mandate match</td><td><span class="st wip">design needed</span></td></tr>
+    <tr><td>Merchant-own checkout path</td><td>Accept a token tied to one transaction from an agent wallet. Never save or reuse it. Carry the agent approval into the ledger</td><td><span class="st wip">design needed</span></td></tr>
+    <tr><td>Issuer view</td><td>Agent indicators in ISO 8583, per scheme</td><td><span class="st no">open question</span></td></tr>
+    <tr><td>Sandbox</td><td>Agent sandbox with test agents and test mandates</td><td><span class="st ok">in year one</span></td></tr>
+    <tr><td>Observability</td><td>Per-agent funnels, signature failure rate, mandate mismatch rate, ledger lag, approval rate agent vs human. OpenTelemetry traces with no PAN <a class="src" href="https://opentelemetry.io/docs/" target="_blank" rel="noopener">src</a></td><td><span class="st ok">in year one</span></td></tr>
+    <tr><td>SLAs and p99</td><td>Adapter under 20 ms at p99. Asserted, not measured. Pilot must confirm</td><td><span class="st wip">to measure</span></td></tr>
+    <tr><td>Cost</td><td>Build plus run, plus upkeep per protocol version</td><td><span class="st no">not priced</span></td></tr>
+  </tbody></table></div>
+  <h3 style="margin:28px 0 8px;font-size:24px">Protocol maturity</h3>
+  <div class="scroll"><table class="tbl"><thead><tr><th>Protocol</th><th>Version or state</th><th>Date</th><th>Source</th></tr></thead><tbody>
+    <tr><td>Visa TAP</td><td>Spec public. Signatures single use and time bound. Year one</td><td>2025-10</td><td><a class="src" href="https://developer.visa.com/capabilities/trusted-agent-protocol/trusted-agent-protocol-specifications" target="_blank" rel="noopener">src</a></td></tr>
+    <tr><td>ACP</td><td>No tagged release. Repo reported quiet since 2026-07-18. Year one</td><td>2026</td><td><a class="src" href="https://shopappy.com/?p=9900" target="_blank" rel="noopener">src, low</a></td></tr>
+    <tr><td>AP2</td><td>v0.2, now under the FIDO Alliance. No repo release</td><td>2026-04-28</td><td><a class="src" href="https://blog.google/products-and-platforms/platforms/google-pay/agent-payments-protocol-fido-alliance/" target="_blank" rel="noopener">src</a><a class="src" href="https://github.com/google-agentic-commerce/AP2" target="_blank" rel="noopener">repo</a></td></tr>
+    <tr><td>Mastercard Agent Pay</td><td>Live. One token per agent with scope limits</td><td>2026-03-22</td><td><a class="src" href="https://atxp.ai/blog/mastercard-agent-pay-stripe-acp-visa-x402-comparison-2026" target="_blank" rel="noopener">src</a></td></tr>
+    <tr><td>Web Bot Auth</td><td>IETF draft-00 over RFC 9421</td><td>2026-09-01</td><td><a class="src" href="https://datatracker.ietf.org/doc/html/draft-ietf-webbotauth-httpsig-protocol-00" target="_blank" rel="noopener">src</a></td></tr>
+    <tr><td>EMVCo agentic framework</td><td>Draft, feedback requested</td><td>2026-09-01</td><td><a class="src" href="https://www.emvco.com/news/emvco-requests-feedback-on-framework-for-secure-interoperable-and-scalable-card-based-agentic-payments/" target="_blank" rel="noopener">src</a></td></tr>
+    <tr><td>UCP</td><td>Breaking release v2026-08-25</td><td>2026-08</td><td><a class="src" href="https://ucpchecker.com/blog?page=2" target="_blank" rel="noopener">src</a></td></tr>
+    <tr><td>MCP</td><td>Stripe and PayPal remote servers live</td><td>checked 2026-10-18</td><td><a class="src" href="https://docs.stripe.com/mcp" target="_blank" rel="noopener">src</a><a class="src" href="https://developer.paypal.com/tools/mcp-server/" target="_blank" rel="noopener">paypal</a></td></tr>
+    <tr><td>A2A</td><td>Open standard, hosted by the Linux Foundation</td><td>undated</td><td><a class="src" href="https://a2a-protocol.org/" target="_blank" rel="noopener">src</a></td></tr>
+    <tr><td>x402</td><td>Foundation under the Linux Foundation, 40 members. Optional rail in year five</td><td>2026-07-14</td><td><a class="src" href="https://www.linuxfoundation.org/press/linux-foundation-announces-operational-launch-of-x402-foundation-to-standardize-internet-native-payments-for-ai-agents-and-applications" target="_blank" rel="noopener">src</a></td></tr>
+  </tbody></table></div>
+</div></section>
+
+<!-- 7b WHAT BREAKS -->
+<section id="redteam"><div class="wrap">
+  <div class="tag">ch.07b / what breaks</div>
+  <h2>Ten gaps. Each one changed the design.</h2>
+  <p class="lede">The red team challenged Option A and the scores. A still leads, but by 0.15 not 0.40.</p>
+  <div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>Gap</th><th>Resolution</th><th>Change</th></tr></thead><tbody>
+    <tr><td>1</td><td>Connected-to zoning overstated <a class="src" href="https://www.pcisecuritystandards.org/?p=64616" target="_blank" rel="noopener">src</a></td><td>Adapter in PCI scope as connected-to. CDE unchanged. QSA review</td><td>PCI score A 5 to 4</td></tr>
+    <tr><td>2</td><td>Replay inside the signature window <a class="src" href="https://developer.visa.com/capabilities/trusted-agent-protocol/trusted-agent-protocol-specifications" target="_blank" rel="noopener">src</a></td><td>Replay cache on signature or session ID, bound to Idempotency-Key, clock skew bound</td><td>Failure mode added</td></tr>
+    <tr><td>3</td><td>Mandate revocation <a class="src" href="https://github.com/google-agentic-commerce/AP2" target="_blank" rel="noopener">src</a></td><td>Revocation list in memory before every auth. Fail closed when stale</td><td>Failure mode, open question</td></tr>
+    <tr><td>4</td><td>Prompt injection into carts <a class="src" href="https://arxiv.org/abs/2608.23858" target="_blank" rel="noopener">src</a></td><td>Cart-to-intent rules. Step-up above mandate thresholds</td><td>Security claim narrowed</td></tr>
+    <tr><td>5</td><td>Disputes and evidence <a class="src" href="https://www.chargeflow.io/blog/ai-agent-chargeback-liability" target="_blank" rel="noopener">src</a></td><td>Map to Compelling Evidence 3.0. Treat value as a hypothesis</td><td>Evidence pilot in year one</td></tr>
+    <tr><td>6</td><td>Multi-protocol versioning cost <a class="src" href="https://ucpchecker.com/blog?page=2" target="_blank" rel="noopener">src</a></td><td>Two protocols in year one. Deprecation policy per adapter</td><td>Maturity score A 4 to 3</td></tr>
+    <tr><td>7</td><td>Data residency and GDPR <a class="src" href="https://www.insideprivacy.com/artificial-intelligence/spanish-supervisory-authority-issues-detailed-guidance-on-agentic-ai-and-gdpr-compliance/" target="_blank" rel="noopener">src</a></td><td>Hashes and pseudonymous IDs. Raw mandates in region. DPIA</td><td>Open question added</td></tr>
+    <tr><td>8</td><td>Agent impersonation <a class="src" href="https://datatracker.ietf.org/doc/html/draft-ietf-webbotauth-httpsig-protocol-00" target="_blank" rel="noopener">src</a></td><td>Unknown agents get the lowest tier. Scheme-registered for higher limits</td><td>Made explicit</td></tr>
+    <tr><td>9</td><td>Adapter latency, two hops</td><td>Pilot measures p99. Fail open only for read calls, never auth</td><td>Latency score A 4 to 3</td></tr>
+    <tr><td>10</td><td>Operating cost, merchant migration <a class="src" href="https://www.mastercard.com/global/en/news-and-trends/press/2026/september/mastercard-gives-merchants-a-simpler-way-to-build--connect-and-s.html" target="_blank" rel="noopener">src</a></td><td>Opt-in agent flag on the existing merchant API</td><td>Cost score A 4 to 3</td></tr>
+  </tbody></table></div>
+  <h3 style="margin:24px 0 4px;font-size:22px">Failure modes. Open a card.</h3>
+  <div class="xg">
+    <details><summary><svg class="ico ico-chip iso-teal" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-replay"/></svg>Replay</summary><p><b>Effect.</b> Duplicate or forged auth inside the signature window.</p><p><b>Fix.</b> Replay cache for the full validity window, bound to the idempotency key.</p></details>
+    <details><summary><svg class="ico ico-chip iso-red" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-denial"/></svg>Revocation</summary><p><b>Effect.</b> Charge after the user withdrew consent.</p><p><b>Fix.</b> Revocation events in the ledger. List checked before every auth. Fail closed when stale.</p></details>
+    <details><summary><svg class="ico ico-chip iso-red" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-cross"/></svg>Impersonation</summary><p><b>Effect.</b> Unknown operator gets high limits.</p><p><b>Fix.</b> A signature proves key control only. Unregistered agents get the lowest tier.</p></details>
+    <details><summary><svg class="ico ico-chip iso-red" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-risk"/></svg>Prompt injection</summary><p><b>Effect.</b> Valid mandate over an unwanted cart, injected upstream.</p><p><b>Fix.</b> Cart-to-intent rules and step-up consent. Agent text never reaches a decision function.</p></details>
+    <details><summary><svg class="ico ico-chip iso-red" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-vault"/></svg>Key directory poisoned</summary><p><b>Effect.</b> Forged agent requests.</p><p><b>Fix.</b> Pinned sources, signed key sets, alert on unexpected rotation.</p></details>
+    <details><summary><svg class="ico ico-chip iso-red" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-drift"/></svg>Retry storm</summary><p><b>Effect.</b> Auth load and duplicate charges.</p><p><b>Fix.</b> Mandatory idempotency keys, per-agent rate limits, circuit breaker.</p></details>
+    <details><summary><svg class="ico ico-chip iso-violet" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-rule-registry"/></svg>Ledger write fails</summary><p><b>Effect.</b> Lost evidence.</p><p><b>Fix.</b> Outbox pattern, reconcile, block when ledger lag passes a threshold.</p></details>
+    <details><summary><svg class="ico ico-chip iso-red" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-risk"/></svg>Bad deploy</summary><p><b>Effect.</b> Runaway behaviour, Knight Capital style.</p><p><b>Fix.</b> Feature flags, canary, kill switch per agent, merchant and global.</p></details>
+  </div>
+</div></section>
+
+<!-- 7c LIABILITY -->
+<section id="liability"><div class="wrap">
+  <div class="tag">ch.07c / liability, disputes and privacy</div>
+  <h2>Who pays when an agent gets it wrong?</h2>
+  <div class="cards">
+    <div class="card"><svg class="ico ico-sec iso-amber" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-appeal"/></svg><div class="mono">liability</div><h3>Scheme rules pending</h3><div>No rule yet assigns fault among user, agent platform and merchant. Create evidence, promise no liability shift. <a class="src" href="https://www.worldpay.com/en/insights/articles/agentic-commerce-liability-is-still-being-written" target="_blank" rel="noopener">src</a><a class="src" href="https://www.chargeflow.io/blog/ai-agent-chargeback-liability" target="_blank" rel="noopener">fault</a></div></div>
+    <div class="card"><svg class="ico ico-sec iso-amber" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-remit-835"/></svg><div class="mono">disputes</div><h3>CE 3.0 and the pilot</h3><div>Visa 10.4, 13.1 and 13.3 have no agent reason code. Map mandate evidence to Compelling Evidence 3.0 fields. If the pilot shows no dispute weight, switch to C. <a class="src" href="https://justt.ai/blog/solving-agentic-commerce-chargebacks/" target="_blank" rel="noopener">src</a></div></div>
+    <div class="card"><svg class="ico ico-sec iso-violet" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-security"/></svg><div class="mono">privacy</div><h3>Mandates are personal data</h3><div>Ledger holds hashes and pseudonymous IDs. Raw mandates stay in region, retention tied to dispute windows. DPIA before go-live. <a class="src" href="https://www.insideprivacy.com/artificial-intelligence/spanish-supervisory-authority-issues-detailed-guidance-on-agentic-ai-and-gdpr-compliance/" target="_blank" rel="noopener">src</a></div></div>
+  </div>
+  <h3 style="margin:24px 0 8px;font-size:22px">Regulatory grid</h3>
+  <div class="scroll"><table class="tbl"><thead><tr><th>Rule</th><th>What it means here</th><th>Status</th></tr></thead><tbody>
+    <tr><td>PCI SSC AI guidance, 2026-10-07</td><td>Access to tokens plus detokenise tools counts as access to readable data. Least agency. <a class="src" href="https://www.pcisecuritystandards.org/?p=64616" target="_blank" rel="noopener">src</a></td><td><span class="st ok">published</span></td></tr>
+    <tr><td>PSD3 and PSR, EU</td><td>Deal Nov 2025, final texts Apr 2026. Likely applies mid to late 2028. Agent payments outside the mandate may count as unauthorised, so the PSP refunds. Year 1: SCA at mandate set-up, scoped limits, audit logs, fraud data sharing. No agent specific SCA text verified. Background sources <a class="src" href="https://www.arthurcox.com/insights/psd3-and-psr-final-compromise-texts-published/" target="_blank" rel="noopener">src</a> <a class="src" href="https://worldline.com/en/home/main-navigation/resources/blogs/2026/the-scope-and-timeline-are-locked-in-for-psd3-and-psr-what-should-psps-know" target="_blank" rel="noopener">src</a></td><td><span class="st wip">adopted, not yet applying</span></td></tr>
+    <tr><td>EU AI Act</td><td>Bans and GPAI rules apply now. Omnibus moves high risk rules to Dec 2027. Fraud detection is excluded, credit or BNPL scoring in the agent flow is high risk. Agents must say they are AI (Art 50, date change not verified). Year 1: model inventory and AI disclosure. Background sources <a class="src" href="https://datamatters.sidley.com/2026/06/22/eu-lawmakers-reach-provisional-agreement-to-delay-key-eu-ai-act-obligations/" target="_blank" rel="noopener">src</a> <a class="src" href="https://www.gibsondunn.com/eu-ai-act-omnibus-agreement-postponed-high-risk-deadlines-and-other-key-changes/" target="_blank" rel="noopener">src</a></td><td><span class="st wip">partly live</span></td></tr>
+    <tr><td>CFPB 1033, US</td><td>Personal financial data rights. Reopened for reconsideration in 2025 <a class="src" href="https://www.consumerfinance.gov/rules-policy/final-rules/required-rulemaking-on-personal-financial-data-rights/" target="_blank" rel="noopener">src</a></td><td><span class="st wip">reopened</span></td></tr>
+  </tbody></table></div>
+</div></section>
+
+<!-- 8 GUARD -->
+<section id="guard"><div class="wrap">
+  <div class="tag">ch.08 / guardrails</div>
+  <h2>Agents spend. Rails say no.</h2>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+    <button class="btn go" id="burst" type="button">Send agent burst</button>
+    <button class="btn" id="rogue" type="button">Send out-of-mandate order</button>
+    <button class="btn warn" id="kill" type="button">Trip the breaker</button>
+  </div>
+  <div class="grid2">
+    <div class="panel">
+      <div class="mono" style="font-size:12px">rate limit, 10 req per window</div>
+      <div class="meter" id="rateM"><i style="width:0"></i></div>
+      <div class="mono" style="font-size:12px;margin-top:12px"><button type="button" class="t101" data-t="Mandate">mandate</button> spend, cap $500, <button type="button" class="t101" data-t="Guardrail">guardrail</button></div>
+      <div class="meter" id="spendM"><i style="width:0"></i></div>
+      <div class="scroll" style="margin-top:12px"><svg id="gSvg" viewBox="0 0 520 120" width="100%" style="min-width:420px" role="img" aria-label="Request path through rate limit, mandate and breaker"></svg></div>
+    </div>
+    <div>
+      <div class="breaker" id="breaker">BREAKER CLOSED, traffic flows</div>
+      <div class="log" id="glog" style="margin-top:10px" aria-live="polite"></div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 8a B2B DEMO -->
+<section id="b2bdemo"><div class="wrap">
+  <div class="tag">ch.08a / shipped in the B2B demo</div>
+  <h2>New controls in the demo</h2>
+  <p class="lede">All on sandbox or simulated money. Tap a tile for detail. Visa with BILL and Billtrust is still a pilot.</p>
+  <div class="xg">
+    <details><summary><svg class="ico ico-hero iso-red" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-security"/></svg>Bank-change check</summary><p>A supplier asks to change bank details. The change waits for a call-back to a known number, then a cooling-off hold, then a second person signs off (maker-checker).</p></details>
+    <details><summary><svg class="ico ico-hero iso-violet" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-policy-doc"/></svg>Mandate-bound card</summary><p>A virtual card issued for one approved order. It approves a charge only for that order and its exact amount. The issuer is simulated or Stripe Issuing in test mode. It is not a card network product.</p></details>
+    <details><summary><svg class="ico ico-hero iso-slate" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-explain"/></svg>Dispute evidence</summary><p>One record per paid order: mandate, approvals, match result and payment events. Card numbers show the last 4 digits only.</p></details>
+    <details><summary><svg class="ico ico-hero iso-teal" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-kpi"/></svg>Early pay</summary><p>Invoices show payment terms, the pay-by date and the early-pay discount. A second admin approves a pay-early plan. Savings are demo figures.</p></details>
+    <details><summary><svg class="ico ico-hero iso-amber" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-measure"/></svg>Tariff scenario</summary><p>Duty fields on order lines feed a 12 week cash forecast, with and without exclusions. Duty rates are user inputs. No live tariff feed. The notice names both 9 and 10 January 2027 as the end date, so the date is a setting.</p></details>
+    <details><summary><svg class="ico ico-hero iso-coral" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-vault"/></svg>Credit line</summary><p>A simulated credit line. The operator sets limit and rate. Each draw needs a maker and a checker. No real lender.</p></details>
+    <details><summary><svg class="ico ico-hero iso-teal" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-approve"/></svg>Chat approvals</summary><p>Approvers see an order card in Slack or Teams. Same rules and limits as the app. Mock preview only.</p></details>
+    <details><summary><svg class="ico ico-hero iso-violet" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-model"/></svg>Copilot charts</summary><p>Ask a question, get a chart from fixed read-only tools, with sources. Export as PNG.</p></details>
+  </div>
+</div></section>
+
+<!-- 8b ADR -->
+<section id="adr"><div class="wrap">
+  <div class="tag">ch.08b / decisions</div>
+  <h2>Five decisions on record</h2>
+  <div class="xg">
+    <details><summary><svg class="ico ico-chip iso-amber" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-rule-brick"/></svg>ADR-1. Edge adapter</summary><p><b>Decision.</b> Option A, with a canonical agent payment object built to seed B.</p><p><b>Consequence.</b> Fast and reversible. In PCI scope as connected-to. Review when scheme liability rules land or the pilot shows no dispute value.</p></details>
+    <details><summary><svg class="ico ico-chip iso-coral" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-model"/></svg>ADR-2. No LLM on auth</summary><p><b>Decision.</b> LLM async only, on de-identified data. No AI in the CDE.</p><p><b>Consequence.</b> Predictable latency and audit. LLM value sits in disputes and copilots.</p></details>
+    <details><summary><svg class="ico ico-chip iso-violet" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-rule-registry"/></svg>ADR-3. Mandate ledger</summary><p><b>Decision.</b> Append-only ledger outside the CDE. Mandate hash, agent ID, protocol version, decision. No PAN.</p><p><b>Consequence.</b> Evidence ready for any rule. One more store to run.</p></details>
+    <details><summary><svg class="ico ico-chip iso-violet" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-policy-doc"/></svg>ADR-4. Scheme KYA</summary><p><b>Decision.</b> Hybrid. Consume scheme directories for keys and tiers, keep a thin local tier map.</p><p><b>Consequence.</b> Less identity liability. Partner uptime handled by caching within key expiry.</p></details>
+    <details><summary><svg class="ico ico-chip iso-violet" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-canary"/></svg>ADR-5. Versioned adapters</summary><p><b>Decision.</b> Adapters normalise to one object, version pinned and canaried.</p><p><b>Consequence.</b> Two protocols in year one. Deprecation policy per adapter. New protocol only when a scheme or top merchant asks.</p></details>
+  </div>
+  <h3 style="margin:24px 0 8px;font-size:22px">Open questions</h3>
+  <ol class="panel" style="margin:0;padding-left:36px;font-size:15px">
+    <li>When will Visa and Mastercard publish agent liability and reason code rules?</li>
+    <li>Will EMVCo Intent Services become final, and when?</li>
+    <li>Will AP2 move past v0.2 under FIDO?</li>
+    <li>When does the gateway's own agentic offer reach GA?</li>
+    <li>Which agent indicators will each scheme carry in ISO 8583?</li>
+    <li>How will AP2 and ACP express mandate revocation, and how fast must a gateway honour it?</li>
+    <li>How will issuers weigh mandate evidence, and will Compelling Evidence rules extend to agents?</li>
+    <li>Which data regions must the ledger cover for EU and UK merchants?</li>
+    <li>What are the ChatGPT Wallet fees, who is merchant of record, and which dispute rules apply? None are stated at launch.</li>
+  </ol>
+</div></section>
+
+<!-- 9 ROADMAP -->
+<section id="road"><div class="wrap">
+  <div class="tag">ch.09 / horizon</div>
+  <h2>Roadmap</h2>
+  <span class="badge" style="margin:0 0 12px">NOT PROPOSED, NOT PRICED</span>
+  <div class="road">
+    <div><div class="yr">1y</div><b>Edge adapter, two protocols</b><ul><li>TAP and ACP only</li><li>Signature verifier with replay cache</li><li>Revocation list, fail closed</li><li>KYA tiers from scheme directories</li><li>Mandate ledger in region, DPIA</li><li>Kill switches, sandbox, per-agent observability</li><li>QSA review of the adapter</li><li>Dispute evidence pilot, go or no-go for C</li><li>Opt-in agent flag on the merchant API</li><li>Merchant-own checkout path for wallet tokens</li><li>Per-agent card limits</li></ul></div>
+    <div><div class="yr">3y</div><b>Add protocols on demand</b><ul><li>AP2, <button type="button" class="t101" data-t="MCP">MCP</button>, A2A and Agent Pay adapters, each only when a scheme or top merchant asks</li><li>Agent-aware risk features on labelled data</li><li>Dispute evidence export (record already built in the B2B demo)</li><li>Async LLM dispute drafter</li></ul></div>
+    <div><div class="yr">5y</div><b>Maybe agent-native</b><ul><li>Promote the canonical object and ledger into Option B, only if liability rules and volumes justify it</li><li>Optional x402 rail</li></ul></div>
+  </div>
+</div></section>
+
+<!-- 10 SOURCES -->
+<section id="sources" style="border:0"><div class="wrap">
+  <details id="srcDrawer"><summary id="srcSummary">Sources</summary><ol id="srcList"></ol></details>
+  <p class="mono" style="font-size:12px;color:var(--mute);margin-top:12px">Timeline labels are indicative eras, not dated events. Generic reference view. Vendor names are public examples only.</p>
+</div></section>
+
+<script>
+(function(){
+const $=s=>document.querySelector(s);
+const NS="http://www.w3.org/2000/svg";
+const RMQ=window.matchMedia("(prefers-reduced-motion: reduce)");let RM=RMQ.matches;
+function el(t,a,p){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function txt(x,y,s,p,extra){const t=el("text",Object.assign({x:x,y:y,"font-size":12},extra||{}),p);t.textContent=s;return t}
+
+const ISO={"✍": ["llm-drafter", "amber"], "💲": ["pm", "amber"], "🚨": ["risk", "red"], "💱": ["measure", "amber"], "⚠": ["risk", "red"], "📊": ["kpi", "violet"], "🏰": ["security", "violet"], "📣": ["event-stream", "violet"], "🏛": ["clearinghouse", "violet"], "🏪": ["payer", "slate"], "📈": ["kpi", "slate"], "💬": ["explain", "coral"], "📺": ["monitor", "slate"], "🔀": ["canary", "violet"], "🏦": ["clearinghouse", "slate"], "🔑": ["vault", "violet"], "📡": ["webhook", "violet"], "🛒": ["submit", "teal"], "🤖": ["agent", "coral"], "🤝": ["approve", "teal"], "🧾": ["remit-835", "amber"], "🎫": ["claim-837", "violet"], "✅": ["approve", "teal"], "🛍": ["executive", "slate"], "⚙": ["kubernetes", "slate"], "🔁": ["replay", "teal"], "📥": ["lake", "violet"], "🔌": ["mcp", "coral"], "🧠": ["model", "coral"], "🛑": ["denial", "red"], "⚖": ["appeal", "amber"], "🏢": ["payer", "slate"], "💳": ["pm", "violet"], "🗺": ["roadmap", "violet"], "🎯": ["kpi", "teal"], "🛡": ["security", "teal"], "🙋": ["executive", "slate"], "🚪": ["gateway", "violet"], "🖋": ["llm-drafter", "violet"], "⚡": ["cache", "amber"], "🌐": ["network", "slate"], "🔗": ["webhook", "violet"], "📨": ["webhook", "violet"], "🕸": ["network", "violet"], "🧪": ["eval", "coral"], "🧯": ["denial", "red"], "🔂": ["replay", "violet"], "🔢": ["claim-837", "violet"], "↩": ["rollback", "slate"], "💰": ["pm", "teal"], "🪪": ["policy-doc", "violet"], "🚧": ["rule-brick", "red"], "📜": ["policy-doc", "violet"], "🔐": ["vault", "violet"], "👩‍💻": ["coder", "coral"], "🧩": ["sdk", "amber"], "🧱": ["rule-brick", "amber"], "📲": ["approve", "teal"], "📤": ["submit", "violet"], "🕵": ["pattern-miner", "coral"], "🎟": ["remit-835", "violet"]};
+function ico(e,tier){const m=ISO[String(e).replace(/\ufe0f/g,"")]||["agent","slate"];return `<svg class="ico ico-${tier} iso-${m[1]}" aria-hidden="true" focusable="false" viewBox="8 10 104 104"><use width="120" height="120" href="#i-${m[0]}"/></svg>`}
+/* 101 GLOSSARY */
+const G101=[{"term": "Shopper", "group": "payments", "emoji": "🛍️", "one_liner": "The person buying goods or services.", "detail": "The cardholder who starts a purchase online or in store. In agentic commerce the shopper may delegate the purchase to an AI agent.", "example": "Ana buys running shoes on a sports website.", "source_url": "https://www.emvco.com/emv-technologies/3-d-secure/"}, {"term": "Merchant", "group": "payments", "emoji": "🏪", "one_liner": "The business that sells and accepts payment.", "detail": "A seller that has an agreement with an acquirer to accept card and other payments for its goods or services.", "example": "An online shoe shop accepting Visa and Mastercard.", "source_url": "https://usa.visa.com/about-visa/visanet.html"}, {"term": "Payment gateway", "group": "payments", "emoji": "🚪", "one_liner": "Software that securely passes payment data from merchant to processor.", "detail": "The technical front door for payments. It collects card data, applies security and routing, and returns the result to the merchant checkout.", "example": "Checkout sends card details to the gateway, which returns approved.", "source_url": "https://www.pcisecuritystandards.org/standards/pci-dss/"}, {"term": "Payment processor", "group": "payments", "emoji": "⚙️", "one_liner": "Company that moves transaction messages between merchant side and card networks.", "detail": "Handles authorisation, clearing and settlement messaging for acquirers and merchants, often bundled with gateway services.", "example": "The processor forwards the authorisation request to the card network.", "source_url": "https://usa.visa.com/about-visa/visanet.html"}, {"term": "Acquirer", "group": "payments", "emoji": "🏦", "one_liner": "The merchant's bank that receives card payments for it.", "detail": "A licensed bank or institution that signs up merchants, takes on their risk and credits them with settled funds.", "example": "The acquirer pays the shoe shop at day end.", "source_url": "https://www.mastercard.us/en-us/business/overview/start-accepting.html"}, {"term": "Card scheme / network", "group": "payments", "emoji": "🌐", "one_liner": "The network linking issuers and acquirers, such as Visa or Mastercard.", "detail": "Sets the rules, fees and messaging standards for card payments and routes transactions between acquiring and issuing banks.", "example": "Visa routes the request from acquirer to issuer.", "source_url": "https://usa.visa.com/about-visa/visanet.html"}, {"term": "Issuer", "group": "payments", "emoji": "💳", "one_liner": "The shopper's bank that issued the card.", "detail": "Approves or declines each transaction based on funds, fraud checks and authentication, and bills the cardholder.", "example": "The issuer declines a payment for insufficient funds.", "source_url": "https://www.mastercard.us/en-us/business/overview/start-accepting.html"}, {"term": "Interchange", "group": "payments", "emoji": "🔁", "one_liner": "Fee the acquirer pays the issuer on each card sale.", "detail": "Set by card schemes and varies by card type, region and channel. It is the largest part of merchant card costs.", "example": "A consumer debit sale carries a lower interchange fee than premium credit.", "source_url": "https://usa.visa.com/support/small-business/regulations-fees.html"}, {"term": "MDR", "group": "payments", "emoji": "🧾", "one_liner": "Merchant discount rate. The total fee a merchant pays per card sale.", "detail": "Bundles interchange, scheme fees and the acquirer margin, usually quoted as a percentage plus a fixed amount.", "example": "A 2.1 percent MDR on a 100 dollar sale costs 2.10.", "source_url": "https://www.investopedia.com/terms/m/merchant-discount-rate.asp"}, {"term": "Authorisation", "group": "payments", "emoji": "✅", "one_liner": "The issuer's real time approval or decline of a payment.", "detail": "Checks the card, funds and risk, then places a hold on the amount. No money moves yet.", "example": "A hotel authorises 200 dollars at check in.", "source_url": "https://usa.visa.com/about-visa/visanet.html"}, {"term": "Capture", "group": "payments", "emoji": "📥", "one_liner": "Merchant confirms an authorised amount should actually be charged.", "detail": "Turns an authorisation hold into a charge, often when goods ship. Can be full or partial.", "example": "The shop captures the payment when the shoes ship.", "source_url": "https://stripe.com/docs/payments/place-a-hold-on-a-payment-method"}, {"term": "Clearing", "group": "payments", "emoji": "📤", "one_liner": "Exchange of final transaction details between acquirer and issuer.", "detail": "Captured transactions are batched and sent through the network so both banks agree on amounts and fees owed.", "example": "Nightly clearing files go from acquirer to scheme.", "source_url": "https://www.mastercard.us/en-us/business/overview/start-accepting.html"}, {"term": "Settlement", "group": "payments", "emoji": "💰", "one_liner": "The actual movement of money to pay the merchant.", "detail": "After clearing, funds flow from issuer to acquirer through the scheme, then to the merchant, minus fees.", "example": "The merchant receives yesterday's sales two days later.", "source_url": "https://usa.visa.com/about-visa/visanet.html"}, {"term": "Refund", "group": "payments", "emoji": "↩️", "one_liner": "Merchant returns money to the shopper for a past purchase.", "detail": "A credit transaction started by the merchant, linked to an earlier captured payment, for all or part of the amount.", "example": "The shop refunds 40 dollars for returned socks.", "source_url": "https://stripe.com/docs/refunds"}, {"term": "Chargeback", "group": "payments", "emoji": "⚠️", "one_liner": "A disputed payment reversed by the issuer on the shopper's behalf.", "detail": "The cardholder disputes a charge with their bank. The merchant can contest with evidence under scheme dispute rules.", "example": "A shopper says the parcel never arrived and files a dispute.", "source_url": "https://usa.visa.com/support/small-business/dispute-resolution.html"}, {"term": "Vault", "group": "security", "emoji": "🔐", "one_liner": "Secure store that keeps card numbers and returns tokens instead.", "detail": "Holds sensitive payment data encrypted inside a protected zone so other systems only handle tokens.", "example": "The vault swaps the card number for token tok_123.", "source_url": "https://www.pcisecuritystandards.org/standards/pci-dss/"}, {"term": "HSM", "group": "security", "emoji": "🛡️", "one_liner": "Hardware security module. Tamper resistant device that guards cryptographic keys.", "detail": "Performs encryption, PIN and key operations inside certified hardware so keys never leave in clear text.", "example": "The HSM encrypts card data before it reaches the vault.", "source_url": "https://www.pcisecuritystandards.org/document_library/"}, {"term": "Tokenisation", "group": "security", "emoji": "🎟️", "one_liner": "Replacing sensitive card data with a harmless stand in value.", "detail": "The token has no value if stolen. Only the vault or token service can map it back to the real card number.", "example": "Stored card shows as a token, not the real number.", "source_url": "https://www.pcisecuritystandards.org/standards/pci-dss/"}, {"term": "Network token", "group": "payments", "emoji": "🔗", "one_liner": "A card token issued by the card scheme rather than the merchant.", "detail": "Bound to a merchant or device, updated automatically when cards are reissued, and often earns higher approval rates.", "example": "A Visa Token Service token replaces the card on file.", "source_url": "https://www.emvco.com/emv-technologies/payment-tokenisation/"}, {"term": "3DS", "group": "security", "emoji": "🔑", "one_liner": "3D Secure. Protocol that lets the issuer authenticate the shopper online.", "detail": "EMV 3DS shares rich data with the issuer for frictionless checks or a challenge such as an app approval.", "example": "The bank app asks the shopper to confirm a purchase.", "source_url": "https://www.emvco.com/emv-technologies/3-d-secure/"}, {"term": "PCI DSS", "group": "security", "emoji": "📜", "one_liner": "Security standard for anyone storing, processing or sending card data.", "detail": "Defined by the PCI Security Standards Council. Version 4.0.1 sets controls for networks, access, encryption and monitoring.", "example": "A gateway passes its annual PCI DSS Level 1 assessment.", "source_url": "https://www.pcisecuritystandards.org/standards/pci-dss/"}, {"term": "CDE", "group": "security", "emoji": "🏰", "one_liner": "Cardholder data environment. Systems that touch card data.", "detail": "All people, processes and technology that store, process or transmit card data, plus anything connected to them. Keep it small.", "example": "Only the vault and HSM sit inside the CDE.", "source_url": "https://www.pcisecuritystandards.org/standards/pci-dss/"}, {"term": "CTS", "group": "security", "emoji": "🧩", "one_liner": "Connected-to system. Not in the CDE, but able to affect its security, so in PCI scope.", "detail": "PCI DSS treats systems that connect to or can affect the CDE as in scope. The agent edge adapter is one, because it calls an API that drives detokenisation.", "example": "The edge adapter sits in the connected-to zone and gets a QSA review.", "source_url": "https://listings.pcisecuritystandards.org/documents/Guidance-PCI-DSS-Scoping-and-Segmentation_v1.pdf"}, {"term": "ISO 8583", "group": "payments", "emoji": "📨", "one_liner": "Standard message format for card transactions between banks.", "detail": "Defines message types and numbered data fields used for authorisation, reversal and other card network messages.", "example": "An 0100 message carries an authorisation request.", "source_url": "https://www.iso.org/standard/31628.html"}, {"term": "Idempotency key", "group": "ops", "emoji": "🔂", "one_liner": "Unique ID so retrying a request never charges twice.", "detail": "The server remembers the key and returns the original result if the same request arrives again after a timeout.", "example": "A retry with the same key returns the first approval.", "source_url": "https://stripe.com/docs/api/idempotent_requests"}, {"term": "Webhook", "group": "ops", "emoji": "📣", "one_liner": "An HTTP callback that pushes event updates to another system.", "detail": "The gateway calls a merchant URL when something happens, such as a payment settling or a dispute opening.", "example": "Merchant receives payment.succeeded at its webhook endpoint.", "source_url": "https://stripe.com/docs/webhooks"}, {"term": "AI agent", "group": "agentic", "emoji": "🤖", "one_liner": "Software that plans and acts on a user's behalf using AI.", "detail": "Combines a language model with tools and memory to complete tasks such as finding and buying products.", "example": "An agent books the cheapest flight within budget.", "source_url": "https://www.anthropic.com/research/building-effective-agents"}, {"term": "Mandate", "group": "agentic", "emoji": "✍️", "one_liner": "Signed proof of what a user allowed an agent to do.", "detail": "A verifiable credential that records the user's instruction and limits, so merchants and issuers can trust agent actions.", "example": "A mandate allows purchases under 100 dollars this week.", "source_url": "https://ap2-protocol.org/"}, {"term": "Intent mandate", "group": "agentic", "emoji": "🎯", "one_liner": "Mandate capturing the user's goal and limits before a cart exists.", "detail": "Used when the user is not present. It sets product rules, price caps and expiry that the agent must respect.", "example": "Buy concert tickets under 150 dollars if released Friday.", "source_url": "https://ap2-protocol.org/"}, {"term": "KYA", "group": "security", "emoji": "🪪", "one_liner": "Know Your Agent. Verifying who an AI agent is and who it represents.", "detail": "The agent version of KYC. It links an agent to a verified developer and user before granting payment access.", "example": "The gateway checks the agent's registered identity before checkout.", "source_url": "https://www.businesswire.com/news/home/20260909003891/en/"}, {"term": "Trusted Agent Protocol", "group": "agentic", "emoji": "🤝", "one_liner": "Visa framework that lets merchants recognise trusted AI agents.", "detail": "Agents sign requests with registered keys so merchants can tell legitimate shopping agents from malicious bots.", "example": "A merchant site lets a signed Visa recognised agent check out.", "source_url": "https://developer.visa.com/capabilities/trusted-agent-protocol"}, {"term": "Web Bot Auth / HTTP message signatures", "group": "security", "emoji": "🖋️", "one_liner": "Bots cryptographically sign HTTP requests to prove who they are.", "detail": "Builds on RFC 9421 HTTP message signatures. Sites verify the signature against the bot's published public key.", "example": "A CDN verifies a shopping agent's signed request header.", "source_url": "https://datatracker.ietf.org/doc/html/rfc9421"}, {"term": "AP2", "group": "agentic", "emoji": "🧾", "one_liner": "Agent Payments Protocol. Open protocol for agent led payments using mandates.", "detail": "Started by Google with partners. It defines intent, cart and payment mandates so every agent purchase has an audit trail.", "example": "An agent presents a signed cart mandate at checkout.", "source_url": "https://ap2-protocol.org/"}, {"term": "ACP", "group": "agentic", "emoji": "🛒", "one_liner": "Agentic Commerce Protocol. Open spec for agents to check out with merchants.", "detail": "Developed by OpenAI and Stripe. It defines checkout APIs and delegated payment tokens for in chat purchases.", "example": "A shopper buys a lamp inside a chat assistant.", "source_url": "https://www.agenticcommerce.dev/"}, {"term": "MCP", "group": "agentic", "emoji": "🔌", "one_liner": "Model Context Protocol. Standard way to plug tools and data into AI models.", "detail": "An open protocol where servers expose tools, resources and prompts that any compatible AI client can call.", "example": "An agent calls a payments MCP server to create a refund.", "source_url": "https://modelcontextprotocol.io/"}, {"term": "A2A", "group": "agentic", "emoji": "📡", "one_liner": "Agent2Agent protocol. Lets AI agents from different vendors talk and collaborate.", "detail": "An open standard for agent discovery, task exchange and messaging, now hosted by the Linux Foundation.", "example": "A travel agent asks a payment agent to pay a booking.", "source_url": "https://a2a-protocol.org/"}, {"term": "Agentic token", "group": "agentic", "emoji": "🎫", "one_liner": "Payment token scoped for use by a specific AI agent.", "detail": "A network or gateway token bound to an agent, merchant, amount and time window, so misuse is limited.", "example": "A token valid only for 50 dollars at one store.", "source_url": "https://atxp.ai/blog/mastercard-agent-pay-stripe-acp-visa-x402-comparison-2026"}, {"term": "LLM", "group": "agentic", "emoji": "🧠", "one_liner": "Large language model. AI that understands and generates text.", "detail": "Trained on large text corpora. It is the reasoning engine inside most AI agents but can make mistakes.", "example": "The LLM reads a request and picks the right tool.", "source_url": "https://www.anthropic.com/research/building-effective-agents"}, {"term": "Guardrail", "group": "security", "emoji": "🚧", "one_liner": "A rule or check that limits what an AI agent can do.", "detail": "Policies on amounts, merchants, data and content enforced outside the model, so a bad output cannot cause harm.", "example": "Guardrail blocks any agent payment above 500 dollars.", "source_url": "https://owasp.org/www-project-top-10-for-large-language-model-applications/"}, {"term": "Kill switch", "group": "ops", "emoji": "🛑", "one_liner": "An instant control to stop an agent or feature.", "detail": "Lets operators revoke agent tokens or disable agent traffic in seconds when abuse or faults appear.", "example": "Ops disables all agent checkouts after a fraud spike.", "source_url": "https://owasp.org/www-project-top-10-for-large-language-model-applications/"}, {"term": "Human in the loop", "group": "ops", "emoji": "🙋", "one_liner": "A person approves key steps before the agent proceeds.", "detail": "Used for high value, unusual or irreversible actions. The agent pauses and asks the user to confirm.", "example": "The user taps approve before a 900 dollar purchase.", "source_url": "https://ap2-protocol.org/"}, {"term": "Edge adapter", "group": "agentic", "emoji": "🧱", "one_liner": "Thin layer translating an external protocol into internal gateway calls.", "detail": "Each agent protocol gets its own adapter at the edge, so core payment systems stay unchanged.", "example": "An ACP adapter converts a checkout call to a gateway payment.", "source_url": "https://modelcontextprotocol.io/"}, {"term": "Protocol hub", "group": "agentic", "emoji": "🕸️", "one_liner": "Central layer that accepts many agent protocols through one place.", "detail": "Routes AP2, ACP, MCP and A2A traffic to shared identity, policy and payment services.", "example": "One hub serves both ACP and AP2 agents.", "source_url": "https://a2a-protocol.org/"}, {"term": "Schema mapping", "group": "migration", "emoji": "🗺️", "one_liner": "Matching fields in an old data model to a new one.", "detail": "Defines how each source field, format and code converts to the target, including defaults and transformations.", "example": "Old field card_exp maps to new expiry_month and expiry_year.", "source_url": "https://en.wikipedia.org/wiki/Schema_matching"}, {"term": "Dry run", "group": "migration", "emoji": "🧪", "one_liner": "A rehearsal migration that changes nothing in production.", "detail": "Runs the full migration on copies or in read only mode to find errors and timing before the real cutover.", "example": "A dry run moves one million test tokens overnight.", "source_url": "https://en.wikipedia.org/wiki/Dry_run_(testing)"}, {"term": "Reconciliation", "group": "migration", "emoji": "⚖️", "one_liner": "Checking two record sets match exactly.", "detail": "Compares counts, totals and records between source and target, or between ledger and bank, and flags any gaps.", "example": "Source and target token counts both equal 4,200,118.", "source_url": "https://en.wikipedia.org/wiki/Reconciliation_(accounting)"}, {"term": "TAP", "group": "agentic", "emoji": "🤝", "one_liner": "Trusted Agent Protocol. Visa's way for merchants to verify signed agent requests.", "detail": "Agents sign HTTP requests with registered keys, per RFC 9421. Signatures are single use and time bound.", "example": "A merchant checks a TAP signature before letting an agent check out.", "source_url": "https://developer.visa.com/capabilities/trusted-agent-protocol/trusted-agent-protocol-specifications"}, {"term": "QSA", "group": "security", "emoji": "🕵️", "one_liner": "Qualified Security Assessor. An auditor certified to assess PCI DSS.", "detail": "A QSA decides what is in scope and whether controls meet PCI DSS.", "example": "A QSA reviews the new edge adapter before go-live.", "source_url": "https://www.pcisecuritystandards.org/assessors_and_solutions/qualified_security_assessors"}, {"term": "SCA", "group": "security", "emoji": "📲", "one_liner": "Strong customer authentication. Two of knowledge, possession and inherence.", "detail": "Required for many EU and UK online payments under PSD2. 3DS is the usual way to apply it.", "example": "The shopper approves in the bank app and enters a PIN.", "source_url": "https://www.eba.europa.eu/regulation-and-policy/payment-services-and-electronic-money"}, {"term": "KYB", "group": "ops", "emoji": "🏢", "one_liner": "Know your business. Checking a merchant is real and lawful before onboarding.", "detail": "Covers registry checks, owners, sanctions and risk. Feeds underwriting.", "example": "An onboarding agent drafts a KYB memo for a human underwriter.", "source_url": "https://www.middesk.com"}, {"term": "PAN", "group": "payments", "emoji": "🔢", "one_liner": "Primary account number. The long number on a card.", "detail": "The most sensitive card field. Where it is stored or passes defines the CDE.", "example": "The vault holds the PAN and returns a token.", "source_url": "https://listings.pcisecuritystandards.org/documents/Guidance-PCI-DSS-Scoping-and-Segmentation_v1.pdf"}, {"term": "FIX", "group": "ops", "emoji": "📈", "one_liner": "Financial Information eXchange. Standard messaging for trading orders.", "detail": "Gave trading a shared wire in the 1990s, before algorithmic trading scaled.", "example": "A broker sends a FIX order to an exchange.", "source_url": "https://www.fixtrading.org/standards/"}, {"term": "HFT", "group": "ops", "emoji": "⚡", "one_liner": "High frequency trading. Algorithms that trade in microseconds.", "detail": "Forced pre-trade risk checks and kill switches into market rules.", "example": "A firm runs thousands of orders a second under hard limits.", "source_url": "https://www.sec.gov/rules-regulations/2010/11/risk-management-controls-brokers-or-dealers-market-access"}, {"term": "RTB", "group": "ops", "emoji": "📺", "one_liner": "Real time bidding. Ads bought by auction in about 100 ms.", "detail": "Runs on OpenRTB. Bots buy ads, ads.txt says who may sell.", "example": "An ad slot is sold to the top bidder as the page loads.", "source_url": "https://iabtechlab.com/standards/openrtb/"}, {"term": "ACS", "group": "security", "emoji": "🏛️", "one_liner": "Access control server. The issuer side of 3DS.", "detail": "Decides on a frictionless pass or a challenge for the shopper.", "example": "The ACS asks for an app approval on a large order.", "source_url": "https://www.emvco.com/emv-technologies/3-d-secure/"}];
+const GM={};G101.forEach(g=>GM[g.term]=g);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const pop=$("#pop");let popFor=null;
+function showPop(a){
+ if(!a||!a.isConnected){hidePop();return}
+ const g=GM[a.getAttribute("data-t")];if(!g)return;
+ if(popFor!==a){
+  if(popFor){popFor.removeAttribute("aria-describedby");popFor.setAttribute("aria-expanded","false")}
+  pop.innerHTML=`<div class="tag">${esc(g.group)} / 101</div><div class="ph">${ico(g.emoji,"chip")} ${esc(g.term)}</div><p class="p1">${esc(g.one_liner)}</p><p>${esc(g.detail)}</p><p class="ex"><b>Example.</b> ${esc(g.example)}</p>`;
+  popFor=a;a.setAttribute("aria-describedby","pop");a.setAttribute("aria-expanded","true")}
+ pop.hidden=false;
+ const r=a.getBoundingClientRect(),w=pop.offsetWidth,ph=pop.offsetHeight,vw=document.documentElement.clientWidth,vh=innerHeight;
+ const x=Math.min(Math.max(8,r.left+r.width/2-w/2),Math.max(8,vw-w-8));
+ let y=r.bottom+8;if(y+ph>vh-8)y=Math.max(8,r.top-ph-8);
+ pop.style.left=x+"px";pop.style.top=y+"px"}
+function hidePop(){if(popFor){popFor.removeAttribute("aria-describedby");popFor.setAttribute("aria-expanded","false")}pop.hidden=true;popFor=null}
+const tAnchor=e=>e.target&&e.target.closest?e.target.closest("[data-t]"):null;
+document.addEventListener("mouseover",e=>{const a=tAnchor(e);if(a)showPop(a)});
+document.addEventListener("mouseout",e=>{const a=tAnchor(e);if(a&&a===popFor&&!(e.relatedTarget&&(a.contains(e.relatedTarget)||pop.contains(e.relatedTarget)))&&document.activeElement!==a)hidePop()});
+pop.addEventListener("mouseleave",()=>{if(popFor&&document.activeElement!==popFor)hidePop()});
+document.addEventListener("focusin",e=>{const a=tAnchor(e);if(a)showPop(a);else hidePop()});
+document.addEventListener("focusout",e=>{const a=tAnchor(e);if(a&&a===popFor&&!(e.relatedTarget&&e.relatedTarget.closest&&e.relatedTarget.closest("[data-t]")))hidePop()});
+document.addEventListener("click",e=>{const a=tAnchor(e);if(a){if(a.isConnected)showPop(a)}else if(!pop.contains(e.target))hidePop()});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&popFor){const a=popFor;hidePop();if(a.isConnected&&a.focus)a.focus({preventScroll:true});pop.hidden=true}});
+addEventListener("scroll",()=>{if(popFor)showPop(popFor)},{passive:true});
+addEventListener("resize",()=>{if(popFor)showPop(popFor)});
+
+/* PAYMENTS 101 cards */
+const GRPS=["all","payments","security","agentic","ops","migration"];let g101="all";
+$("#grp101").innerHTML=GRPS.map(x=>`<button class="btn" type="button" data-g="${x}" aria-pressed="${x==="all"}">${x}</button>`).join("");
+function draw101(){const q=$("#q101").value.trim().toLowerCase();
+ const list=G101.filter(t=>(g101==="all"||t.group===g101)&&(!q||(t.term+" "+t.one_liner+" "+t.detail+" "+t.example).toLowerCase().includes(q)));
+ $("#cnt101").textContent=list.length+" of "+G101.length+" terms";
+ $("#g101").innerHTML=list.length?list.map(t=>`<article class="gc">${ico(t.emoji,"card")}<div class="gp">${esc(t.group)}</div><h3>${esc(t.term)}</h3><p><b>${esc(t.one_liner)}</b></p><p>${esc(t.detail)}</p><p class="ex">Example. ${esc(t.example)}</p><a class="src" style="margin:0" href="${esc(t.source_url)}" target="_blank" rel="noopener">source</a></article>`).join(""):'<div class="gc">No term matches. Try a shorter word.</div>'}
+$("#grp101").addEventListener("click",e=>{const b=e.target.closest("button[data-g]");if(!b)return;g101=b.dataset.g;$("#grp101").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",x===b));draw101()});
+$("#q101").addEventListener("input",draw101);draw101();$("#n101").textContent=G101.length;
+
+/* theme */
+$("#themeBtn").addEventListener("click",()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==="dark":matchMedia("(prefers-color-scheme: dark)").matches;r.dataset.theme=dark?"light":"dark";$("#themeBtn").setAttribute("aria-pressed",!dark)});
+$("#themeBtn").setAttribute("aria-pressed",matchMedia("(prefers-color-scheme: dark)").matches);
+
+/* 1 HERO */
+const HERO={
+ today:{nodes:["Shopper","Checkout","Gateway","Processor","Network","Issuer"],stat:[["~300ms","auth round trip"],["1","human click"],["3DS","step-up"]]},
+ agent:{nodes:["Agent","Mandate","Gateway","Policy","Network","Issuer"],stat:[["~300ms","auth path, no LLM"],["0","clicks, signed intent"],["token","scoped agent token"]]}
+};
+let heroMode="today",heroT=0;
+const hs=$("#heroSvg");
+function drawHero(){
+ hs.innerHTML="";const n=HERO[heroMode].nodes;
+ el("path",{d:"M40 130 H600",class:"wire live"},hs);
+ n.forEach((s,i)=>{const x=40+i*112;const g=el("g",{},hs);
+   el("circle",{cx:x,cy:130,r:i===2?30:20,fill:"var(--panel)",stroke:i===2?"var(--acc)":"var(--ink)","stroke-width":i===2?3:1.5},g);
+   txt(x,i%2?190:80,s,g,{"text-anchor":"middle","font-size":14});
+   if(heroMode==="agent"&&(i===0||i===1||i===3))el("circle",{cx:x,cy:130,r:6,fill:"var(--acc2)"},g)});
+ el("circle",{id:"pkt",cx:RM?264:40+heroT,cy:130,r:9,fill:"var(--acc)"},hs);
+ txt(20,245,heroMode==="today"?"card data / PAN token / 3DS":"agent token / signed mandate / policy check",hs,{"font-size":12,fill:"var(--mute)"});
+ $("#heroStat").innerHTML=HERO[heroMode].stat.map(s=>`<span><b>${s[0]}</b>${s[1]}</span>`).join("");
+}
+const VIS={hero:true,arch:true,guard:true};let heroRaf=0,archRaf=0;
+if("IntersectionObserver" in window){const io=new IntersectionObserver(es=>es.forEach(e=>{VIS[e.target.id]=e.isIntersecting;loops()}));["hero","arch","guard"].forEach(id=>io.observe(document.getElementById(id)))}
+function tick(){heroRaf=0;heroT=(heroT+2.2)%560;const p=$("#pkt");if(p)p.setAttribute("cx",40+heroT);loops()}
+function setHero(m){heroMode=m;$("#heroToday").setAttribute("aria-pressed",m==="today");$("#heroAgent").setAttribute("aria-pressed",m==="agent");drawHero()}
+$("#heroToday").onclick=()=>setHero("today");$("#heroAgent").onclick=()=>setHero("agent");
+drawHero();
+
+/* 2 FLOW */
+const FT={today:["Shopper","Payment gateway","3DS","Vault","Payment processor","Issuer","Webhook"],agent:["AI agent","Web Bot Auth / HTTP message signatures","Mandate","Guardrail","Payment gateway","Agentic token","Kill switch"]};
+const FLOW={
+ today:[
+  ["Browser","HTTPS + hosted fields","50 to 150ms","PCI scope cut by iframe tokenisation"],
+  ["Gateway API","REST / JSON, idempotency key","20 to 40ms","API keys, TLS 1.2+, rate limits"],
+  ["Risk","Rules + ML score","10 to 50ms","Velocity, device data, 3DS trigger"],
+  ["Vault","Token to PAN in HSM","5 to 15ms","PCI DSS, HSM, key rotation"],
+  ["Processor","ISO 8583","50 to 150ms","Routing, retries, network tokens"],
+  ["Issuer","Auth decision","100 to 300ms","SCA, fraud, funds check"],
+  ["Webhook","Signed event to merchant","async","HMAC signature, replay window"]],
+ agent:[
+  ["AI agent","MCP / ACP / AP2 call","100ms to s","Agent identity, signed HTTP request"],
+  ["Agent edge","Verify agent signature","5 to 20ms","Known agent registry, bot auth"],
+  ["Mandate","Check signed intent","5 to 20ms","Spend cap, merchant, expiry, user consent"],
+  ["Policy","Policy as code","under 10ms","Deterministic rules, no LLM in path"],
+  ["Gateway","Same auth engine","20 to 40ms","Idempotency, rate limit per agent"],
+  ["Network","Agent token + ISO 8583","150 to 400ms","Network agent token, issuer sees agent flag"],
+  ["Audit","Event + trace to agent","async","Kill switch, replay, dispute evidence"]]
+};
+let fMode="today",hop=0;const fs=$("#flowSvg");
+function drawFlow(){
+ fs.innerHTML="";const h=FLOW[fMode];
+ h.forEach((d,i)=>{const x=20+i*106,y=i%2?170:60;
+  if(i<h.length-1){const nx=20+(i+1)*106+45,ny=(i+1)%2?170:60;el("path",{d:`M${x+45} ${y+30} L${nx} ${ny+30}`,class:"wire"+(i<hop?" live":"")},fs)}
+ });
+ h.forEach((d,i)=>{const x=20+i*106,y=i%2?170:60;
+  const g=el("g",{class:"node"+(i===hop?" hot":""),tabindex:0,role:"button",id:"hop"+i,"aria-label":d[0],"data-t":FT[fMode][i]},fs);
+  el("rect",{x:x,y:y,width:92,height:60,rx:2},g);
+  txt(x+46,y+26,d[0],g,{"text-anchor":"middle","font-size":12,"font-weight":600});
+  txt(x+46,y+46,d[2],g,{"text-anchor":"middle","font-size":10,fill:"var(--mute)"});
+  txt(x+46,y-8,"0"+(i+1),g,{"text-anchor":"middle","font-size":10,fill:"var(--acc)"});
+  g.addEventListener("click",()=>{hop=i;drawFlow();showPop(document.getElementById("hop"+i))});
+  g.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();hop=i;drawFlow();document.getElementById("hop"+i).focus()}});
+ });
+ const d=h[hop];
+ $("#hopPanel").innerHTML=`<div class="tag">hop ${hop+1} of ${h.length}</div><h3 style="margin:6px 0 12px;font-size:24px">${d[0]}</h3><dl class="kv"><dt>protocol</dt><dd>${d[1]}</dd><dt>latency</dt><dd class="mono">${d[2]}</dd><dt>controls</dt><dd>${d[3]}</dd></dl>`;
+}
+function setFlow(m){fMode=m;hop=0;$("#flowToday").setAttribute("aria-pressed",m==="today");$("#flowAgent").setAttribute("aria-pressed",m==="agent");drawFlow()}
+$("#flowToday").onclick=()=>setFlow("today");$("#flowAgent").onclick=()=>setFlow("agent");
+$("#flowNext").onclick=()=>{hop=(hop+1)%FLOW[fMode].length;drawFlow()};
+drawFlow();
+
+/* 3 STACK */
+const LAYERS=[
+ ["Caller","Human in browser or app","AI agent with delegated mandate"],
+ ["Interface","REST API, SDK, hosted page","MCP tools, ACP / AP2, plus REST"],
+ ["Identity","API key, OAuth for merchant","Agent signature, verified agent registry"],
+ ["Authorisation","3DS, SCA by user","Signed mandate, scoped agent token"],
+ ["Risk","Rules + ML on device signals","Agent intent risk, spend caps, anomaly"],
+ ["Core auth","Routing, retries, vault","Unchanged, deterministic, no LLM"],
+ ["Ops","Humans with dashboards","Agents act with approval, audit trail"],
+ ["Control","Feature flags, on-call","Kill switch per agent, policy as code"]];
+function drawStack(){const v=+$("#stackSlider").value;
+ $("#stackBox").innerHTML=`<div class="layer"><div class="lname">layer</div><div class="lname">today</div><div class="lname">agentic</div></div>`+
+ LAYERS.map((l,i)=>{const on=v/100*LAYERS.length>i;return `<div class="layer"><div class="lname">${String(i+1).padStart(2,"0")} ${l[0]}</div><div class="td ${on?"dim":""}">${l[1]}</div><div class="ag ${on?"":"dim"}">${l[2]}</div></div>`}).join("")}
+$("#stackSlider").addEventListener("input",drawStack);drawStack();
+
+/* 4 TIMELINE */
+const ERAS=["Manual","API","Algo","Agent"];
+const IND=[["Trading","Floor","FIX","HFT","Agent pilots"],
+ ["Ads","Phone buys","Ad APIs","RTB","Agent buying"],
+ ["Travel","Agents by phone","GDS APIs","Fare bots","Booking agents"],
+ ["Payments","Paper, imprint","Gateway APIs","ML routing, risk","Agent checkout"]];
+const ts=$("#tlSvg");
+ERAS.forEach((e,i)=>{const x=170+i*180;el("line",{x1:x,y1:30,x2:x,y2:290,stroke:"var(--line)","stroke-dasharray":"3 4"},ts);txt(x+6,22,e.toUpperCase(),ts,{"font-size":13,fill:i===3?"var(--acc)":"var(--mute)","font-weight":600})});
+IND.forEach((r,j)=>{const y=70+j*60;txt(10,y+4,r[0],ts,{"font-size":15,"font-weight":600});
+ el("path",{d:`M170 ${y} H${170+3*180+90}`,class:j===0?"wire live":"wire"},ts);
+ r.slice(1).forEach((s,i)=>{const x=170+i*180;el("circle",{cx:x,cy:y,r:i===3?9:6,fill:i===3?"var(--acc)":"var(--panel)",stroke:"var(--ink)"},ts);txt(x+12,y-10,s,ts,{"font-size":11})})});
+const PAT=[["P1","Standard wire first","FIX then OpenRTB. Agents need a shared protocol before scale."],
+ ["P2","Kill switch is law","Trading rules forced pre-trade risk checks and halts."],
+ ["P3","Bots get identity","ads.txt and signed agent requests. Know who calls."],
+ ["P4","Humans set limits","Mandates and caps replace clicks, not oversight."]];
+$("#patterns").innerHTML=PAT.map(p=>`<div class="card"><div class="mono">${p[0]}</div><h3>${p[1]}</h3><div>${p[2]}</div></div>`).join("");
+
+/* 5 GALLERY */
+const UC=[["🧾","Onboarding and KYB","Recommend",5,"live","https://www.middesk.com"],["👩‍💻","Integration copilot","Assist",4,"live","https://docs.stripe.com/mcp"],["📊","Ops and reconciliation","Act with approval",4,"pilot","https://www.kyriba.com"],
+["⚖️","Dispute evidence","Act with approval",5,"live","https://docs.stripe.com/disputes/smart-disputes"],["🔀","Routing optimiser, offline","Recommend",5,"live","https://www.adyen.com/uplift"],["🕵️","Fraud analyst copilot","Assist",4,"live","https://stripe.com/blog/using-ai-optimize-payments-performance-payments-intelligence-suite"],
+["💬","Merchant support, read only","Assist",4,"live","https://www.intercom.com/fin"],["🛡️","Compliance monitoring","Recommend",4,"pilot","https://www.unit21.ai"],["💲","Pricing and interchange","Recommend",3,"pilot","https://www.adyen.com/uplift"],
+["🚨","Incident SRE","Act with approval",4,"live","https://www.pagerduty.com/platform/aiops/"],["🏦","Payout exceptions","Act with approval",4,"concept",""],["🧯","Chargeback prevention","Act with approval",4,"live","https://www.ethoca.com"],
+["🛒","Agentic checkout","Autonomous",5,"pilot","https://corporate.visa.com/en/products/intelligent-commerce.html"],["🧪","Test and certification, sandbox","Autonomous",3,"pilot","https://docs.stripe.com/testing"],["💱","FX and treasury","Recommend",3,"pilot","https://www.kyriba.com"],["🔁","POS menu migration","Act with approval",5,"pilot","https://squareup.com/help/us/en/article/6424-create-and-update-menus"]];
+const AUTO=["Assist","Recommend","Act with approval","Autonomous"];
+function drawGal(){const a=$("#fAuto").value,v=+$("#fVal").value,m=$("#fMat").value;
+ const list=UC.filter(u=>(!a||u[2]===a)&&u[3]>=v&&(!m||u[4]===m));
+ $("#galCount").textContent=list.length+" of "+UC.length+" agents";
+ $("#gal").innerHTML=list.map(u=>{const lv=AUTO.indexOf(u[2])+1;return `<div class="uc">${ico(u[0],"card")}<h3>${u[1]}</h3><div class="meta">autonomy <span class="bars">${[1,2,3,4].map(i=>`<i class="${i<=lv?"f":""}"></i>`).join("")}</span> ${u[2]}</div><div class="meta">value ${"&#9632;".repeat(u[3])} &middot; ${u[4]}</div><div class="meta">lane A5 ${u[5]?`<a class="src" href="${u[5]}" target="_blank" rel="noopener">example</a>`:"&middot; no example verified"}</div></div>`}).join("")}
+["#fAuto","#fVal","#fMat"].forEach(s=>$(s).addEventListener("change",drawGal));drawGal();
+
+/* 6 MIGRATION */
+const MENU={store:"Demo Bistro",currency:"USD",taxes:[{id:"t1",name:"Sales",rate:0.0875},{id:"t2",name:"Alcohol",rate:0.10}],tenders:["cash","card","gift_card","split"],
+ items:[{sku:"B100",name:"Classic Burger",price:12.50,tax:"t1",modifierGroups:["mg1","mg2"]},{sku:"S200",name:"Caesar Salad",price:9.00,tax:"t1",modifierGroups:["mg2"]},{sku:"D300",name:"Craft Beer",price:7.00,tax:"t2",modifierGroups:[]}],
+ modifierGroups:[{id:"mg1",name:"Cook",min:1,max:1,options:[{name:"Medium",price:0},{name:"Well",price:0}]},{id:"mg2",name:"Add-ons",min:0,max:3,options:[{name:"Bacon",price:2.00},{name:"Avocado",price:1.50}]}],
+ terminals:[{id:"T-01",type:"countertop"},{id:"T-02",type:"handheld"}]};
+$("#srcJson").textContent=JSON.stringify(MENU,null,2);
+const STEPS=["extract","map","validate","dry-run","human approve","cut over","reconcile"];
+const STT=["MCP","Schema mapping","Guardrail","Dry run","Human in the loop","Kill switch","Reconciliation"];
+const DIFF=[["ok","items[].price 12.50 -> amount_minor 1250"],["ok","items[].sku -> product.external_id"],["ok","modifierGroups -> option_sets (min, max kept)"],
+ ["ok","taxes t1 8.75% -> tax_rate SALES_STD"],["fl","taxes t2 Alcohol 10% has no target rate, needs approval"],["ok","tenders split -> split_tender: true"],
+ ["ok","terminals T-01, T-02 -> device profiles"],["ok","dry-run: 3 test orders total match to the cent"]];
+let mStep=-1,mTimer=null,waiting=false;
+function drawPipe(){$("#pipe").innerHTML=STEPS.map((s,i)=>`<span role="listitem" tabindex="0" aria-label="${s}, ${i<mStep?"done":i===mStep?(waiting?"waiting for approval":"running"):"pending"}" data-t="${STT[i]}" class="${i<mStep?"done":""} ${i===mStep?(waiting?"flag":"cur"):""}">${String(i+1).padStart(2,"0")} ${s}</span>`).join("")}
+function showDiff(n){$("#diff").innerHTML=DIFF.slice(0,n).map(d=>`<div class="${d[0]}">${d[1]}</div>`).join("")}
+function advance(){mStep++;drawPipe();
+ if(mStep===1)showDiff(4);if(mStep===2)showDiff(7);if(mStep===3)showDiff(8);
+ if(mStep===4){waiting=true;drawPipe();$("#approveMig").disabled=false;$("#recon").innerHTML='<span style="color:var(--acc2)">Paused. 1 item flagged for a human.</span>';return}
+ if(mStep===6){mStep=7;drawPipe();$("#recon").innerHTML='<div class="big">3/3</div>items &middot; 2/2 modifier groups &middot; 2/2 taxes &middot; 4/4 tenders &middot; 2/2 terminals<br><span style="color:var(--acc)">Reconciled. 0 breaks.</span>';$("#runMig").disabled=false;return}
+ mTimer=setTimeout(advance,RM?60:700)}
+function resetMig(){clearTimeout(mTimer);mStep=-1;waiting=false;DIFF[4]=["fl","taxes t2 Alcohol 10% has no target rate, needs approval"];$("#runMig").disabled=false;$("#approveMig").disabled=true;$("#diff").innerHTML="<div>Press run to start.</div>";$("#recon").textContent="";drawPipe()}
+$("#runMig").onclick=()=>{resetMig();$("#diff").innerHTML="";$("#runMig").disabled=true;advance()};
+$("#approveMig").onclick=()=>{waiting=false;$("#approveMig").disabled=true;DIFF[4]=["ok","taxes t2 Alcohol 10% -> tax_rate ALCOHOL, approved by human"];showDiff(8);advance()};
+$("#resetMig").onclick=resetMig;
+drawPipe();
+
+/* 7 ARCH */
+/* node: [id,cx,cy,w,h,label,term,detail] */
+const AO={
+ A:{name:"Edge adapter in front",sub:"Thin agent layer, a connected-to system in PCI scope. CDE, vault and rails unchanged.",
+  zones:[[150,40,240,222,"zone","connected-to, in PCI scope"],[400,40,290,222,"zone cde","CDE"],[700,40,400,222,"zone rail","rails"]],
+  nodes:[["ag",70,110,112,54,"AI agent","AI agent","Calls via ACP or TAP with a signed request. Never sees card data."],
+   ["ed",270,100,140,54,"Edge adapter","Edge adapter","Verifies agent, checks mandate and policy, then emits one canonical object to the gateway API."],
+   ["gw",470,110,112,54,"Existing\ngateway","Payment gateway","Same auth engine and API. Receives the canonical object like any merchant call."],
+   ["va",620,110,112,54,"Vault","Vault","Token to PAN inside the CDE. No change for agent traffic."],
+   ["pr",770,110,112,54,"Processor\n+ acquirer","Acquirer","ISO 8583 routing, retries and network tokens as today."],
+   ["sc",910,110,112,54,"Scheme","Card scheme / network","Sees the agent flag and agentic token."],
+   ["is",1040,110,100,54,"Issuer","Issuer","Approves or declines. Can read agent indicators."],
+   ["c1",213,168,104,32,"identity","KYA","Agent identity check against a known agent directory."],
+   ["c2",327,168,104,32,"mandate","Mandate","Signed user intent with cap, merchant and expiry."],
+   ["c3",213,212,104,32,"policy","Guardrail","Policy as code. Deterministic, no LLM in the auth path."],
+   ["c4",327,212,104,32,"canonical","Schema mapping","One canonical payment object, whatever the agent protocol."],
+   ["hs",620,190,90,32,"HSM","HSM","Keys stay in the HSM inside the CDE."]],
+  path:["ag","ed","gw","va","pr","sc","is"],
+  rb:{d:"M70 137 V282 H470 V137",label:"rollback: flag off, agents call the legacy API",x:110,y:276,t:"Kill switch",det:"Feature flag removes the adapter. Traffic falls back to the existing gateway API in minutes."},
+  score:3.65,cond:"conditional",pros:["Core auth path untouched","Reuses vault and rails","Clean rollback with one flag","CDE unchanged","Keeps the merchant integration point"],
+  cons:["PCI scope grows modestly","Adapter is a new hop, p99 not yet measured","Two protocols at first, others wait","Some duplicated state, risk of logic drift"],
+  conds:["Treated as in PCI scope, passes QSA review","TAP and ACP only in year one","Evidence pilot shows dispute value, else switch to C"]},
+ B:{name:"Agent-native gateway",sub:"New gateway core built around a mandate ledger and native tokens.",
+  zones:[[170,40,530,222,"zone cde","new agent-native core"],[710,40,390,222,"zone rail","downstream rails"]],
+  nodes:[["ag",70,110,112,54,"AI agent","AI agent","Calls the new core directly with a mandate reference."],
+   ["gw",290,110,140,54,"Agent-native\ngateway","Payment gateway","New auth engine designed for agents first."],
+   ["ml",450,110,120,54,"Mandate\nledger","Intent mandate","Stores every signed intent as a first class record."],
+   ["nt",600,110,120,54,"Native\ntokens","Agentic token","Issues scoped agent tokens per mandate."],
+   ["pr",780,110,112,54,"Processor","Payment processor","Same rails downstream."],
+   ["sc",910,110,112,54,"Scheme","Card scheme / network","Receives agent token and flag."],
+   ["is",1040,110,100,54,"Issuer","Issuer","Auth decision as today."],
+   ["pc",450,205,180,32,"new PCI scope","PCI DSS","Whole new CDE to assess and certify."]],
+  path:["ag","gw","ml","nt","pr","sc","is"],
+  score:2.70,cond:"",pros:["Cleanest long term model","Mandates and tokens native to auth","Best control and audit"],
+  cons:["Slowest, a full core rebuild","Touches the core and CDE boundary","High regret if volumes stay small","Low reuse of the existing core"],
+  conds:["Year five, if liability rules and volumes justify it","Grows from A's canonical object and ledger"]},
+ C:{name:"Partner protocol hub",sub:"A partner hub speaks agent protocols and keeps the KYA directory, then calls the gateway.",
+  zones:[[150,40,240,222,"zone","partner hub"],[400,40,290,222,"zone cde","CDE"],[700,40,400,222,"zone rail","rails"]],
+  nodes:[["ag",70,110,112,54,"AI agent","AI agent","Talks to the partner hub, not to the gateway."],
+   ["hb",270,100,140,54,"Protocol hub","Protocol hub","Partner service that translates ACP, AP2 and TAP into gateway calls."],
+   ["ky",270,170,170,32,"KYA directory","KYA","Know your agent registry run by the partner."],
+   ["tp",270,214,170,32,"TAP, ACP, AP2","Trusted Agent Protocol","Many protocols covered from day one."],
+   ["gw",470,110,112,54,"Gateway","Payment gateway","Existing gateway, called by the hub as a merchant would."],
+   ["va",620,110,112,54,"Vault","Vault","Unchanged."],
+   ["pr",770,110,112,54,"Processor","Payment processor","Unchanged."],
+   ["sc",910,110,112,54,"Scheme","Card scheme / network","Unchanged."],
+   ["is",1040,110,100,54,"Issuer","Issuer","Unchanged."]],
+  path:["ag","hb","gw","va","pr","sc","is"],
+  score:3.50,cond:"",pros:["Broad protocol coverage fast","Partner owns KYA upkeep","Core untouched"],
+  cons:["Cedes the merchant integration point","Vendor lock in and fees","Limited differentiation"],
+  conds:["Use only for identity, scheme KYA directories","Becomes the pick if the evidence pilot fails"]}
+};
+const ORDER=["A","B","C"];let archOpt="A",archSel=null,archPath=null,archT=0;const as=$("#archSvg");
+$("#archTabs").innerHTML=ORDER.map(k=>`<button class="btn" type="button" role="tab" id="tab${k}" aria-controls="archPanel" aria-selected="${k===archOpt}" tabindex="${k===archOpt?0:-1}">Option ${k}</button>`).join("");
+function archDetail(n){$("#archNode").innerHTML=`<div class="tag">option ${archOpt} / node</div><h3 style="margin:6px 0 10px;font-size:24px">${esc(n.label.replace("\n"," "))}</h3><p style="margin:0 0 10px">${esc(n.det)}</p><div class="mono" style="font-size:12px;color:var(--mute)">101 term: <button type="button" class="t101" data-t="${n.term}">${esc(n.term)}</button></div>`}
+function drawArchSvg(){const o=AO[archOpt];as.innerHTML="";
+ $("#archPanel").setAttribute("aria-labelledby","tab"+archOpt);
+ o.zones.forEach(z=>{el("rect",{x:z[0],y:z[1],width:z[2],height:z[3],class:z[4]},as);txt(z[0]+8,z[1]+16,z[5].toUpperCase(),as,{"font-size":12,fill:"var(--mute)"})});
+ const N={};o.nodes.forEach(n=>N[n[0]]=n);
+ const pts=o.path.map(id=>N[id]);
+ const d="M"+pts.map(n=>n[1]+" "+n[2]).join(" L");
+ archPath=el("path",{d:d,class:"wire live"},as);
+ o.nodes.forEach(n=>{if(o.path.indexOf(n[0])<0){const p=N[o.path[1]];const host=n[0]==="hs"?N.va:(n[1]>400&&archOpt==="B"?N.ml:p);el("path",{d:`M${host[1]} ${host[2]+host[4]/2} V${n[2]-n[4]/2}`,class:"wire"},as)}});
+ if(o.rb){el("path",{d:o.rb.d,class:"wire rb"},as)}
+ const items=o.nodes.map(n=>({id:n[0],cx:n[1],cy:n[2],w:n[3],h:n[4],label:n[5],term:n[6],det:n[7]}));
+ if(o.rb)items.push({id:"rb",rb:1,label:"Rollback path",term:o.rb.t,det:o.rb.det});
+ items.forEach(n=>{
+  const g=el("g",{class:"node"+(archSel===n.id?" hot":""),tabindex:0,role:"button","aria-label":n.label.replace("\n"," ")+", details","data-t":n.term},as);
+  if(n.rb){el("rect",{x:o.rb.x-8,y:o.rb.y-16,width:400,height:24,fill:"var(--panel)",stroke:"var(--acc2)"},g);txt(o.rb.x,o.rb.y,o.rb.label,g,{"font-size":12,fill:"var(--acc2)"})}
+  else{const small=n.h<40;el("rect",{x:n.cx-n.w/2,y:n.cy-n.h/2,width:n.w,height:n.h,rx:2},g);
+   const ls=n.label.split("\n");ls.forEach((l,j)=>txt(n.cx,n.cy+4+(j-(ls.length-1)/2)*15,l,g,{"text-anchor":"middle","font-size":small?12:13,"font-weight":small?400:600}))}
+  const pick=()=>{archSel=n.id;as.querySelectorAll(".node").forEach(x=>x.classList.remove("hot"));g.classList.add("hot");archDetail(n)};
+  g.addEventListener("click",pick);
+  g.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();pick()}});
+  if(!archSel&&n.id==="ag"){archSel="ag";g.classList.add("hot");archDetail(n)}});
+ el("circle",{id:"apkt",r:9,fill:"var(--acc)",cx:pts[0][1],cy:pts[0][2]},as);
+ if(RM){const L=archPath.getTotalLength(),p=archPath.getPointAtLength(L*0.4),c=$("#apkt");c.setAttribute("cx",p.x);c.setAttribute("cy",p.y)}
+ const op=o;$("#archPC").innerHTML=`<div class="opt"><div class="tag">option ${archOpt} / pros</div><h3 style="margin:4px 0">${esc(op.name)}</h3><div style="color:var(--mute);font-size:15px">${esc(op.sub)}</div><ul>${op.pros.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div><div class="opt"><div class="tag">cons</div><ul>${op.cons.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div><div class="opt"><div class="tag">score and conditions</div><div class="score">${op.score.toFixed(2)}<span style="font-size:16px;color:var(--mute)"> / 5</span></div>${op.cond?'<span class="badge">CONDITIONAL</span>':""}<ul>${op.conds.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`}
+function archTick(){archRaf=0;if(archPath&&archPath.isConnected){const L=archPath.getTotalLength();archT=(archT+3)%L;const p=archPath.getPointAtLength(archT),c=$("#apkt");if(c){c.setAttribute("cx",p.x);c.setAttribute("cy",p.y)}}loops()}
+function setArch(k,focus){archOpt=k;archSel=null;archT=0;ORDER.forEach(x=>{const b=$("#tab"+x);b.setAttribute("aria-selected",x===k);b.tabIndex=x===k?0:-1});if(focus)$("#tab"+k).focus();drawArchSvg()}
+$("#archTabs").addEventListener("click",e=>{const b=e.target.closest("[role=tab]");if(b)setArch(b.id.slice(3))});
+$("#archTabs").addEventListener("keydown",e=>{const i=ORDER.indexOf(archOpt);let j=-1;if(e.key==="ArrowRight")j=(i+1)%3;if(e.key==="ArrowLeft")j=(i+2)%3;if(e.key==="Home")j=0;if(e.key==="End")j=2;if(j>=0){e.preventDefault();setArch(ORDER[j],true)}});
+drawArchSvg();
+function loops(){if(!RM&&VIS.hero&&!heroRaf)heroRaf=requestAnimationFrame(tick);if(!RM&&VIS.arch&&!archRaf)archRaf=requestAnimationFrame(archTick)}
+RMQ.addEventListener("change",e=>{RM=e.matches;drawHero();drawArchSvg();loops()});loops();
+
+/* weighted scores, report section 10.1 and 10.2. Defaults give A 3.65, C 3.50, B 2.70 */
+const CRIT=[["pci","PCI scope",15,"A CDE change adds audit cost and delay. Every option adds some connected-to scope."],
+ ["lat","Latency",10,"Added time on the auth path costs approval rate and SLOs."],
+ ["rev","Reversibility",15,"Gartner's cancellation forecast and under 1% traffic mean the bet may need unwinding."],
+ ["liab","Liability",10,"Scheme rules pending, so the design must create evidence without promising liability shift."],
+ ["mat","Protocol maturity",10,"AP2 has no release, UCP shipped a breaking release, EMVCo is draft. The option must absorb change."],
+ ["ttm","Time to market",10,"The H2 2026 window and first-mover proof erode if delayed."],
+ ["dem","Merchant demand",10,"Stated but not visible in volume. Equal for all options, so it does not change the ranking."],
+ ["cost","Cost",10,"Build plus run, including adapter upkeep per protocol version."],
+ ["ic","Integration control",10,"Whoever owns the merchant-facing agent integration keeps the merchant. Added after the red team."]];
+const OPTS=[["A","Edge adapter in front",{pci:4,lat:3,rev:5,liab:3,mat:3,ttm:4,dem:3,cost:3,ic:4}],
+ ["B","Agent-native gateway",{pci:2,lat:5,rev:2,liab:4,mat:2,ttm:1,dem:3,cost:1,ic:5}],
+ ["C","Partner protocol hub",{pci:4,lat:3,rev:4,liab:2,mat:4,ttm:5,dem:3,cost:5,ic:1}]];
+const W={};const DEF={};CRIT.forEach(c=>{W[c[0]]=c[2];DEF[c[0]]=c[2]});
+const PRE={report:{},ic0:{ic:0},fast:{cost:20,ttm:20},liab:{liab:20,ic:20}};
+$("#weights").innerHTML='<div class="tag" style="margin-bottom:6px">weights, percent, 0 to 30</div>'+CRIT.map(c=>`<div class="sl"><span><label for="w_${c[0]}">${c[1]}</label><button type="button" class="why" aria-expanded="false" aria-controls="y_${c[0]}">why</button></span><input type="range" id="w_${c[0]}" min="0" max="30" step="5" value="${c[2]}"><span id="v_${c[0]}">${c[2]}</span><div class="whyt" id="y_${c[0]}" hidden>${c[3]}</div></div>`).join("");
+$("#weights").addEventListener("click",e=>{const b=e.target.closest(".why");if(!b)return;const t=document.getElementById(b.getAttribute("aria-controls"));t.hidden=!t.hidden;b.setAttribute("aria-expanded",!t.hidden)});
+function scores(w){return OPTS.map(o=>{let s=0,t=0;CRIT.forEach(c=>{s+=w[c[0]]*o[2][c[0]];t+=w[c[0]]});return t?s/t:0})}
+function drawArch(){const sc=scores(W);
+ const best=Math.max(...sc);const bw=200/CRIT.length;
+ $("#archCards").innerHTML=OPTS.map((o,i)=>`<div class="opt ${sc[i]===best?"win":""}"><div class="tag">option ${o[0]}${sc[i]===best?" / winner":""}</div><div class="score">${sc[i].toFixed(2)}<span style="font-size:16px;color:var(--mute)"> / 5</span></div><h3 style="margin:4px 0">${o[1]}</h3><div style="color:var(--mute);font-size:14px" class="mono">report ${AO[o[0]].score.toFixed(2)}${AO[o[0]].cond?", conditional":""}</div><svg viewBox="0 0 200 60" width="100%" height="60" role="img" aria-label="Fit per criterion for option ${o[0]}">${CRIT.map((c,j)=>`<rect x="${j*bw+2}" y="${60-o[2][c[0]]*11}" width="${bw-4}" height="${o[2][c[0]]*11}" fill="${sc[i]===best?"var(--acc)":"var(--wire)"}"><title>${c[1]} ${o[2][c[0]]}</title></rect>`).join("")}</svg></div>`).join("");
+ const wn=OPTS[sc.indexOf(best)][0];
+ $("#archNote").innerHTML="score = sum(weight x fit) / sum(weight)<br>fit is 1 to 5 per criterion<br><br><b>Sensitivity</b><br>Integration control at 0, C wins.<br>Cost and speed x2, C wins.<br>Liability and control x2, B closes but A holds.<br><br>Now: option "+wn+" leads."}
+function setW(p){CRIT.forEach(c=>{W[c[0]]=c[0] in PRE[p]?PRE[p][c[0]]:DEF[c[0]];$("#w_"+c[0]).value=W[c[0]];$("#v_"+c[0]).textContent=W[c[0]]});$("#presets").querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.p===p));drawArch()}
+$("#presets").addEventListener("click",e=>{const b=e.target.closest("button[data-p]");if(b)setW(b.dataset.p)});
+CRIT.forEach(c=>$("#w_"+c[0]).addEventListener("input",e=>{W[c[0]]=+e.target.value;$("#v_"+c[0]).textContent=e.target.value;$("#presets").querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed","false"));drawArch()}));drawArch();
+
+/* 8 GUARD */
+let rate=0,spend=0,open=false;const gs=$("#gSvg");
+function gDraw(state){gs.innerHTML="";const labels=["agent","rate","mandate","breaker","auth"];
+ labels.forEach((l,i)=>{const x=20+i*110;if(i<4)el("path",{d:`M${x+70} 60 H${x+110}`,class:"wire"+(state&&state.stop>i?" live":"")},gs);
+  const bad=state&&state.stop===i;el("rect",{x:x,y:35,width:70,height:50,fill:"var(--panel)",stroke:bad?"var(--bad)":"var(--ink)","stroke-width":bad?3:1.5},gs);txt(x+35,64,l,gs,{"text-anchor":"middle","font-size":12})})}
+function log(c,s){const d=document.createElement("div");d.className=c;d.textContent=new Date().toLocaleTimeString()+"  "+s;$("#glog").prepend(d)}
+function meters(){$("#rateM i").style.width=Math.min(100,rate*10)+"%";$("#rateM").classList.toggle("hot",rate>=10);$("#spendM i").style.width=Math.min(100,spend/5)+"%";$("#spendM").classList.toggle("hot",spend>=500)}
+function req(amt,inMandate){
+ if(open){log("d","BLOCKED by breaker, agent paused");gDraw({stop:3});return}
+ if(rate>=10){log("d","429 rate limit, agent backs off");gDraw({stop:1});return}
+ rate++;
+ if(!inMandate){log("d","DENY merchant not in mandate");gDraw({stop:2});meters();return}
+ if(spend+amt>500){log("d","DENY $"+amt+" would pass $500 cap");gDraw({stop:2});meters();return}
+ spend+=amt;log("a","APPROVE $"+amt+", spend $"+spend);gDraw({stop:5});meters()}
+$("#burst").onclick=()=>{for(let i=0;i<6;i++)setTimeout(()=>req(40+Math.round(Math.random()*60),true),RM?0:i*180)};
+$("#rogue").onclick=()=>req(120,false);
+$("#kill").onclick=()=>{open=!open;$("#breaker").classList.toggle("open",open);$("#breaker").textContent=open?"BREAKER OPEN, all agent traffic halted":"BREAKER CLOSED, traffic flows";$("#kill").textContent=open?"Reset the breaker":"Trip the breaker";log(open?"d":"a",open?"Kill switch tripped by operator":"Breaker reset");gDraw(open?{stop:3}:null)};
+setInterval(()=>{if(VIS.guard&&rate>0){rate--;meters()}},1500);
+gDraw(null);meters();log("a","Guardrails armed");
+
+/* 10 SOURCES */
+const SRC=["https://fonts.googleapis.com", "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap", "https://www.digitaltransactions.net/fiserv-adopts-agentic-commerce-protocols-from-visa-and-mastercard/", "https://www.rain.xyz/resources/rain-launches-the-agentic-payments-alliance", "https://www.emarketer.com/content/adyen-stripe-deepen-agentic-infrastructure-merchants", "https://www.checkout.com/newsroom/consumer-demand-for-ai-shopping-is-forming-fast-but-trust-for-agentic-commerce-is-still-catching-up", "https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027", "https://www.forrester.com/blogs/agentic-payments-in-b2c-commerce-where-we-are-now/", "https://www.morganstanley.com/insights/articles/agentic-commerce-market-impact-outlook", "https://www.digitalcommerce360.com/2025/10/20/mckinsey-forecast-5-trillion-agentic-commerce-sales-2030/", "https://opentelemetry.io/docs/", "https://developer.visa.com/capabilities/trusted-agent-protocol/trusted-agent-protocol-specifications", "https://shopappy.com/?p=9900", "https://blog.google/products-and-platforms/platforms/google-pay/agent-payments-protocol-fido-alliance/", "https://github.com/google-agentic-commerce/AP2", "https://atxp.ai/blog/mastercard-agent-pay-stripe-acp-visa-x402-comparison-2026", "https://datatracker.ietf.org/doc/html/draft-ietf-webbotauth-httpsig-protocol-00", "https://www.emvco.com/news/emvco-requests-feedback-on-framework-for-secure-interoperable-and-scalable-card-based-agentic-payments/", "https://ucpchecker.com/blog?page=2", "https://docs.stripe.com/mcp", "https://developer.paypal.com/tools/mcp-server/", "https://a2a-protocol.org/", "https://www.linuxfoundation.org/press/linux-foundation-announces-operational-launch-of-x402-foundation-to-standardize-internet-native-payments-for-ai-agents-and-applications", "https://www.pcisecuritystandards.org/?p=64616", "https://arxiv.org/abs/2608.23858", "https://www.chargeflow.io/blog/ai-agent-chargeback-liability", "https://www.insideprivacy.com/artificial-intelligence/spanish-supervisory-authority-issues-detailed-guidance-on-agentic-ai-and-gdpr-compliance/", "https://www.mastercard.com/global/en/news-and-trends/press/2026/september/mastercard-gives-merchants-a-simpler-way-to-build--connect-and-s.html", "https://www.worldpay.com/en/insights/articles/agentic-commerce-liability-is-still-being-written", "https://justt.ai/blog/solving-agentic-commerce-chargebacks/", "https://www.eba.europa.eu/regulation-and-policy/payment-services-and-electronic-money", "https://www.consumerfinance.gov/rules-policy/final-rules/required-rulemaking-on-personal-financial-data-rights/", "https://www.emvco.com/emv-technologies/3-d-secure/", "https://usa.visa.com/about-visa/visanet.html", "https://www.pcisecuritystandards.org/standards/pci-dss/", "https://www.mastercard.us/en-us/business/overview/start-accepting.html", "https://usa.visa.com/support/small-business/regulations-fees.html", "https://www.investopedia.com/terms/m/merchant-discount-rate.asp", "https://stripe.com/docs/payments/place-a-hold-on-a-payment-method", "https://stripe.com/docs/refunds", "https://usa.visa.com/support/small-business/dispute-resolution.html", "https://www.pcisecuritystandards.org/document_library/", "https://www.emvco.com/emv-technologies/payment-tokenisation/", "https://listings.pcisecuritystandards.org/documents/Guidance-PCI-DSS-Scoping-and-Segmentation_v1.pdf", "https://www.iso.org/standard/31628.html", "https://stripe.com/docs/api/idempotent_requests", "https://stripe.com/docs/webhooks", "https://www.anthropic.com/research/building-effective-agents", "https://ap2-protocol.org/", "https://www.businesswire.com/news/home/20260909003891/en/", "https://developer.visa.com/capabilities/trusted-agent-protocol", "https://datatracker.ietf.org/doc/html/rfc9421", "https://www.agenticcommerce.dev/", "https://modelcontextprotocol.io/", "https://owasp.org/www-project-top-10-for-large-language-model-applications/", "https://en.wikipedia.org/wiki/Schema_matching", "https://en.wikipedia.org/wiki/Dry_run_(testing)", "https://en.wikipedia.org/wiki/Reconciliation_(accounting)", "https://www.pcisecuritystandards.org/assessors_and_solutions/qualified_security_assessors", "https://www.middesk.com", "https://www.fixtrading.org/standards/", "https://www.sec.gov/rules-regulations/2010/11/risk-management-controls-brokers-or-dealers-market-access", "https://iabtechlab.com/standards/openrtb/"];
+$("#srcSummary").textContent="Sources, "+SRC.length+" full URLs";$("#srcList").innerHTML=SRC.map(u=>`<li><a href="${u}" target="_blank" rel="noopener">${u}</a></li>`).join("");
+})();
+</script>

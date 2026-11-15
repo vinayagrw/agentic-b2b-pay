@@ -1,0 +1,194 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Payment Gateway Primer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: one reading column; a jump bar at the top; glossary as definition lists, questions as stacked blocks */
+:root{
+  --bg:#f6f7f8; --surface:#ffffff; --fg:#1b2329; --muted:#5a6772; --line:#dde2e6;
+  --accent:#0f6e6a; --accent-soft:#e2f1ef; --good:#2f6b2f; --bad:#9a3b1f;
+  --display:"Source Serif 4",Georgia,serif; --body:"IBM Plex Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12171b; --surface:#1a2126; --fg:#e4e9ec; --muted:#9aa7b1; --line:#2c363d;
+  --accent:#5cc4bb; --accent-soft:#163a37; --good:#8fd18f; --bad:#f0a07f; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12171b; --surface:#1a2126; --fg:#e4e9ec; --muted:#9aa7b1; --line:#2c363d;
+  --accent:#5cc4bb; --accent-soft:#163a37; --good:#8fd18f; --bad:#f0a07f; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:16px/1.6 var(--body)}
+.wrap{max-width:820px;margin:0 auto;padding-block:40px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:44px}
+header{display:grid;gap:8px;border-bottom:2px solid var(--fg);padding-bottom:20px}
+.eyebrow{font:500 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font:700 clamp(28px,5vw,40px)/1.15 var(--display);margin:0;text-wrap:balance}
+h2{font:600 24px/1.3 var(--display);margin:0 0 14px;text-wrap:balance}
+h3{font:600 17px/1.35 var(--body);margin:20px 0 8px;color:var(--accent)}
+p,li,dd{max-width:68ch}
+section{min-width:0}
+nav{display:flex;flex-wrap:wrap;gap:8px}
+nav a{font:500 13px/1 var(--mono);color:var(--accent);text-decoration:none;border:1px solid var(--line);background:var(--surface);padding:8px 10px;border-radius:4px}
+nav a:focus-visible,nav a:hover{border-color:var(--accent)}
+dl{margin:0;display:grid;gap:10px}
+dt{font-weight:600}
+dt code{font:500 13px var(--mono);color:var(--muted);margin-left:6px}
+dd{margin:0 0 4px;color:var(--fg)}
+.flow{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 16px;overflow-x:auto;font:500 13px/1.7 var(--mono);white-space:pre}
+.q{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px 18px;display:grid;gap:8px}
+.q h3{margin:0;color:var(--fg);font-size:16px}
+.q .n{font:500 12px var(--mono);color:var(--accent)}
+.q p{margin:0;font-size:15px}
+.k{font:500 11px/1 var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-right:6px}
+.good .k{color:var(--good)} .bad .k{color:var(--bad)}
+.qs{display:grid;gap:12px}
+.pain{background:var(--accent-soft);border-radius:8px;padding:18px 20px}
+.pain p{margin:0 0 10px}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">Voyix prep · technical primer</div>
+  <h1>Payment gateway jargon and the questions behind the pitch</h1>
+  <p style="margin:0;color:var(--muted)">Plain-English explanations of the terms in the brief, what each discovery question is really probing, and what the two main pain points mean technically.</p>
+  <nav aria-label="Sections">
+    <a href="#flow">How a payment flows</a><a href="#gloss">Glossary</a><a href="#qs">The 12 questions</a><a href="#pains">The 2 pain points</a>
+  </nav>
+</header>
+
+<section id="flow">
+  <h2>How a card payment flows</h2>
+  <p>Knowing these steps makes almost every term below easier to follow. A store terminal or POS captures the card. The <b>gateway</b> (Pravinkumar's product) secures and routes the request. The <b>processor/acquirer</b> forwards it to the card network, which asks the cardholder's bank to approve it.</p>
+  <div class="flow">Card / phone ─► Terminal or pump ─► POS ─► GATEWAY (Voyix Connect) ─► Processor / Acquirer ─► Network (Visa, MC) ─► Issuing bank
+                                              │  tokenize, encrypt, route        ◄──────── approve / decline ◄────────┘
+                                              └► later: capture ─► clearing ─► settlement (money moves, usually T+1/T+2)</div>
+  <p>The request travels in <b>ISO 8583</b> messages, the decades-old binary format banks use, or in newer JSON APIs. Fleet cards follow the same path but go to the fleet company's own network (WEX, Voyager, Corpay) instead of Visa or Mastercard.</p>
+</section>
+
+<section id="gloss">
+  <h2>Glossary</h2>
+
+  <h3>Gateway and processing basics</h3>
+  <dl>
+    <dt>Payment gateway</dt><dd>Software that receives a payment from the merchant's systems, secures it, and sends it to the right processor. It connects one side to many.</dd>
+    <dt>Processor / acquirer</dt><dd>The acquirer is the bank-side company that signs up merchants and takes on their risk. The processor runs the technical connection to the networks. Worldpay, Fiserv and TSYS are examples. Voyix now acts as a <i>registered acquirer</i> in the US, which means it earns more of the margin per transaction.</dd>
+    <dt>Authorization, capture, settlement</dt><dd>Authorization asks whether the funds are available and holds them. Capture finalizes the amount. Settlement is when money actually moves between banks.</dd>
+    <dt>Authorization rate (auth rate)</dt><dd>The share of payment attempts that are approved. Each 1% matters at scale, because declined good customers are lost revenue.</dd>
+    <dt>Tokenization / token vault</dt><dd>Replaces the real card number with a stand-in token, so stores never hold card data. The vault is the secure system that maps tokens back to card numbers. <b>Secure Pay</b> is Voyix's older tokenization and encryption layer.</dd>
+    <dt>P2PE <code>point-to-point encryption</code></dt><dd>The card is encrypted inside the terminal and decrypted only in a secure data centre. Stores in between never see clear card data, which shrinks their PCI scope.</dd>
+    <dt>PCI DSS / PCI scope</dt><dd>PCI DSS is the card industry's security standard. "Scope" is every system that touches card data. Every system in scope must be audited, so engineers try to keep scope small. PCI PTS is the equivalent standard for terminal hardware.</dd>
+    <dt>Interchange</dt><dd>The fee the cardholder's bank earns on each card payment. It is the biggest part of a merchant's card costs.</dd>
+    <dt>BIN routing / smart routing</dt><dd>The BIN is the first 6–8 digits of a card number, which identify the issuing bank. Smart routing picks the cheapest or most-likely-to-approve processor for each transaction, increasingly with ML.</dd>
+    <dt>Card-present (CP) vs card-not-present (CNP)</dt><dd>CP means the card is physically at a terminal or pump. CNP means online, in an app, or loyalty-wallet payments. CNP carries more fraud.</dd>
+    <dt>Payments attach</dt><dd>The share of software customers who also use the vendor's payments. Voyix has 85,000 platform sites and about 8,500 payment sites, roughly 10% attach. Toast's business model depends on near-total attach.</dd>
+    <dt>Semi-integrated payments</dt><dd>The POS sends only the amount to the terminal, and the terminal talks to the gateway directly. That keeps the POS out of PCI scope.</dd>
+  </dl>
+
+  <h3>Certification</h3>
+  <dl>
+    <dt>Processor certification</dt><dd>Before going live with a processor, the gateway must prove it sends and handles every message type correctly. That means hundreds of scripted test cases: approvals, declines, reversals, partial approvals, timeouts. It usually takes weeks to months and is largely manual.</dd>
+    <dt>EMV and EMVCo levels</dt><dd>EMV is the chip-card standard. L1 certifies the hardware, L2 the terminal kernel software, and L3 the end-to-end setup with each processor and card brand. L3 is repeated for every terminal, processor and brand combination, so certification work multiplies.</dd>
+    <dt>Host simulator</dt><dd>A fake processor or network used to test against, without waiting for the real one's test environment. It is the core of a "certification factory".</dd>
+    <dt>Regression suite</dt><dd>Automated tests re-run on every change. They catch changes that silently break a certification that has already passed.</dd>
+  </dl>
+
+  <h3>Fuel and forecourt</h3>
+  <dl>
+    <dt>Forecourt</dt><dd>The outdoor fuel area of a station: pumps (dispensers), payment terminals and tank sensors.</dd>
+    <dt>FDC / POS-to-FDC</dt><dd>The forecourt device controller is the box that controls the pumps. POS-to-FDC is the protocol the POS uses to authorize a pump and read its sale.</dd>
+    <dt>IFSF, Conexxus, OpenRetailing</dt><dd>Industry standards bodies. IFSF is mostly Europe; Conexxus is the US C-store standards group. They are converging on shared, modern JSON and REST APIs for mobile pay at the pump and pump control under OpenRetailing.</dd>
+    <dt>OPT / CRIND / outdoor payment terminal</dt><dd>The card reader on the pump. CRIND is Gilbarco's name for it.</dd>
+    <dt>Pump pre-authorization and completion</dt><dd>The card is pre-authorized for an estimate (for example $125) before fuelling. After fuelling, a completion sends the actual amount. Getting this wrong ties up customers' funds or loses the station money.</dd>
+    <dt>Offline / store-and-forward / stand-in</dt><dd>If the link to the processor drops, the site approves small transactions locally and sends them later. The site carries the risk. Stand-in is when a processor approves on the issuer's behalf. These matter at high-volume truck stops such as Pilot's.</dd>
+    <dt>Fleet cards and prompts</dt><dd>Cards issued to company vehicles by WEX, U.S. Bank Voyager and Corpay. The pump must ask for extra details such as driver ID, vehicle number or odometer. Each fleet network has its own rules and its own certification.</dd>
+    <dt>Level 2 / Level 3 data</dt><dd>Extra line-item detail sent with business and fleet transactions, such as fuel type, gallons and tax. It earns lower interchange and lets fleets control what drivers spend.</dd>
+    <dt>EMV at the pump liability shift</dt><dd>Since April 2021, a station without chip readers at the pump pays for counterfeit-card fraud. Many independents still lag.</dd>
+    <dt>NEVI (EV charging)</dt><dd>US federal EV-charger funding rules. Funded chargers must accept contactless credit and debit cards, not only an app, so stations adding EV charging need a new payment path.</dd>
+    <dt>TruAge</dt><dd>An industry digital ID check for age-restricted items such as tobacco and alcohol. Voyix announced support in October 2026.</dd>
+  </dl>
+
+  <h3>Commerce and AI</h3>
+  <dl>
+    <dt>Unified commerce</dt><dd>One platform for in-store, online and app sales, with shared customers, inventory and payments. It is what Voyix Commerce Platform, Toast and Adyen all sell.</dd>
+    <dt>Agentic commerce</dt><dd>AI agents that shop on a person's behalf. The pattern that is winning is "agent approves, merchant checkout takes payment". Example: the buyer approves an order in ChatGPT Wallet, then the merchant's own checkout takes the payment and the merchant handles the order, support and fraud. Payments still need to know the agent is authorized, with what limits, and who is liable if something goes wrong.</dd>
+    <dt>Agent-readable checkout</dt><dd>A merchant's own checkout that an AI agent can read and complete. It publishes prices, stock and the steps to pay in a form software can follow. The merchant keeps the order, the customer and the payment.</dd>
+    <dt>Network token</dt><dd>A stand-in for a card number issued by the card network (Visa, Mastercard, Amex) and not by the gateway. It is tied to one merchant or device and stays valid when the plastic card is reissued. It can be saved and reused for later payments.</dd>
+    <dt>Transaction-bound agent token</dt><dd>A token an agent wallet hands to a merchant for a single purchase. It is tied to that one transaction and must not be saved or reused. ChatGPT Wallet works this way. It launched on 13 Nov 2026 on Amex, Mastercard and Visa, US only, Pro tier (reported by ppc.land on 14 Nov and in the OpenAI commerce guides). Fees, merchant of record and dispute rules are not stated.</dd>
+    <dt>Virtual card</dt><dd>A card number with no plastic, issued for a set purpose with a limit, a merchant lock or an expiry. A <b>mandate-bound virtual card</b> goes one step further. It is issued for one approved order and approves one charge only when the supplier, the amount and the signed mandate still match. It is not a network token.</dd>
+    <dt>ACP, AP2, agent tokens</dt><dd>Emerging protocols for agent payments. ACP is the Agentic Commerce Protocol from OpenAI and Stripe. AP2 is Google's Agent Payments Protocol, which uses signed "mandates". Visa and Mastercard both issue tokens scoped to an agent. A gateway must accept and verify these. AP2 is reported to have moved to the FIDO Alliance and x402 to the Linux Foundation. Both come from secondary sources.</dd>
+    <dt>ML fraud scoring</dt><dd>A model scores each transaction's risk in milliseconds, so the gateway can approve, step up verification, or decline. It goes beyond fixed rules.</dd>
+    <dt>Agentic migration</dt><dd>Voyix's term, taken from a job posting: AI agents that move a customer's old POS configuration (menus, items, settings) onto the new platform.</dd>
+  </dl>
+
+  <h3>B2B payment controls (built in our demo)</h3>
+  <dl>
+    <dt>Bank-detail change check</dt><dd>When a supplier asks to change its bank account, the change is held. Someone calls back on a number already on file, a cooling-off hold runs, and a second person approves. This stops the most common invoice fraud.</dd>
+    <dt>Maker-checker</dt><dd>One person makes a request and a different person approves it. Used for bank changes, pay-early plans and credit line draws.</dd>
+    <dt>Dispute evidence record</dt><dd>One file per paid order with the mandate, approvals, match result and payment events. Card numbers show the last 4 digits only.</dd>
+    <dt>Payment terms and early-pay discount</dt><dd>Terms set when an invoice is due. An early-pay discount (for example 2% if paid in 10 days) gives a saving for paying sooner. In the demo the savings are demo figures.</dd>
+    <dt>Tariff cash scenario</dt><dd>Adds import duty to a 12 week cash forecast, with and without tariff exclusions. Duty rates are user inputs and there is no live tariff feed. The notice names both 9 and 10 January 2027, so the cut-off date is a setting.</dd>
+    <dt>Credit line draw</dt><dd>Borrowing from a set limit to pay a supplier. In the demo the lender is simulated and each draw needs maker-checker.</dd>
+    <dt>Chat approvals</dt><dd>Approving an order from a card in Slack or Teams under the same rules as the app. In the demo this is a mock preview.</dd>
+    <dt>Copilot charts</dt><dd>Ask a question in plain words and get a chart built from fixed read-only tools, with its sources listed.</dd>
+  </dl>
+
+  <h3>Delivery and engineering</h3>
+  <dl>
+    <dt>Strangler-fig migration</dt><dd>Replace a legacy system piece by piece behind a stable front door, rather than in one big cutover. It is the safe way to retire Secure Pay and the remains of JetPay.</dd>
+    <dt>SRE, SLO and error budget</dt><dd>Site reliability engineering treats uptime as an engineering target. An SLO is the target, for example 99.99% (about 4 minutes of downtime a month). The error budget is the downtime allowed under that target.</dd>
+    <dt>Nearshore / offshore pod</dt><dd>A dedicated vendor team that works in a nearby time zone (nearshore) or a distant one (offshore), owning one stream of work.</dd>
+  </dl>
+</section>
+
+<section id="qs">
+  <h2>The 12 questions, explained</h2>
+  <div class="qs">
+    <div class="q"><span class="n">Q1</span><h3>What does the target architecture look like after Secure Pay and JetPay are retired, and on what timeline?</h3>
+      <p><span class="k">Why</span>Voyix runs two generations of gateway and token technology. Retiring the old one is a big, risky job, and a timeline shows how much pressure his team is under.</p>
+      <p class="good"><span class="k">Good sign</span>"We have a plan but not the people." That opens the door to a migration pod.</p>
+      <p class="bad"><span class="k">Bad sign</span>"Already done," or "not a priority."</p>
+      <p><span class="k">We fit</span>AI-assisted code comprehension, a strangler-fig migration, and moving tokens from one vault to another.</p></div>
+    <div class="q"><span class="n">Q2</span><h3>What is setting the 2027 Europe/APAC date: acquirer certifications, local card schemes, or team capacity?</h3>
+      <p><span class="k">Why</span>Every country brings new acquirers and local card networks such as Cartes Bancaires, EFTPOS or Interac, plus rules such as Europe's strong customer authentication (SCA). Find out which of these is the real bottleneck.</p>
+      <p><span class="k">We fit</span>If the answer is "capacity" or "certifications", that is a nearshore integration pod plus the certification factory.</p></div>
+    <div class="q"><span class="n">Q3</span><h3>How long does a new processor or fleet-network certification take today, and how much of it is manual testing?</h3>
+      <p><span class="k">Why</span>This gives a baseline number for the pilot. A typical answer is 6–16 weeks, mostly manual test scripts.</p>
+      <p><span class="k">We fit</span>Host simulators plus AI-generated test cases. Success is measured as weeks cut from each certification.</p></div>
+    <div class="q"><span class="n">Q4</span><h3>How is the gateway preparing for Pilot-scale fuel volume: offline authorizations, pump pre-authorization, store-and-forward?</h3>
+      <p><span class="k">Why</span>Truck stops are high-volume and run 24/7. A gateway outage stops the pumps. This question tests his resilience design without naming any outage.</p>
+      <p><span class="k">We fit</span>Payments SRE review, failover testing, and load and chaos testing.</p></div>
+    <div class="q"><span class="n">Q5</span><h3>Where is AI already in your engineering lifecycle, and where has it disappointed you?</h3>
+      <p><span class="k">Why</span>It avoids pitching what he already has. The "disappointed" part shows his objections, such as hallucinated code or PCI concerns.</p>
+      <p><span class="k">We fit</span>Position Ciklum as the payments-specific tooling around his existing AI, not another AI tool.</p></div>
+    <div class="q"><span class="n">Q6</span><h3>Is the agentic migration work aimed at POS configuration or at the gateway code itself?</h3>
+      <p><span class="k">Why</span>A Voyix job posting mentions an "Agentic Migration Engineer". If it is only about POS configuration, the gateway code is untouched ground for us.</p></div>
+    <div class="q"><span class="n">Q7</span><h3>Who owns forecourt integrations: your team, the convenience and fuel group, or partners?</h3>
+      <p><span class="k">Why</span>This maps the decision-makers. If someone else owns pump integrations, we need that person in the room.</p></div>
+    <div class="q"><span class="n">Q8</span><h3>Do you route between processors today, and do you track authorization rates by processor?</h3>
+      <p><span class="k">Why</span>Smart routing can lift approvals and lower costs. If he doesn't track this, there is a quick, measurable AI win available.</p></div>
+    <div class="q"><span class="n">Q9</span><h3>Is there interest in AI-driven fraud detection or smart routing for card-not-present and loyalty traffic?</h3>
+      <p><span class="k">Why</span>Fraud is moving from skimmers on pumps to taking over app and loyalty accounts. We found no public sign that Voyix uses ML for fraud.</p></div>
+    <div class="q"><span class="n">Q10</span><h3>How do you work with offshore and partner teams today, and what has worked?</h3>
+      <p><span class="k">Why</span>Learn his past vendor experience so we can shape the engagement model and avoid repeating a bad one.</p></div>
+    <div class="q"><span class="n">Q11</span><h3>What would make a 90-day pilot a clear success for you and Darren Wilson?</h3>
+      <p><span class="k">Why</span>He defines success, so it becomes his metric. Mentioning his likely boss also checks the reporting line and who controls the budget.</p></div>
+    <div class="q"><span class="n">Q12</span><h3>Is the gateway expected to accept payments started by AI agents, and when?</h3>
+      <p><span class="k">Why</span>Stripe, Adyen and Worldpay already support ACP and AP2. If Voyix has no plan, a 90-day protocol adapter is a strong lead into the future roadmap.</p></div>
+  </div>
+</section>
+
+<section id="pains">
+  <h2>The two pain points, explained</h2>
+  <div class="pain">
+    <h3 style="margin-top:0">1. Legacy consolidation competes with the roadmap</h3>
+    <p><b>Two gateway and token generations.</b> Voyix bought JetPay in 2018 and built Voyix Connect later. Customers are off the JetPay front end, but Secure Pay, the old token vault, still runs. Two vaults means two sets of PCI audits, two code bases to patch, and a risky migration: every stored token must move without breaking recurring or saved-card payments.</p>
+    <p><b>A certification for every processor and fleet network.</b> Adding Worldpay, WEX, Voyager, Corpay or a European acquirer each means a new integration and a new multi-week certification. The Europe and APAC launch multiplies this by country.</p>
+    <p><b>Capacity is the constraint.</b> The same senior payments engineers are needed to retire the old systems, certify new connections, and support big fuel rollouts like Pilot. Job postings show AI and platform roles, but not gateway engineers, which suggests the gateway team is stretched. That is the opening for a vendor pod plus automation.</p>
+  </div>
+  <div class="pain" style="margin-top:14px">
+    <h3 style="margin-top:0">2. Pressure to show AI and agentic commerce</h3>
+    <p><b>Competitors have shipped.</b> Stripe, Adyen and Worldpay now let AI agents pay through ACP and AP2, using agent tokens from Visa and Mastercard. A merchant using Voyix may soon ask why its agent orders can't go through Voyix.</p>
+    <p><b>Voyix's AI so far is internal.</b> Its public AI covers engineering productivity and migrating POS configuration. That is useful, but it isn't customer-facing payments AI such as fraud scoring, smart routing or agent checkout.</p>
+    <p><b>What that means technically for the gateway.</b> It needs to accept a new kind of credential (an agent token or a signed mandate), check what the agent is allowed to spend, record proof of the user's consent for disputes, and route the payment. That's a contained, well-scoped piece of work, which makes it a good pilot.</p>
+  </div>
+</section>
+</div>
+
+</body></html>
