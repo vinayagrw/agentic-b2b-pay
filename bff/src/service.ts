@@ -171,9 +171,29 @@ export function mandatesView(intentId: string) {
   return { poId: inv.poId, intent: showMandate(pair.intent), cart: showMandate(pair.cart), ...result };
 }
 const showMandate = (m?: AP2.SignedMandate) => m ? { id: m.id, kind: m.kind, signerId: m.signerId, signerKind: m.signerKind, hash: m.hash, createdAt: m.createdAt, body: m.body, keyFingerprint: AP2.keyFingerprint(AP2.publicKeyOf(m.signerId)), signatureValid: AP2.verifySigned(m) } : null;
-/** Masks any text value that is a whole card number, so a record never carries more than the last 4. */
+const luhn = (d: string) => { let sum = 0; for (let i = d.length - 1, alt = false; i >= 0; i--, alt = !alt) { let n = +d[i]; if (alt) { n *= 2; if (n > 9) n -= 9; } sum += n; } return sum % 10 === 0; };
+/** Masks card numbers inside a text. A card number is 13 to 19 digits, with or without spaces or dashes, that starts and ends on a digit group and passes the Luhn check. */
+function maskPanText(v: string): string {
+  const whole = v.replace(/[ -]/g, ""); if (/^\d{13,19}$/.test(whole)) return `**** ${whole.slice(-4)}`;
+  return v.replace(/\d(?:[ -]?\d){12,}/g, (run) => {
+    const at: number[] = []; for (let i = 0; i < run.length; i++) if (run[i] >= "0" && run[i] <= "9") at.push(i);
+    const starts = (k: number) => k === 0 || at[k] - at[k - 1] > 1, ends = (k: number) => k === at.length - 1 || at[k + 1] - at[k] > 1;
+    const grouped = at.some((x, k) => k > 0 && x - at[k - 1] > 1);
+    let out = "", pos = 0;
+    for (let k = 0; k < at.length; k++) {
+      if (grouped && !starts(k)) continue;
+      for (let len = Math.min(19, at.length - k); len >= 13; len--) {
+        const e = k + len - 1; if ((grouped && !ends(e)) || (!grouped && len !== at.length)) continue;
+        const d = at.slice(k, e + 1).map((i) => run[i]).join(""); if (!luhn(d)) continue;
+        out += run.slice(pos, at[k]) + `**** ${d.slice(-4)}`; pos = at[e] + 1; k = e; break;
+      }
+    }
+    return out + run.slice(pos);
+  });
+}
+/** Masks card numbers in every text value, whole or inside a longer text, so a record never carries more than the last 4. */
 function maskPans<T>(v: T): T {
-  if (typeof v === "string") { const d = v.replace(/[ -]/g, ""); return (/^\d{13,19}$/.test(d) ? `**** ${d.slice(-4)}` : v) as T; }
+  if (typeof v === "string") return maskPanText(v) as T;
   if (Array.isArray(v)) return v.map(maskPans) as T;
   if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskPans(x)])) as T;
   return v;
