@@ -11,7 +11,7 @@ import { Section } from "../components/Shell";
 import { Loading } from "./flows";
 import { ApprovalCard, StepUpPrompt } from "../components/ApprovalCard";
 import { can, stepUpNeeded, type StepUpStatus } from "../lib/perm";
-import { BankChangeForm, BankChangesWaiting } from "../components/BankChange";
+import { BankChangeForm, BankChangesWaiting, CallbackPhone } from "../components/BankChange";
 import { Skeleton, SkeletonTable } from "../components/kit";
 
 const CATS = ["mro", "components", "logistics", "it"] as const;
@@ -225,13 +225,13 @@ function SupplierRow({ s, me }: { s: any; me: any }) {
         <tr><td className="text-muted">Address</td><td>{o.kyb ? `${o.kyb.address.line1}, ${o.kyb.address.city} ${o.kyb.address.postalCode}, ${o.kyb.address.country}` : ""}</td></tr>
         <tr><td className="text-muted">Owners</td><td>{o.kyb?.ubos.map((u: any) => `${u.name} ${u.ownershipPct} percent`).join(", ")}</td></tr>
         <tr><td className="text-muted">Bank</td><td>{o.bank ? <>Ending {o.bank.last4} {o.bank.bankName && `at ${o.bank.bankName}`} <Mono>{o.bank.tokenId}</Mono></> : "None"}</td></tr>
-        <tr><td className="text-muted">Wallet</td><td>{o.wallet ? <><Mono>{o.wallet.address}</Mono> <Badge v="signature verified" tone="ok" /></> : "None"}</td></tr>
+        <tr><td className="text-muted">Wallet</td><td>{o.wallet ? <><Mono>{o.wallet.address}</Mono> {o.wallet.verifiedAt ? <Badge v="signature verified" tone="ok" /> : <Badge v="checked by call-back" tone="warn" />}</> : "None"}</td></tr>
         <tr><td className="text-muted">Screening</td><td>{o.screening ? (o.screening.hits.length ? <Badge v={`${o.screening.hits.length} sanctions hit`} tone="bad" /> : <Badge v="clear" />) : "Runs on submit"}</td></tr>
         {o.reviewedBy && <tr><td className="text-muted">Review</td><td>{o.status} by {o.reviewedBy}{o.reviewNote ? `: ${o.reviewNote}` : ""}</td></tr>}
       </Table> : <Muted>Seeded supplier, verified before onboarding existed.</Muted>}
       {o && o.status !== "verified" && ["client_admin", "ap_clerk", "operator_admin"].includes(role) && <div className="flex flex-wrap items-center gap-2"><Button size="sm" disabled={busy} onClick={async () => { const r = await run(() => api(`/workspace/suppliers/${s.id}/link`, {})); if (r) setLink(`${location.origin}${r.link}`); }}>New onboarding link</Button>{link && <Reveal secret={link} what="onboarding link" onDone={() => setLink("")} />}</div>}
       {o?.status === "submitted" && role === "client_admin" && <div className="flex flex-col gap-2"><Input placeholder="Review note" value={note} onChange={(e) => setNote(e.target.value)} /><div className="flex gap-2"><Button size="sm" variant="primary" disabled={busy} onClick={() => run(() => api(`/workspace/suppliers/${s.id}/review`, { verify: true, note }))}>Verify supplier</Button><Button size="sm" disabled={busy} onClick={() => run(() => api(`/workspace/suppliers/${s.id}/review`, { verify: false, note }))}>Reject</Button></div></div>}
-      <Table><tr><td className="text-muted">Call-back phone on file</td><td>{s.contactPhone ? <Mono>{s.contactPhone}</Mono> : "None"}</td></tr></Table>
+      <CallbackPhone supplierId={s.id} phone={s.contactPhone ?? null} />
       {s.status === "verified" && can(me, "suppliers.payee_change") && <div className="flex flex-col gap-2"><div><Button size="sm" variant={change === "bank" ? "primary" : "outline"} onClick={() => setChange(change === "bank" ? "" : "bank")}>Change bank details</Button></div>
         {change === "bank" && <BankChangeForm supplierId={s.id} onDone={() => setChange("")} />}</div>}
       <BankChangesWaiting supplierId={s.id} />

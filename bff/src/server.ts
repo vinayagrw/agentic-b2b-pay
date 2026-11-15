@@ -79,6 +79,7 @@ export async function buildApp() {
   await app.register(swagger, { openapi: { info: { title: "B2B Pay BFF", version: "0.1.0", description: "Agentic B2B payments API. Test mode only, no real funds." }, components: { securitySchemes: { session: { type: "apiKey", in: "cookie", name: "sid" }, bearer: { type: "http", scheme: "bearer" } } } } });
   await app.register(swaggerUi, { routePrefix: "/docs" });
   P.seedPlatform(); I.seedIdp();
+  BC.seedDemo(); // again here: on a fresh database the demo user only exists after seedPlatform
   const COOKIE = { path: "/", httpOnly: true, sameSite: "lax" as const, signed: true };
   const userOf = (req: any): P.User | null => {
     const bearer = /^Bearer (\S+)$/.exec(String(req.headers?.authorization ?? ""))?.[1];
@@ -141,7 +142,7 @@ export async function buildApp() {
     "GET /identity/configs": "identity.manage", "POST /identity/configs": "identity.manage", "GET /iam/users": "roles.manage", "GET /iam/roles": "roles.manage", "POST /iam/roles": "roles.manage", "PUT /iam/roles/:id": "roles.manage", "DELETE /iam/roles/:id": "roles.manage", "POST /iam/users/:id/role": "roles.manage",
     "POST /sessions/:id/revoke": "workspace.read", "POST /risk/:paymentId/decide": "risk.review", "POST /views": "workspace.read", "DELETE /views/:id": "workspace.read", "GET /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens/:id/revoke": "developers.keys",
     "POST /copilot/outcome": "workspace.read", "POST /copilot/skills/:slug": "workspace.read", "POST /workspace/suppliers/:id/portal-link": "suppliers.invite", "GET /ops/agent-view": "treasury.read", "GET /ops/copilot-metrics": "treasury.read", "GET /ops/offers": "treasury.read", "POST /ops/offers/:tenantId": "settings.live_toggle", "POST /cards/:id/decide": "payments.approve",
-    "POST /suppliers/:id/bank-changes": "suppliers.payee_change", "POST /bank-changes/:id/callback": "payments.approve", "POST /bank-changes/:id/decide": "payments.approve", "PUT /bank-changes/settings": "rules.edit",
+    "POST /suppliers/:id/bank-changes": "suppliers.payee_change", "POST /bank-changes/:id/callback": "payments.approve", "POST /bank-changes/:id/decide": "payments.approve", "PUT /bank-changes/settings": "rules.edit", "PUT /suppliers/:id/callback-phone": "suppliers.review",
   };
   /** The permission a route needs. Developer routes need developers.keys, other reads need workspace.read, other writes need flow.operate. */
   const permFor = (method: string, url: string): I.Permission => ROUTE_PERMS[`${method} ${url}`] ?? (url.startsWith("/dev/") ? "developers.keys" : method === "GET" ? "workspace.read" : "flow.operate");
@@ -493,6 +494,7 @@ export async function buildApp() {
   app.put("/bank-changes/settings", async (req: any) => { const { u, t } = ctx(req); return BC.saveSettings(u, t, b(req)); });
   app.get("/bank-changes/:id", async (req: any) => BC.detail(scopeOf(req), req.params.id));
   app.post("/suppliers/:id/bank-changes", async (req: any) => { const { u, t } = ctx(req); return BC.request(u, t, req.params.id, b(req)); });
+  app.put("/suppliers/:id/callback-phone", async (req: any) => { const { u, t } = ctx(req); return BC.setPhone(u, t, req.params.id, b(req)); });
   app.post("/bank-changes/:id/callback", async (req: any) => { const { u, t } = ctx(req); return BC.recordCallback(u, t, req.params.id, b(req)); });
   app.post("/bank-changes/:id/decide", async (req: any) => { const { u, t } = ctx(req); return BC.decide(u, t, req.sessionId ?? null, req.params.id, b(req)); });
   // Virtual cards. Test mode only. No route returns a full card number or CVC.
@@ -535,7 +537,7 @@ function bearerUser(key: string): P.User | null {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  S.bootstrap(); P.writeSeedLogos(config.UPLOAD_DIR);
+  P.seedPlatform(); S.bootstrap(); P.writeSeedLogos(config.UPLOAD_DIR);
   const app = await buildApp();
   await app.listen({ port: config.BFF_PORT, host: "127.0.0.1" });
   console.log(`bff on http://127.0.0.1:${config.BFF_PORT} LLM_MODE=${llmMode()}`);

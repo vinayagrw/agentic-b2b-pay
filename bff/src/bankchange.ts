@@ -1,6 +1,8 @@
 /**
- * Supplier bank-detail change check. Any change to where a supplier gets paid becomes a pending request first.
+ * Supplier bank-detail change check. A change asked for on the supplier page becomes a pending request first.
  * The old and new values are sealed. Only the last 4 characters leave this module, in the API, the UI and the evidence log.
+ * One exception: an approved wallet address is written to the supplier record in full, because the pay flow needs it.
+ * The older payee-change and ERP vendor-master routes do not come through here. paymentHold still holds payments for the cooling-off time after they apply a change.
  * A second person must approve with a fresh authenticator code, after a recorded call-back to the phone number on the supplier record.
  * While a request waits, and for a cooling-off time after approval, payments to that supplier are held with a clear reason.
  */
@@ -16,7 +18,7 @@ import * as SU from "./stepup.js";
 
 export class BankChangeError extends P.AuthError {}
 export type Kind = "bank" | "wallet";
-export type Signal = { code: "different_country" | "different_bank" | "large_payment_soon" | "requester_can_approve" | "duplicate_account" | "new_wallet" | "channel"; label: string; detail: string; tone: "bad" | "warn" | "neutral" };
+export type Signal = { code: "different_country" | "different_bank" | "large_payment_soon" | "requester_can_approve" | "duplicate_account" | "new_wallet" | "phone_changed" | "channel"; label: string; detail: string; tone: "bad" | "warn" | "neutral" };
 export type Masked = { kind: Kind; holderName: string | null; bankName: string | null; country: string | null; accountType: "IBAN" | "Account" | "Wallet" | "On file"; last4: string | null };
 export type Callback = { by: string; at: string; phone: string; outcome: "confirmed" | "denied" | "no_answer"; spokeTo: string; note: string };
 type Full = { kind: Kind; holderName?: string; bankName?: string; country?: string; iban?: string; routingNumber?: string; accountNumber?: string; address?: string; ref?: string };
@@ -50,7 +52,8 @@ function fullOf(x: z.infer<typeof RequestInput>): Full {
   const b = x.bank; if (!b) throw new BankChangeError(422, "Enter the new bank details");
   const iban = (b.iban ?? "").replace(/\s/g, "").toUpperCase(); const routing = (b.routingNumber ?? "").replace(/\D/g, ""); const account = (b.accountNumber ?? "").replace(/\D/g, "");
   const base = { kind: "bank" as const, holderName: b.holderName, bankName: b.bankName, country: b.country.toUpperCase() };
-  if (iban) { if (!/^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(iban)) throw new BankChangeError(422, "That IBAN does not look right"); return { ...base, iban }; }
+  // The country of an IBAN is its first 2 letters. The typed country is never trusted for an IBAN.
+  if (iban) { if (!/^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(iban)) throw new BankChangeError(422, "That IBAN does not look right"); return { ...base, country: iban.slice(0, 2), iban }; }
   if (!/^\d{6,9}$/.test(routing) || !/^\d{4,17}$/.test(account)) throw new BankChangeError(422, "Enter an IBAN, or a routing number and an account number");
   return { ...base, routingNumber: routing, accountNumber: account };
 }
@@ -131,8 +134,32 @@ function signalsFor(u: P.User, tenantId: string, sup: Supplier, f: Full, old: Pa
     out.push({ code: "duplicate_account", label: "Account used by another supplier", detail: here.length ? `The same account is on ${here.join(", ")}` : "The same account is on another supplier on the platform", tone: "bad" });
   }
   if (f.kind === "wallet" && !dup.length) out.push({ code: "new_wallet", label: "Wallet never used before", detail: "No supplier on the platform has been paid to this wallet before", tone: "warn" });
+  const phoneAt = db.evidence.filter((e) => e.subjectId === sup.id && e.event === PHONE_EVENT).map((e) => Date.parse(e.createdAt)).filter((t) => at - t <= 30 * DAY).sort().at(-1);
+  if (phoneAt) out.push({ code: "phone_changed", label: "Call-back phone changed lately", detail: `The call-back phone on the supplier record was changed on ${new Date(phoneAt).toISOString().slice(0, 10)}. Check the number another way before you call.`, tone: "bad" });
   out.push({ code: "channel", label: CHANNEL_TEXT[channel] ?? channel, detail: channel === "portal" ? "The supplier asked in the portal" : "Requests by email or phone are a common fraud route. Call back on the number on file.", tone: channel === "portal" ? "neutral" : "warn" });
   return out;
+}
+
+// Call-back phone on the supplier record
+
+const PHONE_EVENT = "supplier.callback_phone_changed";
+/** Agent keys and API keys are not people. They cannot ask for a change or set the call-back phone. */
+const isPerson = (u: P.User) => !/^(agent|apikey):/.test(u.id);
+const hasPending = (supplierId: string) => sql.prepare("SELECT requested_by FROM bank_change_requests WHERE supplier_id = ? AND status = 'pending'").all(supplierId) as { requested_by: string }[];
+/** Sets the phone number used for call-backs. Needs suppliers.review. Locked while a change waits, so the number cannot be swapped to pass the call-back. */
+export function setPhone(u: P.User, tenantId: string, supplierId: string, raw: unknown) {
+  I.requirePermission(u, "suppliers.review", { tenantId });
+  if (!isPerson(u)) throw new BankChangeError(403, "Only a signed-in person can set the call-back phone");
+  const sup = supplierIn(tenantId, supplierId);
+  const x = z.object({ phone: z.string().trim().regex(/^\+?\d[\d ()-]{6,22}$/, "Enter a phone number with the country code") }).parse(raw);
+  const pending = hasPending(sup.id);
+  if (pending.length && sup.contactPhone) throw new BankChangeError(409, "A bank detail change is waiting for a check. The call-back phone cannot change until it is approved or rejected.");
+  if (pending.some((r) => r.requested_by === u.id)) throw new BankChangeError(403, "The person who asked for the change cannot set the call-back phone");
+  const before = sup.contactPhone ?? null; if (before === x.phone) return { supplierId: sup.id, contactPhone: x.phone };
+  sup.contactPhone = x.phone;
+  P.audit(u.id, "supplier", sup.id, PHONE_EVENT, { oldLast4: before ? last4(before) : null, newLast4: last4(x.phone), first: !before });
+  save();
+  return { supplierId: sup.id, contactPhone: x.phone };
 }
 
 // Request, call-back and decision
@@ -140,7 +167,10 @@ function signalsFor(u: P.User, tenantId: string, sup: Supplier, f: Full, old: Pa
 /** The maker asks for a change. Nothing is applied here. */
 export function request(u: P.User, tenantId: string, supplierId: string, raw: unknown) {
   I.requirePermission(u, "suppliers.payee_change", { tenantId });
+  if (!isPerson(u)) throw new BankChangeError(403, "Only a signed-in person can ask for a bank detail change. Agent keys and API keys cannot.");
   const sup = supplierIn(tenantId, supplierId); const x = RequestInput.parse(raw); const f = fullOf(x);
+  // Without a phone on file the call-back can never happen, so the request would hold payments with no way to approve it.
+  if (!sup.contactPhone) throw new BankChangeError(409, "There is no call-back phone on the supplier record. An admin must add one on the supplier page before a change can be asked for.");
   if (sql.prepare("SELECT 1 FROM bank_change_requests WHERE supplier_id = ? AND kind = ? AND status = 'pending'").get(sup.id, f.kind)) throw new BankChangeError(409, "A change for this supplier is already waiting for a check");
   const old = current(sup, f.kind); const hash = accountHash(f);
   if (old && old.hash === hash) throw new BankChangeError(422, "These are the details already on file");
@@ -163,7 +193,7 @@ export function recordCallback(u: P.User, tenantId: string, id: string, raw: unk
   const r = getRow(tenantId, id); checker(u, r, "record the call-back");
   const x = z.object({ outcome: z.enum(["confirmed", "denied", "no_answer"]), spokeTo: z.string().trim().max(80).default(""), note: z.string().trim().max(500).default("") }).parse(raw);
   const sup = supplierIn(tenantId, r.supplier_id);
-  if (!sup.contactPhone) throw new BankChangeError(409, "There is no phone number on the supplier record. Add one before the call-back.");
+  if (!sup.contactPhone) throw new BankChangeError(409, "There is no call-back phone on the supplier record. An admin must add one on the supplier page before the call-back.");
   if (x.outcome === "confirmed" && x.spokeTo.length < 2) throw new BankChangeError(422, "Enter the name of the person you spoke to");
   const cb: Callback = { by: u.id, at: now(), phone: sup.contactPhone, outcome: x.outcome, spokeTo: x.spokeTo, note: scrub(x.note) };
   sql.prepare("UPDATE bank_change_requests SET callback = ? WHERE id = ?").run(JSON.stringify(cb), r.id);
@@ -184,9 +214,14 @@ export function decide(u: P.User, tenantId: string, sessionId: string | null, id
   const cb = r.callback ? (JSON.parse(r.callback) as Callback) : null;
   if (cb?.outcome !== "confirmed") throw new BankChangeError(409, "Record a confirmed call-back to the phone number on the supplier record first");
   const f = JSON.parse(I.unseal(r.new_enc)) as Full; const m = mask(f);
-  if (f.kind === "wallet") sup.walletAddress = f.address!;
-  else {
-    sup.bankDetailsRef = `bank-chg-${r.id}`;
+  const addRails = (rails: Supplier["acceptedRails"]) => { sup.acceptedRails = [...new Set([...sup.acceptedRails, ...rails])]; };
+  if (f.kind === "wallet") {
+    // The pay flow reads the wallet from the supplier record, so the approved address is stored there in full.
+    sup.walletAddress = f.address!; addRails(["circle_usdc", "onchain_usdc"]);
+    // No signed proof here. An empty verifiedAt tells the supplier page this wallet was checked by call-back, not by signature.
+    if (sup.onboarding) sup.onboarding.wallet = { address: f.address!, message: "", signature: "", verifiedAt: "" };
+  } else {
+    sup.bankDetailsRef = `bank-chg-${r.id}`; addRails(["stripe_ach", "stripe_card"]);
     if (sup.onboarding?.bank) sup.onboarding.bank = { tokenId: sup.bankDetailsRef, last4: m.last4 ?? "", bankName: m.bankName, routingNumber: "", holderName: m.holderName ?? sup.name };
   }
   putPayout(sup, f);
@@ -198,12 +233,16 @@ export function decide(u: P.User, tenantId: string, sessionId: string | null, id
   return detail(tenantId, id);
 }
 
+const LEGACY_EVENTS = ["payee.changed", "payee_change.applied"];
 /** The reason payments to this supplier are held right now, or null. Used by the pay flow. */
 export function paymentHold(tenantId: string, supplierId: string, at = Date.now()): string | null {
   const name = db.suppliers.find((s) => s.id === supplierId)?.name ?? supplierId;
   const rows = sql.prepare("SELECT status, hold_until FROM bank_change_requests WHERE tenant_id = ? AND supplier_id = ? AND status IN ('pending','approved')").all(tenantId, supplierId) as { status: string; hold_until: string | null }[];
   if (rows.some((r) => r.status === "pending")) return `Payment held. A bank detail change for ${name} is waiting for a second person to check it.`;
-  const until = rows.filter((r) => r.hold_until && Date.parse(r.hold_until) > at).map((r) => r.hold_until!).sort().at(-1);
+  // Changes applied by the older payee-change and ERP routes leave no request row. Their evidence events start the same cooling-off time. Our own approvals carry a request id and use hold_until on the row.
+  const hours = settings(tenantId).coolingOffHours;
+  const legacy = db.evidence.filter((e) => e.subjectType === "supplier" && e.subjectId === supplierId && LEGACY_EVENTS.includes(e.event) && !(e.payload as any)?.request).map((e) => new Date(Date.parse(e.createdAt) + hours * 3_600_000).toISOString());
+  const until = [...rows.filter((r) => r.hold_until).map((r) => r.hold_until!), ...legacy].filter((t) => Date.parse(t) > at).sort().at(-1);
   return until ? `Payment held. ${name} changed its payout details and the cooling-off time runs until ${until.slice(0, 16).replace("T", " ")} UTC.` : null;
 }
 

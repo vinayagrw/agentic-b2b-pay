@@ -21,6 +21,19 @@ const OUTCOME = { confirmed: "Supplier confirmed the change", denied: "Supplier 
 const STATUS_TONE = { pending: "warn", approved: "ok", rejected: "bad" } as const;
 
 /** Supplier page form. It only asks for a change. Nothing applies until a second person approves it. */
+/** Call-back phone on the supplier record. People with suppliers.review can set it. The server locks it while a change waits. */
+export function CallbackPhone({ supplierId, phone }: { supplierId: string; phone: string | null }) {
+  const { data: me } = useMe(); const { run, busy, error } = useAct(); const [v, setV] = useState(""); const [edit, setEdit] = useState(false);
+  return <div className="flex flex-col gap-1 text-[13px]" data-testid="callback-phone">
+    <div className="flex flex-wrap items-center gap-2"><span className="text-muted">Call-back phone on file</span>{phone ? <Mono>{phone}</Mono> : <span>None. A bank detail change cannot be asked for until one is added.</span>}
+      {can(me, "suppliers.review") && !edit && <Button size="sm" variant="ghost" onClick={() => setEdit(true)}>{phone ? "Change" : "Add"}</Button>}</div>
+    {edit && <div className="flex flex-wrap items-end gap-2"><div><Label>Phone number with country code</Label><Input className="w-56" inputMode="tel" placeholder="+44 20 7946 0000" value={v} onChange={(e) => setV(e.target.value)} /></div>
+      <Button size="sm" variant="primary" disabled={busy || v.trim().length < 7} onClick={async () => { if (await run(() => api(`/suppliers/${supplierId}/callback-phone`, { phone: v }, { method: "PUT" }))) { setV(""); setEdit(false); } }}>Save</Button>
+      <Button size="sm" variant="ghost" onClick={() => setEdit(false)}>Cancel</Button><Muted>Use a number you already trust, not one from a change request.</Muted></div>}
+    <ErrorNote msg={error} />
+  </div>;
+}
+
 export function BankChangeForm({ supplierId, onDone }: { supplierId: string; onDone?: () => void }) {
   const { run, busy, error } = useAct();
   const [kind, setKind] = useState<"bank" | "wallet">("bank"); const [type, setType] = useState<"iban" | "local">("iban");
@@ -41,14 +54,14 @@ export function BankChangeForm({ supplierId, onDone }: { supplierId: string; onD
       <div><Label>Bank name</Label><Input value={b.bankName} onChange={(e) => setB({ ...b, bankName: e.target.value })} /></div>
       <div><Label>Bank country (2 letters)</Label><Input maxLength={2} placeholder="DE" value={b.country} onChange={(e) => setB({ ...b, country: e.target.value.toUpperCase() })} /></div>
       <div><Label>Account type</Label><Select value={type} onChange={(e) => setType(e.target.value as "iban" | "local")}><option value="iban">IBAN</option><option value="local">Routing and account number</option></Select></div>
-      {type === "iban" ? <div className="sm:col-span-2"><Label>IBAN</Label><Input autoComplete="off" value={b.iban} onChange={(e) => setB({ ...b, iban: e.target.value.toUpperCase() })} /></div>
+      {type === "iban" ? <div className="sm:col-span-2"><Label>IBAN</Label><Input autoComplete="off" value={b.iban} onChange={(e) => { const iban = e.target.value.toUpperCase(); setB({ ...b, iban, country: /^[A-Z]{2}/.test(iban) ? iban.slice(0, 2) : b.country }); }} /></div>
         : <><div><Label>Routing number</Label><Input inputMode="numeric" autoComplete="off" value={b.routingNumber} onChange={(e) => setB({ ...b, routingNumber: e.target.value.trim() })} /></div><div><Label>Account number</Label><Input inputMode="numeric" autoComplete="off" value={b.accountNumber} onChange={(e) => setB({ ...b, accountNumber: e.target.value.trim() })} /></div></>}
     </div> : <div><Label>New wallet address</Label><Input placeholder="0x..." autoComplete="off" value={address} onChange={(e) => setAddress(e.target.value.trim())} /></div>}
     <div className="grid gap-2 sm:grid-cols-[200px_1fr]">
       <div><Label>How did the request arrive</Label><Select value={channel} onChange={(e) => setChannel(e.target.value)}><option value="email">Email</option><option value="phone">Phone</option><option value="portal">Supplier portal</option><option value="other">Other</option></Select></div>
       <div><Label>Describe how it was requested</Label><Textarea className="min-h-12 font-sans text-[13px]" placeholder="Who asked, when, and what they said. Do not paste account numbers here." value={note} onChange={(e) => setNote(e.target.value)} /></div>
     </div>
-    <div className="flex flex-wrap items-center gap-2"><Button variant="primary" disabled={busy || !ready} onClick={submit}>Send for a check</Button><Muted>After you send it, only the last 4 characters of the account are shown.</Muted></div>
+    <div className="flex flex-wrap items-center gap-2"><Button variant="primary" disabled={busy || !ready} onClick={submit}>Send for a check</Button><Muted>While it waits, only the last 4 characters are shown. For an IBAN the country comes from its first 2 letters.</Muted></div>
     <ErrorNote msg={error} />
   </div>;
 }
@@ -82,7 +95,7 @@ export function BankChangeCard({ r }: { r: BankChange }) {
       {r.paymentsHeld && <div className="rounded-lg border border-bad/30 bg-bad/10 p-2.5 text-xs" role="status">{pending ? "Payments to this supplier are held until this request is approved or rejected." : `Cooling-off time. Payments to this supplier are held until ${when(r.holdUntil)}.`}</div>}
       <div className="rounded-lg border border-border p-2.5">
         <div className="flex items-center gap-1.5 text-xs font-medium"><PhoneCall size={13} aria-hidden />Call-back</div>
-        <p className="mt-1 text-xs text-muted">Call the number on the supplier record, not a number from the request. Number on file: {r.callbackPhone ? <Mono>{r.callbackPhone}</Mono> : "none, add one to the supplier record first"}</p>
+        <p className="mt-1 text-xs text-muted">Call the number on the supplier record, not a number from the request. Number on file: {r.callbackPhone ? <Mono>{r.callbackPhone}</Mono> : "none. An admin must add one on the supplier page first"}</p>
         {r.callback && <p className="mt-1.5 text-xs"><Badge v={OUTCOME[r.callback.outcome]} tone={r.callback.outcome === "confirmed" ? "ok" : "bad"} /> {r.callback.byName ?? r.callback.by} called <Mono>{r.callback.phone}</Mono> on {when(r.callback.at)}{r.callback.spokeTo ? ` and spoke to ${r.callback.spokeTo}` : ""}.{r.callback.note ? ` ${r.callback.note}` : ""}</p>}
         {pending && mayCheck && <div className="mt-2 grid gap-2 sm:grid-cols-[220px_1fr]">
           <div><Label>Result of the call</Label><Select value={cb.outcome} onChange={(e) => setCb({ ...cb, outcome: e.target.value })}><option value="confirmed">Supplier confirmed the change</option><option value="denied">Supplier did not ask for this</option><option value="no_answer">No answer</option></Select></div>
@@ -119,10 +132,10 @@ export function BankChangesPage() {
   const { data, error } = useGet<ListResp>(`/bank-changes?status=${status}`); const { data: me } = useMe();
   const { run, busy, error: e2 } = useAct(); const [hours, setHours] = useState("");
   return <Section>
-    <PageHeader title="Bank detail changes" sub="Every change to where a supplier gets paid waits here. A second person calls the supplier back and approves it with an authenticator code." actions={<div className="flex gap-1">{["pending", "approved", "rejected", "all"].map((s) => <Button key={s} size="sm" variant={status === s ? "primary" : "ghost"} onClick={() => setStatus(s)}>{s[0].toUpperCase() + s.slice(1)}</Button>)}</div>} />
+    <PageHeader title="Bank detail changes" sub="Changes asked for on the supplier page wait here. A second person calls the supplier back and approves with an authenticator code. Changes made through the older payee-change and ERP routes do not wait here, but payments are still held for the cooling-off time after them." actions={<div className="flex gap-1">{["pending", "approved", "rejected", "all"].map((s) => <Button key={s} size="sm" variant={status === s ? "primary" : "ghost"} onClick={() => setStatus(s)}>{s[0].toUpperCase() + s.slice(1)}</Button>)}</div>} />
     {error && <ErrorNote msg={(error as Error).message} />}
     {data?.settings && <Card title="Cooling-off time"><div className="flex flex-wrap items-end gap-2">
-      <p className="min-w-0 flex-1 text-xs text-muted">After a change is approved, payments to that supplier stay held for {data.settings.coolingOffHours} hours. Account numbers are stored sealed. Only the last 4 characters are ever shown.</p>
+      <p className="min-w-0 flex-1 text-xs text-muted">After a change is approved, payments to that supplier stay held for {data.settings.coolingOffHours} hours. Bank account numbers are stored sealed and only the last 4 characters are shown. A wallet address shows only its last 4 characters while it waits, and in full on the supplier record once it is approved.</p>
       {can(me, "rules.edit") && <><div><Label>Hours</Label><Input className="w-24" inputMode="numeric" placeholder={String(data.settings.coolingOffHours)} value={hours} onChange={(e) => setHours(e.target.value.replace(/[^\d.]/g, ""))} /></div><Button size="sm" disabled={busy || hours === ""} onClick={async () => { if (await run(() => api("/bank-changes/settings", { coolingOffHours: Number(hours) }, { method: "PUT" }))) setHours(""); }}>Save</Button></>}
     </div><ErrorNote msg={e2} /></Card>}
     {!data ? <Card pad={false}><SkeletonTable rows={3} cols={3} /></Card> : data.requests.length ? <div className="grid gap-3 lg:grid-cols-2">{data.requests.map((r) => <BankChangeCard key={r.id} r={r} />)}</div>
