@@ -21,7 +21,7 @@ import * as AP2 from "./modules/ap2.js";
 
 export type CardType = "one_time" | "vendor_locked" | "recurring" | "agent" | "mandate";
 export type CardStatus = "pending_approval" | "active" | "frozen" | "canceled" | "closed" | "rejected";
-export type DeclineCode = "frozen" | "canceled" | "already_used" | "expired" | "wrong_merchant" | "wrong_currency" | "over_limit" | "agent_paused" | "not_issued" | "wrong_amount" | "mandate_invalid";
+export type DeclineCode = "frozen" | "canceled" | "already_used" | "expired" | "wrong_merchant" | "wrong_currency" | "over_limit" | "agent_paused" | "not_issued" | "wrong_amount" | "mandate_invalid" | "order_paid";
 export type Card = { id: string; tenantId: string; type: CardType; status: CardStatus; issuer: "stripe" | "simulated"; providerRef: string | null; cardholderRef: string | null; last4: string; expMonth: number; expYear: number;
   limit: number; currency: "USD" | "EUR" | "GBP"; allowedMerchants: string[]; allowedMccs: string[]; supplierId: string | null; poId: string | null; ownerType: "user" | "agent"; ownerId: string; label: string; createdBy: string; approvedBy: string | null; createdAt: string; updatedAt: string;
   /** Mandate-bound cards only: hash of the signed cart, the exact cart amount and the cart mandate id at issue time. */
@@ -44,6 +44,7 @@ const DECLINE_TEXT: Record<DeclineCode, string> = {
   expired: "Declined. The card has expired.", wrong_merchant: "Declined. This merchant is not allowed on this card.", wrong_currency: "Declined. The currency does not match the card.",
   over_limit: "Declined. This charge goes over the card limit.", agent_paused: "Declined. The agent that owns this card is paused.", not_issued: "Declined. The card is not issued yet.",
   wrong_amount: "Declined. The charge must equal the order amount exactly.", mandate_invalid: "Declined. The signed mandate for this order is missing or has changed.",
+  order_paid: "Declined. This order is already paid or a payment for it is in progress.",
 };
 
 // Rows
@@ -134,15 +135,28 @@ export async function issuerInfo() { const i = await issuer(); return { kind: i.
 
 // The authorization decision. One function for the simulator, the Stripe webhook and tests.
 
+/** True when a mandate-bound card for this order has an approved charge that was not reversed. The card status does not matter. */
+export const paidByCard = (tenantId: string, poId: string) => !!sql.prepare("SELECT a.id FROM card_authorizations a JOIN cards c ON c.id = a.card_id AND c.tenant_id = a.tenant_id WHERE c.tenant_id = ? AND c.po_id = ? AND c.type = 'mandate' AND a.approved = 1 AND a.status != 'reversed'").get(tenantId, poId);
+/** Why the payment rail already covers this order, or null. Looks at the order, its invoices and their payments. */
+function railPaid(po: { id: string; status: string }): string | null {
+  const invs = db.invoices.filter((i) => i.poId === po.id);
+  if (po.status === "paid" || invs.some((i) => i.paid)) return "The order is already paid";
+  if (db.intents.some((p) => p.kind !== "refund" && invs.some((i) => i.id === p.invoiceId) && ["submitted", "pending", "settled"].includes(p.status))) return "A payment for this order is already in progress";
+  return null;
+}
+
 /** Fresh check of the order and its signed AP2 mandates for a mandate-bound card. Null for other card types. */
 export function mandateStatus(c: Card, at = Date.now()) {
   if (c.type !== "mandate") return null;
   const pair = c.poId ? AP2.currentPair(c.poId) : { intent: undefined, cart: undefined };
-  const base = { intentId: pair.intent?.id ?? null, cartId: pair.cart?.id ?? null, cartHash: pair.cart?.hash ?? null, bindingHash: c.bindingHash, checks: [] as AP2.MandateCheck[] };
-  const bad = (reason: string, checks: AP2.MandateCheck[] = []) => ({ ...base, ok: false, reason, checks });
+  const base = { intentId: pair.intent?.id ?? null, cartId: pair.cart?.id ?? null, cartHash: pair.cart?.hash ?? null, bindingHash: c.bindingHash, checks: [] as AP2.MandateCheck[], orderPaid: false };
+  const bad = (reason: string, checks: AP2.MandateCheck[] = [], orderPaid = false) => ({ ...base, ok: false, reason, checks, orderPaid });
   const po = db.pos.find((p) => p.id === c.poId && tenantOf(p) === c.tenantId);
   if (!po || !c.bindingHash || c.cartAmount == null || !c.supplierId) return bad("The order for this card is missing");
   if (po.status === "rejected") return bad("The order was rejected");
+  // A used card paid the order itself, so the paid check is only for a card that can still be charged.
+  const paid = c.status === "closed" ? null : paidByCard(c.tenantId, po.id) ? "The order is already paid by another card" : railPaid(po);
+  if (paid) return bad(paid, [], true);
   if (!pair.intent || !pair.cart) return bad("The signed mandates for this order are missing");
   if (AP2.cartBindingHash(pair.cart.body) !== c.bindingHash) return bad("The signed cart changed after the card was issued");
   const v = AP2.verifyMandatePair(pair.intent, pair.cart, { poId: po.id, supplierId: c.supplierId, currency: c.currency, amount: c.cartAmount, lines: pair.cart.body.lines }, new Date(at));
@@ -166,6 +180,7 @@ export function decide(c: Card, req: AuthRequest, at = Date.now()): Decision {
   if (c.type === "mandate") {
     if (req.supplierId && req.supplierId !== c.supplierId) return no("wrong_merchant", "Declined. The supplier does not match the order.");
     const ms = mandateStatus(c, at)!;
+    if (!ms.ok && ms.orderPaid) return no("order_paid", `${DECLINE_TEXT.order_paid} ${ms.reason}.`);
     if (!ms.ok) return no("mandate_invalid", `${DECLINE_TEXT.mandate_invalid} ${ms.reason}.`);
     if (r2(req.amount) !== c.cartAmount) return no("wrong_amount");
   }
@@ -189,6 +204,13 @@ export function authorize(tenantId: string, cardId: string, req: AuthRequest, o:
   sql.prepare("INSERT INTO card_authorizations (id, tenant_id, card_id, merchant, mcc, amount, currency, approved, reason, status, captured_amount, journal_id, provider_ref, source, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .run(id, tenantId, c.id, req.merchant.slice(0, 80), req.mcc ?? null, amount, c.currency, +d.approved, d.reason, d.approved ? "captured" : "declined", d.approved ? amount : 0, journalId, o.providerRef ?? null, o.source, new Date(at).toISOString());
   if (d.approved && (c.type === "one_time" || c.type === "mandate")) { c.status = "closed"; put(c); }
+  if (d.approved && c.type === "mandate" && c.poId) {
+    // The card paid the order. Mark its invoices paid so the payment rail cannot pay it a second time.
+    const po = db.pos.find((p) => p.id === c.poId && tenantOf(p) === tenantId); const invs = db.invoices.filter((i) => i.poId === c.poId);
+    for (const i of invs) i.paid = true;
+    if (po && po.status === "invoiced") po.status = "paid";
+    P.audit(o.actor, "po", c.poId, "order.paid_by_card", { card: c.id, authorization: id, amount, currency: c.currency, invoices: invs.map((i) => i.id) });
+  }
   P.audit(o.actor, "card", c.id, d.approved ? "card.authorization_approved" : "card.authorization_declined", { authorization: id, merchant: req.merchant.slice(0, 80), mcc: req.mcc ?? null, amount, code: d.code, source: o.source });
   save();
   return { authorization: authsFor(tenantId, c.id).find((a) => a.id === id)!, decision: d, card: view(getCard(tenantId, c.id)) };
@@ -276,6 +298,8 @@ export async function issueForOrder(u: P.User, tenantId: string, sessionId: stri
   if (!v.ok) throw new CardError(409, `The signed mandates for this order do not verify. ${v.reason}`);
   if (!["USD", "EUR", "GBP"].includes(cart.currency)) throw new CardError(422, "Cards work in USD, EUR or GBP only");
   if (sql.prepare("SELECT id FROM cards WHERE tenant_id = ? AND po_id = ? AND type = 'mandate' AND status IN ('pending_approval','active','frozen','closed')").get(tenantId, po.id)) throw new CardError(409, "This order already has a mandate-bound virtual card");
+  if (paidByCard(tenantId, po.id)) throw new CardError(409, "This order was already paid by a mandate-bound virtual card");
+  const paid = railPaid(po); if (paid) throw new CardError(409, `${paid}, so it cannot get a card`);
   const exp = new Date(pair.intent.body.expiresAt);
   const c: Card = { id: nextId("card"), tenantId, type: "mandate", status: "pending_approval", issuer: (await issuer()).kind, providerRef: null, cardholderRef: null, last4: "", expMonth: exp.getUTCMonth() + 1, expYear: exp.getUTCFullYear(),
     limit: r2(cart.amount), currency: cart.currency as Card["currency"], allowedMerchants: [sup.name], allowedMccs: [], supplierId: sup.id, poId: po.id, ownerType: "user", ownerId: u.id, label: `Order ${po.id}`.slice(0, 60), createdBy: u.id, approvedBy: null, createdAt: now(), updatedAt: now(),
@@ -306,7 +330,7 @@ export async function setState(u: P.User, tenantId: string, id: string, action: 
   const live = c.issuer === "stripe" && iss.kind === "stripe";
   if (action === "freeze") { if (c.status !== "active") throw new CardError(409, "Only an active card can be frozen"); if (live) await iss.setStatus(c, "inactive"); c.status = "frozen"; }
   if (action === "unfreeze") { if (c.status !== "frozen") throw new CardError(409, "Only a frozen card can be unfrozen"); if (live) await iss.setStatus(c, "active"); c.status = "active"; }
-  if (action === "cancel") { if (["canceled", "rejected"].includes(c.status)) throw new CardError(409, "This card is already closed"); if (live && c.providerRef) await iss.setStatus(c, "canceled"); c.status = "canceled"; }
+  if (action === "cancel") { if (["canceled", "rejected"].includes(c.status)) throw new CardError(409, "This card is already closed"); if (c.status === "closed") throw new CardError(409, "This card was already used and cannot be canceled"); if (live && c.providerRef) await iss.setStatus(c, "canceled"); c.status = "canceled"; }
   put(c); P.audit(u.id, "card", c.id, `card.${action === "cancel" ? "canceled" : action === "freeze" ? "frozen" : "unfrozen"}`, {});
   return view(c);
 }

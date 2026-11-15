@@ -22,6 +22,7 @@ import { buyerDraft, readInvoice, explainRoute, renderInvoiceText } from "./agen
 import { pickRule, type ApprovalRule } from "./modules/rules.js";
 import { publish } from "./hooks.js";
 import * as AP2 from "./modules/ap2.js";
+import { paidByCard } from "./cards.js";
 import { evaluateMandates } from "./modules/policy.js";
 
 export class HttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
@@ -227,7 +228,7 @@ export async function submitInvoice(poId: string, text: string, opts: { invoiceD
   const r = await readInvoice(text);
   const invoiceDate = opts.invoiceDate ?? FX.today();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) || invoiceDate > FX.today()) throw new HttpError(422, "invoiceDate must be YYYY-MM-DD and not in the future");
-  const inv = { id: nextId("inv"), invoiceDate, tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? sup.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: false, injection: r.injection };
+  const inv = { id: nextId("inv"), invoiceDate, tenantId: tenantOf(po), poId, supplierId: po.supplierId, number: r.value.invoiceNumber, amount: r.value.total, currency: po.currency ?? ("USD" as const), entityId: po.entityId ?? sup.entityId ?? FX.defaultEntity(tenantOf(po))?.id, dueDate: r.value.dueDate, extract: r.value, extractedBy: `${r.source}${r.note ? " (" + r.note + ")" : ""}`, matchStatus: "unmatched" as const, erpApproval: "pending" as const, paid: paidByCard(tenantOf(po), poId), injection: r.injection };
   db.invoices.push(inv); po.status = po.status === "received" ? "invoiced" : po.status;
   ev("invoice", inv.id, "llm.invoice_extracted", { source: r.source, extract: r.value });
   if (r.injection.length) {
@@ -319,6 +320,7 @@ async function payInvoiceCore(invId: string, idempotencyKey: string, opts: { urg
   const inv = must(db.invoices.find((i) => i.id === invId), "invoice");
   if (inv.matchStatus !== "matched") throw new HttpError(409, "Invoice is not matched");
   if (inv.paid) throw new HttpError(409, "Invoice already paid");
+  if (paidByCard(tenantOf(inv), inv.poId)) throw new HttpError(409, "This order was already paid by a mandate-bound virtual card");
   const open = db.intents.find((p) => p.invoiceId === inv.id && (p.status === "submitted" || p.status === "pending"));
   if (open) throw new HttpError(409, `Payment ${open.id} for this invoice is already in flight`);
   const po = must(db.pos.find((p) => p.id === inv.poId), "po");

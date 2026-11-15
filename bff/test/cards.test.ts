@@ -171,6 +171,52 @@ describe("mandate-bound virtual card", () => {
     const r = auth(card.id, sup.name, card.cartAmount!); expect(r.decision.code).toBe("mandate_invalid"); expect(r.decision.reason).toMatch(/no longer verify/);
   });
 
+  it("does not let a used card be canceled and the order get a second card", async () => {
+    const { po, sup, card } = await bound();
+    expect(auth(card.id, sup.name, card.cartAmount!).decision.approved).toBe(true);
+    await expect(C.setState(pat(), "tnt-acme", card.id, "cancel")).rejects.toThrow(/already used/);
+    // Even if an old row was canceled after use, the approved charge still blocks a new card.
+    sql.prepare("UPDATE cards SET status = 'canceled' WHERE id = ?").run(card.id);
+    const app = await buildApp(); const r0 = await app.inject({ method: "POST", url: "/auth/login", payload: { userId: "usr-clerk-pat" } }); const cookie = `sid=${r0.cookies.find((x: any) => x.name === "sid")!.value}`;
+    const again = await app.inject({ method: "POST", url: `/orders/${po.id}/card`, headers: { cookie } }); expect(again.statusCode).toBe(409); expect(again.json().error).toMatch(/already paid by a mandate-bound virtual card/);
+    expect(C.listCards("tnt-acme").filter((c) => c.poId === po.id)).toHaveLength(1);
+  });
+
+  it("lets an unused card be canceled and replaced", async () => {
+    const { po, sup, card } = await bound();
+    expect((await C.setState(pat(), "tnt-acme", card.id, "cancel")).status).toBe("canceled");
+    const next = (await C.issueForOrder(pat(), "tnt-acme", null, po.id)).card; expect(next.status).toBe("active");
+    expect(auth(next.id, sup.name, next.cartAmount!).decision.approved).toBe(true);
+  });
+
+  it("declines the card when the order is paid or a payment is in progress on the rail", async () => {
+    const { po, sup, card } = await bound();
+    S.receiveGoods(po.id); const inv = await S.submitInvoice(po.id, S.invoiceText(po.id, {}));
+    const fake: any = { id: "pi-probe", invoiceId: inv.id, mandateId: po.mandateId, amount: inv.amount, currency: "USD", status: "pending" }; db.intents.push(fake);
+    const busy = auth(card.id, sup.name, card.cartAmount!); expect(busy.decision.code).toBe("order_paid"); expect(busy.decision.reason).toMatch(/in progress/);
+    fake.status = "failed"; expect(C.cardDetail("tnt-acme", card.id).order?.mandate.ok).toBe(true);
+    fake.status = "settled"; inv.paid = true; po.status = "paid";
+    const r = auth(card.id, sup.name, card.cartAmount!); expect(r.decision.approved).toBe(false); expect(r.decision.code).toBe("order_paid"); expect(r.decision.reason).toMatch(/already paid/);
+    expect(C.cardDetail("tnt-acme", card.id).card.status).toBe("active");
+    const po2 = await order(); S.receiveGoods(po2.id); const inv2 = await S.submitInvoice(po2.id, S.invoiceText(po2.id, {})); inv2.paid = true;
+    await expect(C.issueForOrder(pat(), "tnt-acme", null, po2.id)).rejects.toThrow(/already paid/);
+  });
+
+  it("marks the order paid by card so the rail refuses a second payment", async () => {
+    const { po, sup, card } = await bound();
+    S.receiveGoods(po.id); const inv = await S.submitInvoice(po.id, S.invoiceText(po.id, {})); S.matchInvoice(inv.id);
+    expect(auth(card.id, sup.name, card.cartAmount!).decision.approved).toBe(true);
+    expect(db.invoices.find((i) => i.id === inv.id)!.paid).toBe(true); expect(db.pos.find((p) => p.id === po.id)!.status).toBe("paid");
+    await expect(S.payInvoice(inv.id, "idem-card-1")).rejects.toThrow(/already paid/);
+    expect(C.cardDetail("tnt-acme", card.id).order?.mandate.ok).toBe(true);
+    expect(db.evidence.some((e) => e.subjectId === po.id && e.event === "order.paid_by_card")).toBe(true);
+    // Card charged before the invoice arrives: the late invoice is born paid and the rail still refuses.
+    const b = await bound(); expect(auth(b.card.id, b.sup.name, b.card.cartAmount!).decision.approved).toBe(true);
+    S.receiveGoods(b.po.id); const late = await S.submitInvoice(b.po.id, S.invoiceText(b.po.id, {})); expect(late.paid).toBe(true);
+    late.paid = false; S.matchInvoice(late.id);
+    await expect(S.payInvoice(late.id, "idem-card-2")).rejects.toThrow(/paid by a mandate-bound virtual card/);
+  });
+
   it("only issues from an approved order with mandates, and the limit cannot change", async () => {
     const po = await order(); const app = await buildApp();
     const r0 = await app.inject({ method: "POST", url: "/auth/login", payload: { userId: "usr-clerk-pat" } }); const cookie = `sid=${r0.cookies.find((x: any) => x.name === "sid")!.value}`;
