@@ -151,7 +151,7 @@ export function explainPayment(paymentId: string, tenantId: string | null): WhyV
   items.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
   const stop = items.find((i) => i.outcome === "failed");
   const headline = st === "settled" ? `Paid ${money(pi.amount)}. Every check passed.` : stop ? `Stopped at ${stop.decision.toLowerCase()}. ${stop.why}` : `Payment is ${st}.`;
-  const v = verifyChain(db.evidence);
+  const v = verifyChain(db.evidence, db.auditAnchor?.hash);
   return { paymentId: pi.id, poId: po.id, invoiceId: inv.id, tenantId: tenantOf(pi), status: st, amount: pi.amount, currency: pi.currency, headline, items, chain: { ...v, records: db.evidence.length, checkedAt: new Date().toISOString() } };
 }
 

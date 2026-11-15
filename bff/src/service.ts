@@ -247,7 +247,7 @@ export function disputeEvidence(scope: string | null, poId: string) {
       cards: cards.map(({ card: c, authorizations }) => ({ id: c.id, kind: c.type === "mandate" ? "Mandate-bound virtual card" : `${c.typeText} card`, issuerLabel: c.issuerLabel, last4: c.last4, expiry: c.expiry, status: c.status, currency: c.currency, cartAmount: c.cartAmount, bindingHash: c.bindingHash, cartMandateId: c.cartMandateId, issuedBy: c.createdByName, approvedBy: c.approvedBy, createdAt: c.createdAt,
         authorizations: authorizations.map((x) => ({ id: x.id, at: x.createdAt, merchant: x.merchant, amount: x.amount, currency: x.currency, decision: x.approved ? "approved" as const : "declined" as const, reason: x.reason, status: x.status, source: x.source })) })),
       railPayments: pis.map((p) => ({ id: p.id, kind: p.kind ?? "payment", rail: p.rail ?? null, amount: p.amount, currency: p.currency, status: p.status, blockedReason: p.blockedReason ?? null, createdAt: p.createdAt ?? null })) },
-    timeline, chain: verifyChain(db.evidence),
+    timeline, chain: verifyChain(db.evidence, db.auditAnchor?.hash),
   });
 }
 function pushPoToErp(po: PurchaseOrder, sup: Supplier) {
@@ -873,7 +873,7 @@ function ownedIds(tenantId: string) {
 export function evidenceView(subjectId?: string, tenantId: string | null = null) {
   const owned = tenantId ? ownedIds(tenantId) : null;
   const visible = db.evidence.filter((e) => (!subjectId || e.subjectId === subjectId) && (!owned || owned.has(e.subjectId)));
-  return { verification: verifyChain(db.evidence), records: visible };
+  return { verification: verifyChain(db.evidence, db.auditAnchor?.hash), records: visible };
 }
 
 /** ISO 20022 camt.053 style bank to customer statement from the ledger cash accounts. Tx hash in end to end id. */

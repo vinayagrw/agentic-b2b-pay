@@ -21,8 +21,9 @@ export function appendEvidence(chain: EvidenceRecord[], subjectType: string, sub
   chain.push(rec);
   return rec;
 }
-export function verifyChain(chain: EvidenceRecord[]): { valid: boolean; brokenAt: number | null } {
-  let prevHash = GENESIS;
+/** Walks the chain. start is the hash before the first record: GENESIS, or the anchor left by a retention purge. */
+export function verifyChain(chain: EvidenceRecord[], start: string = GENESIS): { valid: boolean; brokenAt: number | null } {
+  let prevHash = start;
   for (const r of chain) {
     const ph = sha(canonical(r.payload));
     const h = sha([prevHash, r.seq, r.subjectType, r.subjectId, r.event, ph, r.createdAt].join("|"));

@@ -45,6 +45,7 @@ import * as CARDS from "./cards.js";
 import * as BC from "./bankchange.js";
 import * as CR from "./credit.js";
 import * as DLG from "./delegation.js";
+import * as RT from "./retention.js";
 import { buildMcpServer } from "./mcp.js";
 import { verifyAgent } from "./modules/kya.js";
 import swagger from "@fastify/swagger";
@@ -219,6 +220,7 @@ export async function buildApp() {
     "GET /identity/configs": "identity.manage", "POST /identity/configs": "identity.manage", "GET /iam/users": "roles.manage", "GET /iam/roles": "roles.manage", "POST /iam/roles": "roles.manage", "PUT /iam/roles/:id": "roles.manage", "DELETE /iam/roles/:id": "roles.manage", "POST /iam/users/:id/role": "roles.manage",
     "POST /sessions/:id/revoke": "workspace.read", "POST /risk/:paymentId/decide": "risk.review", "POST /views": "workspace.read", "DELETE /views/:id": "workspace.read", "GET /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens/:id/revoke": "developers.keys",
     "POST /copilot/outcome": "workspace.read", "POST /copilot/skills/:slug": "workspace.read", "POST /workspace/suppliers/:id/portal-link": "suppliers.invite", "GET /notices/outbox": "suppliers.review", "GET /ops/agent-view": "treasury.read", "GET /ops/copilot-metrics": "treasury.read", "GET /ops/offers": "treasury.read", "POST /ops/offers/:tenantId": "settings.live_toggle", "POST /cards/:id/decide": "payments.approve", "POST /credit/draws/:id/decide": "payments.approve", "POST /credit/draws/:id/repay": "payments.pay", "GET /ops/credit": "treasury.read", "PUT /ops/credit/lines/:tenantId": "treasury.sweep", "PUT /ops/credit/caps/:bankId": "treasury.sweep",
+    "GET /ops/retention": "audit.read", "PUT /ops/retention/policies/:type": "retention.manage", "POST /ops/retention/holds": "retention.manage", "POST /ops/retention/holds/:id/release": "retention.manage", "POST /ops/retention/purge": "retention.manage", "GET /ops/audit/export.jsonl": "audit.read", "GET /ops/audit/verify": "audit.read",
     "POST /suppliers/:id/bank-changes": "suppliers.payee_change", "POST /suppliers/:id/bank-changes/wallet-nonce": "suppliers.payee_change", "POST /suppliers/:id/bank-changes/wallet-sandbox-sign": "suppliers.payee_change", "POST /bank-changes/:id/callback": "payments.approve", "POST /bank-changes/:id/decide": "payments.approve", "PUT /bank-changes/settings": "rules.edit", "PUT /suppliers/:id/callback-phone": "suppliers.review",
   };
   /** The permission a route needs. Developer routes need developers.keys, other reads need workspace.read, other writes need flow.operate. */
@@ -634,6 +636,15 @@ export async function buildApp() {
   app.post("/credit/draws", async (req: any) => { const { u, t } = ctx(req); return CR.requestDraw(u, t, b(req)); });
   app.post("/credit/draws/:id/decide", async (req: any) => { const { u, t } = ctx(req); return CR.decideDraw(u, t, req.sessionId ?? null, req.params.id, !!b(req).approve); });
   app.post("/credit/draws/:id/repay", async (req: any) => { const { u, t } = ctx(req); return CR.repay(u, t, req.params.id, b(req).amount); });
+  // Gap 9: retention, legal holds, purge, audit export and chain check. Operators only.
+  const opOnly = (req: any) => { const u = who(req); if (!P.isOperator(u)) throw new P.AuthError(403, "Operators only"); return u; };
+  app.get("/ops/retention", async (req) => { opOnly(req); return RT.view(); });
+  app.put("/ops/retention/policies/:type", async (req: any) => RT.setPolicy(opOnly(req), req.params.type, b(req).days));
+  app.post("/ops/retention/holds", async (req) => RT.placeHold(opOnly(req), b(req)));
+  app.post("/ops/retention/holds/:id/release", async (req: any) => RT.releaseHold(opOnly(req), req.params.id));
+  app.post("/ops/retention/purge", async (req) => RT.purge(opOnly(req)));
+  app.get("/ops/audit/export.jsonl", async (req: any, reply) => { const { t } = opCtx(req); const q = req.query ?? {}; const from = q.from ? String(q.from) : undefined; const to = q.to ? String(q.to) : undefined; for (const d of [from, to]) if (d && isNaN(Date.parse(d))) throw new S.HttpError(422, "Dates must look like 2026-11-01"); P.audit(who(req).id, "audit_export", t, "audit.exported", { tenantId: t, from: from ?? null, to: to ?? null }); return reply.type("application/x-ndjson").header("content-disposition", `attachment; filename="audit-${t}.jsonl"`).send(RT.exportJsonl(t, from, to)); });
+  app.get("/ops/audit/verify", async (req) => { opOnly(req); return RT.verify(); });
   app.get("/ops/credit", async (req) => { if (!P.isOperator(who(req))) throw new P.AuthError(403, "Operators only"); return CR.opsView(); });
   app.put("/ops/credit/lines/:tenantId", async (req: any) => CR.setLine(who(req), req.params.tenantId, b(req)));
   app.put("/ops/credit/caps/:bankId", async (req: any) => CR.setCap(who(req), req.params.bankId, b(req).cap));

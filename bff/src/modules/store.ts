@@ -41,6 +41,8 @@ export type Db = {
   settlements: Settlement[]; journals: Journal[]; evidence: EvidenceRecord[]; erp: ErpEvent[];
   refunds: RefundIntent[]; alerts: { at: string; kind: string; detail: string; tenantId?: string }[];
   killSwitch: boolean; seq: number;
+  /** Last audit link removed by a retention purge. Verification starts from its hash. */
+  auditAnchor?: { seq: number; hash: string; at: string } | null;
 };
 export type RefundIntent = { id: string; originalIntentId: string; amount: number; reason: string; rail: Rail; status: "settled" | "pending" | "failed" | "rejected"; railRef?: string; txHash?: string | null; createdAt: string };
 
@@ -124,7 +126,7 @@ export function seed(): Db {
 export const TENANT = "tnt-acme";
 export const tenantOf = (x: { tenantId?: string } | undefined | null) => x?.tenantId ?? TENANT;
 const intentStatus = (s: PaymentIntent["status"]) => (s === "settled" || s === "pending" || s === "submitted" ? s : s === "routed" || s === "created" ? "submitted" : "failed");
-const KV_KEYS = ["orgs", "catalog", "receipts", "erp", "refunds", "alerts", "killSwitch", "seq"] as const;
+const KV_KEYS = ["orgs", "catalog", "receipts", "erp", "refunds", "alerts", "killSwitch", "seq", "auditAnchor"] as const;
 
 const LEGACY_RAIL: Record<string, Rail> = { card: "stripe_card", ach: "stripe_ach", rtp: "stripe_ach", usdc: "onchain_usdc" };
 const railOf = (r: string) => (LEGACY_RAIL[r] ?? r) as Rail;
@@ -164,7 +166,7 @@ function load(): Db {
   const rows = (t: string, order = "rowid") => (sql.prepare(`SELECT data FROM ${t} ORDER BY ${order}`).all() as { data: string }[]).map((r) => JSON.parse(r.data));
   return upgrade({
     orgs: k.orgs ?? [], catalog: k.catalog ?? [], receipts: k.receipts ?? [], erp: k.erp ?? [], refunds: k.refunds ?? [], alerts: k.alerts ?? [],
-    killSwitch: !!k.killSwitch, seq: k.seq ?? 1000,
+    killSwitch: !!k.killSwitch, seq: k.seq ?? 1000, ...(k.auditAnchor ? { auditAnchor: k.auditAnchor } : {}),
     agents: rows("agents"), mandates: rows("mandates"), suppliers: rows("suppliers"), pos: rows("pos"), invoices: rows("invoices"),
     intents: rows("payment_intents"), settlements: rows("rail_events"), journals: rows("journals"), evidence: rows("audit", "seq"),
   });
@@ -188,7 +190,7 @@ function write(d: Db) {
     const from = d.evidence.length < max ? 0 : max;
     ins("audit", ["seq", "id", "subject_type", "subject_id", "event", "hash", "prev_hash", "data"], d.evidence.filter((e) => e.seq > from).map((e) => [e.seq, e.id, e.subjectType, e.subjectId, e.event, e.hash, e.prevHash, JSON.stringify(e)]));
     const kv = sql.prepare("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)");
-    for (const key of KV_KEYS) kv.run(key, JSON.stringify(d[key]));
+    for (const key of KV_KEYS) kv.run(key, JSON.stringify(d[key] ?? null));
   })();
 }
 
@@ -202,7 +204,7 @@ export function save() { write(db); emit(); }
 /** Reload state from the current connection, used after useDb() in tests. */
 export function reload() { db = load(); return db; }
 /** Tables outside the domain object that a reset clears. Later migrations add to this list. */
-export const RESET_TABLES = ["idempotency_keys", "provider_events", "cases", "approval_rules", "agent_keys", "onboarding_tokens", "recon_exceptions", "sweeps", "api_keys", "webhook_endpoints", "webhook_deliveries", "events", "purchase_mandates", "fx_locks", "legal_entities", "risk_reviews", "copilot_threads", "copilot_answers", "copilot_feedback", "snap_drafts", "mcp_tokens", "supplier_portal_tokens", "payment_schedules", "tenant_offers", "copilot_outcomes", "memories", "tenant_skills", "tenant_chat", "chat_identities", "chat_messages", "chat_action_tokens", "bank_change_requests", "supplier_payout_details", "bank_change_settings", "credit_lines", "credit_draws", "credit_repayments", "credit_caps", "notice_outbox"];
+export const RESET_TABLES = ["idempotency_keys", "provider_events", "cases", "approval_rules", "agent_keys", "onboarding_tokens", "recon_exceptions", "sweeps", "api_keys", "webhook_endpoints", "webhook_deliveries", "events", "purchase_mandates", "fx_locks", "legal_entities", "risk_reviews", "copilot_threads", "copilot_answers", "copilot_feedback", "snap_drafts", "mcp_tokens", "supplier_portal_tokens", "payment_schedules", "tenant_offers", "copilot_outcomes", "memories", "tenant_skills", "tenant_chat", "chat_identities", "chat_messages", "chat_action_tokens", "bank_change_requests", "supplier_payout_details", "bank_change_settings", "credit_lines", "credit_draws", "credit_repayments", "credit_caps", "notice_outbox", "retention_policies", "legal_holds", "purge_runs"];
 export function reset(fresh: Db = seed()) {
   db = fresh;
   const have = new Set((sql.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map((r) => r.name));

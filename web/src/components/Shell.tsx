@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowLeftRight, Banknote, Bot, Building2, Check, ChevronsUpDown, Code2, CreditCard, FileCheck2, FileText, Gauge, HandCoins, Home, Inbox, KeyRound, Landmark, MessageSquare, MonitorSmartphone, UserCog, LogOut, Mail, Moon, Palette, Scale, Search, Settings, ShieldAlert, ShieldCheck, ShoppingCart, Sun, Truck, Users, Workflow, type LucideIcon } from "lucide-react";
+import { Activity, Archive, ArrowLeftRight, Banknote, Bot, Building2, Check, ChevronsUpDown, Code2, CreditCard, FileCheck2, FileText, Gauge, HandCoins, Home, Inbox, KeyRound, Landmark, MessageSquare, MonitorSmartphone, UserCog, LogOut, Mail, Moon, Palette, Scale, Search, Settings, ShieldAlert, ShieldCheck, ShoppingCart, Sun, Truck, Users, Workflow, type LucideIcon } from "lucide-react";
 import { api, useLiveEvents, useMe, type Me } from "../lib/api";
 import { can } from "../lib/perm";
 import { applyTheme } from "../lib/theme";
@@ -18,7 +18,7 @@ export const OPERATOR_NAV: Item[] = [
   { to: "/operator/treasury", label: "Treasury", icon: Landmark }, { to: "/operator/credit", label: "Credit lines", icon: HandCoins }, { to: "/operator/reconciliation", label: "Reconciliation", icon: Scale },
   { to: "/operator/revenue", label: "Revenue", icon: Gauge }, { to: "/operator/developers", label: "Developers", icon: Code2 },
   { to: "/operator/branding", label: "Branding", icon: Palette }, { to: "/operator/settings", label: "Settings", icon: Settings },
-  { to: "/operator/identity", label: "Identity", icon: KeyRound }, { to: "/operator/roles", label: "Roles", icon: UserCog }, { to: "/operator/sessions", label: "Sessions", icon: MonitorSmartphone },
+  { to: "/operator/identity", label: "Identity", icon: KeyRound }, { to: "/operator/roles", label: "Roles", icon: UserCog }, { to: "/operator/sessions", label: "Sessions", icon: MonitorSmartphone }, { to: "/operator/retention", label: "Data retention", icon: Archive },
 ];
 export const CLIENT_NAV: Item[] = [
   { to: "/app", label: "Home", icon: Home }, { to: "/app/purchase-orders", label: "Purchase orders", icon: ShoppingCart },

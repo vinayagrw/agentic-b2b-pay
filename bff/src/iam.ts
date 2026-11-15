@@ -27,6 +27,7 @@ export const PERMISSIONS = {
   "settings.branding": "Edit bank branding and logos",
   "developers.keys": "Manage API keys, webhooks and SCIM tokens",
   "audit.read": "Read the evidence chain and export evidence packs",
+  "retention.manage": "Set data retention, place legal holds and run a purge",
   "users.read": "See the user directory",
   "identity.manage": "Request identity provider changes",
   "roles.manage": "Create and assign custom roles",

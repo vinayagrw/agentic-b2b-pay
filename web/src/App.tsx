@@ -21,6 +21,7 @@ const NoticesPage = lz(() => import("./pages/sparky"), (m) => m.NoticesPage);
 const ChatApprovals = lz(() => import("./pages/chat"), (m) => m.ChatApprovals);
 const CardsPage = lz(() => import("./pages/cards"), (m) => m.CardsPage); const CardDetailPage = lz(() => import("./pages/cards"), (m) => m.CardDetailPage);
 const EvidencePage = lz(() => import("./pages/evidence"), (m) => m.EvidencePage);
+const RetentionPage = lz(() => import("./pages/retention"), (m) => m.RetentionPage);
 const CreditPage = lz(() => import("./pages/credit"), (m) => m.CreditPage); const OperatorCredit = lz(() => import("./pages/credit"), (m) => m.OperatorCredit);
 const BankChanges = lz(() => import("./components/BankChange"), (m) => m.BankChangesPage);
 const RiskInbox = lz(() => import("./pages/risk"), (m) => m.RiskInboxPage);
@@ -45,7 +46,7 @@ export function App() {
     <Route path="/supplier/:token" element={<Suspense fallback={<PageSkeleton />}><SupplierPortal /></Suspense>} />
     <Route path="/operator" element={<Gate kind="operator" />}>
       <Route index element={S(<O.OperatorHome />)} /><Route path="tenants" element={S(<O.Tenants />)} /><Route path="payments" element={S(<O.OperatorPayments />)} /><Route path="payments/:id" element={S(<FlowPage />)} /><Route path="transactions" element={S(<TransactionsPage operator />)} />
-      <Route path="risk" element={S(<RiskInbox />)} /><Route path="bank-changes" element={S(<BankChanges />)} /><Route path="compliance" element={S(<O.Compliance />)} /><Route path="treasury" element={S(<O.Treasury />)} /><Route path="credit" element={S(<OperatorCredit />)} /><Route path="reconciliation" element={S(<O.Recon />)} />
+      <Route path="risk" element={S(<RiskInbox />)} /><Route path="bank-changes" element={S(<BankChanges />)} /><Route path="compliance" element={S(<O.Compliance />)} /><Route path="treasury" element={S(<O.Treasury />)} /><Route path="credit" element={S(<OperatorCredit />)} /><Route path="retention" element={S(<RetentionPage />)} /><Route path="reconciliation" element={S(<O.Recon />)} />
       <Route path="revenue" element={S(<O.Revenue />)} /><Route path="developers" element={S(<O.Developers />)} /><Route path="branding" element={S(<O.BrandingPage />)} /><Route path="settings" element={S(<O.SettingsPage />)} /><Route path="identity" element={S(<IAM.IdentityPage />)} /><Route path="roles" element={S(<IAM.RolesPage />)} /><Route path="sessions" element={S(<IAM.SessionsPage />)} />
     </Route>
     <Route path="/app" element={<Gate kind="client" />}>
