@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useDb, sql } from "../src/db.js";
-import { reset, reload, db } from "../src/modules/store.js";
+import { reset, reload, db, save } from "../src/modules/store.js";
 import * as S from "../src/service.js";
 import * as P from "../src/platform.js";
 import * as RT from "../src/retention.js";
@@ -68,5 +68,24 @@ describe("audit export and verify", () => {
     expect((await app.inject({ method: "GET", url: "/ops/audit/verify", headers: { cookie: olivia } })).json().valid).toBe(true);
     expect((await app.inject({ method: "POST", url: "/ops/retention/purge", headers: { cookie: jane } })).statusCode).toBe(403);
     expect((await app.inject({ method: "POST", url: "/ops/retention/holds", headers: { cookie: olivia }, payload: { tenantId: "tnt-acme", reason: "Audit" } })).statusCode).toBe(200);
+  });
+  it("blocks a client admin from exporting another client's audit", async () => {
+    await settledFlow();
+    const app = await buildApp();
+    const r0 = await app.inject({ method: "POST", url: "/auth/login", payload: { userId: "usr-cfo-jane" } });
+    const jane = `sid=${r0.cookies.find((x: any) => x.name === "sid")!.value}`;
+    const other = P.listTenants().find((t: any) => t.kind === "client" && t.id !== P.getUser("usr-cfo-jane")!.tenantId)!.id;
+    expect((await app.inject({ method: "GET", url: `/ops/audit/export.jsonl?tenantId=${other}`, headers: { cookie: jane } })).statusCode).toBe(403);
+  });
+  it("after a purge, saves append only and tampering stays visible", async () => {
+    await settledFlow();
+    RT.setPolicy(op(), "audit", 1);
+    RT.purge(op(), later);
+    save();
+    const row = sql.prepare("SELECT seq, data FROM audit ORDER BY seq LIMIT 1 OFFSET 1").get() as { seq: number; data: string };
+    const d = JSON.parse(row.data); d.payload = { ...(d.payload ?? {}), tampered: true };
+    sql.prepare("UPDATE audit SET data = ? WHERE seq = ?").run(JSON.stringify(d), row.seq);
+    P.audit("usr-op-olivia", "x", "y", "test.after_tamper", {}); save();
+    expect(RT.verify()).toMatchObject({ valid: false, brokenAt: row.seq });
   });
 });

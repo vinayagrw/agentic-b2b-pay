@@ -186,8 +186,12 @@ function write(d: Db) {
     ins("journals", ["id", "tenant_id", "data"], d.journals.map((j) => [j.id, j.tenantId ?? TENANT, JSON.stringify(j)]));
     // audit is append only: insert new links, never rewrite old ones (reset truncates)
     const max = (sql.prepare("SELECT COALESCE(MAX(seq),0) m FROM audit").get() as { m: number }).m;
-    if (d.evidence.length < max) sql.prepare("DELETE FROM audit").run();
-    const from = d.evidence.length < max ? 0 : max;
+    // a reset leaves memory behind SQLite. A purge only trims the oldest rows, so drop those and keep appending.
+    const last = d.evidence.length ? d.evidence[d.evidence.length - 1].seq : 0;
+    const isReset = last < max;
+    if (isReset) sql.prepare("DELETE FROM audit").run();
+    else if (d.auditAnchor) sql.prepare("DELETE FROM audit WHERE seq <= ?").run(d.auditAnchor.seq);
+    const from = isReset ? 0 : max;
     ins("audit", ["seq", "id", "subject_type", "subject_id", "event", "hash", "prev_hash", "data"], d.evidence.filter((e) => e.seq > from).map((e) => [e.seq, e.id, e.subjectType, e.subjectId, e.event, e.hash, e.prevHash, JSON.stringify(e)]));
     const kv = sql.prepare("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)");
     for (const key of KV_KEYS) kv.run(key, JSON.stringify(d[key] ?? null));

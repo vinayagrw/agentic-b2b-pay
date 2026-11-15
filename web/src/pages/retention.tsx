@@ -31,7 +31,7 @@ export function RetentionPage() {
   const { data: v, isLoading, error } = useGet<RetentionView>("/ops/retention"); const { data: me } = useMe();
   const { data: tenants } = useGet<any[]>("/tenants");
   const edit = can(me, "retention.manage");
-  const purge = useAct(); const check = useAct(); const [ver, setVer] = useState<VerifyResult | null>(null);
+  const purge = useAct(); const release = useAct(); const check = useAct(); const [ver, setVer] = useState<VerifyResult | null>(null);
   const clients = (tenants ?? []).filter((t) => t.kind === "client");
   const [exT, setExT] = useState(""); const [from, setFrom] = useState(""); const [to, setTo] = useState("");
   const exportTenant = exT || clients[0]?.id || "";
@@ -42,9 +42,10 @@ export function RetentionPage() {
       <Card title="Retention rules" pad={false}><div className="overflow-x-auto"><Table head={["Record", "Rule", "Days to keep"]}>{v.policies.map((p) => <PolicyRow key={`${p.recordType}-${p.updatedAt}`} p={p} edit={edit} />)}</Table></div></Card>
       <Card title="Legal holds">
         {edit && tenants && <HoldForm tenants={tenants} />}
+        <ErrorNote msg={release.error} />
         <div className="mt-3 overflow-x-auto"><Table head={["Client", "Case", "Reason", "State", ""]}>{v.holds.map((h) => <tr key={h.id}><td className="py-2">{h.tenantId}</td><td>{h.caseId ?? "Whole client"}</td><td>{h.reason}</td>
           <td><Badge v={h.releasedAt ? "Released" : "On hold"} tone={h.releasedAt ? "neutral" : "warn"} /></td>
-          <td>{edit && !h.releasedAt && <Button size="sm" variant="ghost" disabled={purge.busy} onClick={() => purge.run(() => api(`/ops/retention/holds/${h.id}/release`, {}))}>Release</Button>}</td></tr>)}</Table>
+          <td>{edit && !h.releasedAt && <Button size="sm" variant="ghost" disabled={release.busy} onClick={() => release.run(() => api(`/ops/retention/holds/${h.id}/release`, {}))}>Release</Button>}</td></tr>)}</Table>
           {!v.holds.length && <Muted>No holds yet.</Muted>}</div>
       </Card>
       <Card title="Purge" action={edit ? <Button variant="primary" size="sm" disabled={purge.busy} onClick={() => { if (confirm("Remove every record older than its rule? Held records stay. This cannot be undone.")) purge.run(() => api("/ops/retention/purge", {})); }}>Run purge now</Button> : undefined}>
