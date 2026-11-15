@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import * as BC from "./bankchange.js";
+import * as CR from "./credit.js";
 import * as Risk from "./risk.js";
 import { isUsdc, type PoDraft, type Rail } from "@b2b/shared";
 import { db, save, nextId, tenantOf, TENANT, type PurchaseOrder, type Supplier, type PaymentIntent, type Settlement, type TimelineEntry } from "./modules/store.js";
@@ -39,6 +40,7 @@ export function bootstrap() {
   FX.seedEntities();
   backfillMandates();
   BC.seedDemo();
+  CR.seedDemo();
   save();
 }
 /** Open POs from before signed mandates existed get an Intent and Cart on reset or seed, so demo data is never blocked. */

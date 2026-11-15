@@ -20,6 +20,7 @@ import * as T from "./tables.js";
 import { z } from "zod";
 import * as SK from "./skills.js";
 import * as CARDS from "./cards.js";
+import * as CR from "./credit.js";
 import * as TM from "./terms.js";
 import { termsLabel, TARIFF_DEFAULT_DATE } from "@b2b/shared";
 import * as TF from "./tariff.js";
@@ -155,6 +156,14 @@ export const TOOLS: Tool[] = [
     const summary = `Starting USD ledger cash ${money(start)}. Forecast for ${TF.WEEKS} weeks. ` + (busy.length ? busy.map((r) => `${r.week} out ${money(r.outflow)}, balance ${money(r.balance)}`).join(", ") : "Nothing is due to go out") + `. ${last.week} balance ${money(last.balance)}` + (later ? `. ${money(later)} is due after ${TF.WEEKS} weeks` : "")
       + (saved ? `. Pay early option: taking every open early-pay discount saves ${TM.totalsText(TM.payOptions(c.scope, today).byCurrency, "saved") || money(saved)} (demo figure) and moves that cash out sooner, week ${TF.WEEKS} balance ${money(last.payEarlyBalance)} against ${money(last.balance)} when paying on the due date` : "");
     return { summary, rows, source: src("cashForecast", weeks.flatMap((w) => w.items.slice(0, 3)).map((id) => ({ id, href: id.startsWith("pi-") ? `${c.prefix}/payments/${id}` : c.prefix === "/app" ? "/app/invoices" : "/operator/treasury" }))) };
+  } },
+  { name: "creditLine", description: "Credit line usage from the simulated lender: limit, rate, drawn, waiting for approval, left to draw, and each draw. Read only. Lending is simulated, no real loan", args: [], run: (c) => {
+    const ids = c.scope ? [c.scope] : P.listTenants().filter((t) => t.kind === "client").map((t) => t.id);
+    const rows = ids.flatMap((id) => { const l = CR.getLine(id); if (!l) return []; const u = CR.usage(id); const ds = CR.drawsFor(id);
+      return [{ tenantId: id, limit: l.limit, currency: l.currency, aprPct: l.aprPct, status: l.status, drawn: u.outstanding, waitingForApproval: u.pending, available: u.available, usedPct: u.usedPct, openDraws: ds.filter((d) => d.status === "funded").length, pendingDraws: ds.filter((d) => d.status === "pending_approval").length }]; });
+    const summary = rows.length ? rows.map((r) => `${c.scope ? "Credit line" : r.tenantId} ${r.status}: limit ${r.limit.toFixed(2)} ${r.currency} at ${r.aprPct}% a year, ${r.drawn.toFixed(2)} drawn in ${r.openDraws} open draw${r.openDraws === 1 ? "" : "s"}, ${r.waitingForApproval.toFixed(2)} waiting for approval, ${r.available.toFixed(2)} left`).join(". ") + `. ${CR.LENDER_NOTE}`
+      : `No credit line is set up${c.scope ? " for this client" : ""}. The bank operator sets the limit and rate. ${CR.LENDER_NOTE}`;
+    return { summary, rows, source: src("creditLine", rows.map((r) => ({ id: r.tenantId, href: c.prefix === "/app" ? "/app/credit" : "/operator/credit" }))) };
   } },
   { name: "tariffScenario", description: "Tariff cash scenario: weekly cash out for 12 weeks with duty exclusions kept to the end date on each PO line and with exclusions ended for customs entries after a chosen date (after, a date like 2027-01-09, the default). Duty rates are user inputs on PO lines, there is no live tariff feed", args: [], opt: ["after"], run: (c, a) => {
     const after = a.after || TARIFF_DEFAULT_DATE; if (!TF.validDay(after)) throw new Error("after must be a date like 2027-01-09");
@@ -322,6 +331,7 @@ export function mockPlan(q: string, c: Partial<Ctx> = {}): { name: string; args:
   if (/draft.*(rule|policy)|(rule|policy).*draft|approval rule|polic/.test(s)) add("approvalRules");
   if (/risk|fraud|flagged|suspicious/.test(s) && !plan.some((p) => p.name === "riskScore")) add("riskInbox");
   if (/discount|pay(ing)? early|early.?pay|payment terms|\bterms\b|net \d+/.test(s)) add("discountsAvailable");
+  if (/credit line|line of credit|working capital|\bborrow|\bloans?\b|credit (usage|limit|draw)/.test(s)) add("creditLine");
   if (/tariff|\bdut(y|ies)\b|exclusion|landed cost|customs/.test(s)) { const d = TF.dayIn(q); add("tariffScenario", d ? { after: d } : {}); }
   if (/forecast|runway|cash flow|next (week|month)|upcoming/.test(s) && !plan.some((p) => p.name === "tariffScenario")) add("cashForecast");
   if (/bank detail|bank change|bank account change|payee change|payout change|changed? (their |its )?bank/.test(s)) add("bankChanges");
@@ -419,7 +429,7 @@ export function proposalsFor(c: Ctx, q: string): Proposal[] {
 }
 
 const LABEL: Record<string, string> = { spendBySupplier: "Spend by supplier", paymentsByStatus: "Payments by status", pendingApprovals: "Waiting for approval", entityBalances: "Entity balances", fxExposure: "FX", openInvoices: "Open invoices", whyPayment: "Why", riskInbox: "Risk inbox", bankChanges: "Bank detail changes",
-  mandates: "Mandates", fxLocksAndRates: "FX locks", railHealth: "Rail health", cashForecast: "Cash forecast", tariffScenario: "Tariff cash scenario", discountsAvailable: "Early-pay discounts", supplierProfile: "Supplier", auditSearch: "Evidence", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", query: "Query", dailyDigest: "Today", opsQueues: "Ops queues", riskEscalations: "Risk escalations", recurringPayments: "Recurring payments", tenants: "Clients", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA" };
+  mandates: "Mandates", fxLocksAndRates: "FX locks", railHealth: "Rail health", cashForecast: "Cash forecast", tariffScenario: "Tariff cash scenario", creditLine: "Credit line (simulated lender)", discountsAvailable: "Early-pay discounts", supplierProfile: "Supplier", auditSearch: "Evidence", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", query: "Query", dailyDigest: "Today", opsQueues: "Ops queues", riskEscalations: "Risk escalations", recurringPayments: "Recurring payments", tenants: "Clients", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA" };
 const mockAnswer = (q: string, results: ToolResult[]) => {
   const base = results.map((r) => `${LABEL[r.tool] ?? r.tool}: ${r.summary}.`).join(" ");
   return /\bdraft\b.*\b(rule|policy)\b|\b(rule|policy)\b.*\bdraft\b/i.test(q) ? `Draft rule in plain words: ${parseRuleDraft(q).words} ${base}` : base;

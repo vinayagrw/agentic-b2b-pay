@@ -41,6 +41,7 @@ import * as TM from "./terms.js";
 import * as CH from "./chatops.js";
 import * as CARDS from "./cards.js";
 import * as BC from "./bankchange.js";
+import * as CR from "./credit.js";
 import { buildMcpServer } from "./mcp.js";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -80,7 +81,7 @@ export async function buildApp() {
   await app.register(swagger, { openapi: { info: { title: "B2B Pay BFF", version: "0.1.0", description: "Agentic B2B payments API. Test mode only, no real funds." }, components: { securitySchemes: { session: { type: "apiKey", in: "cookie", name: "sid" }, bearer: { type: "http", scheme: "bearer" } } } } });
   await app.register(swaggerUi, { routePrefix: "/docs" });
   P.seedPlatform(); I.seedIdp();
-  BC.seedDemo(); // again here: on a fresh database the demo user only exists after seedPlatform
+  CR.seedDemo(); BC.seedDemo(); // again here: on a fresh database the demo user only exists after seedPlatform
   const COOKIE = { path: "/", httpOnly: true, sameSite: "lax" as const, signed: true };
   const userOf = (req: any): P.User | null => {
     const bearer = /^Bearer (\S+)$/.exec(String(req.headers?.authorization ?? ""))?.[1];
@@ -142,7 +143,7 @@ export async function buildApp() {
     "GET /cases/:id/evidence-pack": "audit.read", "GET /payments/:id/why/export.json": "audit.read", "GET /payments/:id/why/export.md": "audit.read",
     "GET /identity/configs": "identity.manage", "POST /identity/configs": "identity.manage", "GET /iam/users": "roles.manage", "GET /iam/roles": "roles.manage", "POST /iam/roles": "roles.manage", "PUT /iam/roles/:id": "roles.manage", "DELETE /iam/roles/:id": "roles.manage", "POST /iam/users/:id/role": "roles.manage",
     "POST /sessions/:id/revoke": "workspace.read", "POST /risk/:paymentId/decide": "risk.review", "POST /views": "workspace.read", "DELETE /views/:id": "workspace.read", "GET /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens/:id/revoke": "developers.keys",
-    "POST /copilot/outcome": "workspace.read", "POST /copilot/skills/:slug": "workspace.read", "POST /workspace/suppliers/:id/portal-link": "suppliers.invite", "GET /ops/agent-view": "treasury.read", "GET /ops/copilot-metrics": "treasury.read", "GET /ops/offers": "treasury.read", "POST /ops/offers/:tenantId": "settings.live_toggle", "POST /cards/:id/decide": "payments.approve",
+    "POST /copilot/outcome": "workspace.read", "POST /copilot/skills/:slug": "workspace.read", "POST /workspace/suppliers/:id/portal-link": "suppliers.invite", "GET /ops/agent-view": "treasury.read", "GET /ops/copilot-metrics": "treasury.read", "GET /ops/offers": "treasury.read", "POST /ops/offers/:tenantId": "settings.live_toggle", "POST /cards/:id/decide": "payments.approve", "POST /credit/draws/:id/decide": "payments.approve", "POST /credit/draws/:id/repay": "payments.pay", "GET /ops/credit": "treasury.read", "PUT /ops/credit/lines/:tenantId": "treasury.sweep", "PUT /ops/credit/caps/:bankId": "treasury.sweep",
     "POST /suppliers/:id/bank-changes": "suppliers.payee_change", "POST /bank-changes/:id/callback": "payments.approve", "POST /bank-changes/:id/decide": "payments.approve", "PUT /bank-changes/settings": "rules.edit", "PUT /suppliers/:id/callback-phone": "suppliers.review",
   };
   /** The permission a route needs. Developer routes need developers.keys, other reads need workspace.read, other writes need flow.operate. */
@@ -513,6 +514,14 @@ export async function buildApp() {
   app.post("/cards/:id/simulate", async (req: any) => { const { u, t } = ctx(req); return CARDS.simulate(u, t, req.params.id, b(req)); });
   app.post("/cards/:id/:action", async (req: any) => { const { u, t } = ctx(req); const a = req.params.action; if (!["freeze", "unfreeze", "cancel"].includes(a)) throw new S.HttpError(404, "unknown action"); return CARDS.setState(u, t, req.params.id, a); });
   app.post("/webhooks/stripe-issuing", async (req: any, reply) => reply.header("Stripe-Version", "2024-06-20").send(CARDS.stripeWebhook(req.rawBody ?? Buffer.alloc(0), req.headers)));
+  // Simulated credit line. No real lender. The operator sets lines and the cap, the client draws with a second approver.
+  app.get("/credit", async (req) => { const { t } = ctx(req); return CR.view(t); });
+  app.post("/credit/draws", async (req: any) => { const { u, t } = ctx(req); return CR.requestDraw(u, t, b(req)); });
+  app.post("/credit/draws/:id/decide", async (req: any) => { const { u, t } = ctx(req); return CR.decideDraw(u, t, req.sessionId ?? null, req.params.id, !!b(req).approve); });
+  app.post("/credit/draws/:id/repay", async (req: any) => { const { u, t } = ctx(req); return CR.repay(u, t, req.params.id, b(req).amount); });
+  app.get("/ops/credit", async (req) => { if (!P.isOperator(who(req))) throw new P.AuthError(403, "Operators only"); return CR.opsView(); });
+  app.put("/ops/credit/lines/:tenantId", async (req: any) => CR.setLine(who(req), req.params.tenantId, b(req)));
+  app.put("/ops/credit/caps/:bankId", async (req: any) => CR.setCap(who(req), req.params.bankId, b(req).cap));
   app.get("/ops/offers", async (req) => { if (!P.isOperator(who(req))) throw new P.AuthError(403, "Operators only"); return SP.offerSettings(); });
   app.post("/ops/offers/:tenantId", async (req: any) => SP.setOffers(who(req), req.params.tenantId, !!b(req).enabled));
   app.get("/supplier-portal/:token", async (req: any) => ({ ...SP.supplierData(req.params.token), suggest: SP.SUPPLIER_SUGGEST }));

@@ -18,6 +18,7 @@ import * as W from "./workspace.js";
 import * as Risk from "./risk.js";
 import * as Ops from "./ops.js";
 import * as TM from "./terms.js";
+import * as CR from "./credit.js";
 
 const now = () => new Date().toISOString();
 const sha = (s: string | Buffer) => crypto.createHash("sha256").update(s).digest("hex");
@@ -352,12 +353,19 @@ export function offersFor(scope: string | null, results: CP.ToolResult[]): CP.Of
     const big = [...by].filter(([, v]) => v >= 1000);
     if (big.length) out.push({ id: pid(), kind: "fx_forward", label: "Offer", title: "FX forward from your bank", trigger: `Open foreign currency payables ${big.map(([c, v]) => `${c} ${v.toFixed(2)}`).join(", ")} across ${fx.length} invoices`, body: `You owe ${big.map(([c, v]) => `${v.toFixed(2)} ${c}`).join(" and ")} on open invoices. A forward fixes the rate for the due dates. Talk to your bank, nothing is booked from here.` });
   }
-  if (["cashForecast", "entityBalances", "openInvoices"].some((x) => topics.has(x))) {
+  if (["cashForecast", "entityBalances", "openInvoices", "creditLine"].some((x) => topics.has(x))) {
     const f = CP.runTool({ user: { id: "system", tenantId: scope, name: "system", email: "", role: "auditor" }, scope, prefix: "/app" }, "cashForecast");
     const low = (f.rows as any[]).find((w) => w.balance < 0);
-    if (low) out.push({ id: pid(), kind: "credit_line", label: "Offer", title: "Working capital line from your bank", trigger: `Cash forecast goes to ${money(low.balance)} in ${low.week}`, body: `Your forecast shows a gap of ${money(-low.balance)} in ${low.week} (from ${low.from}). A credit line could cover it. Talk to your bank, nothing is drawn from here.` });
+    if (low) out.push({ id: pid(), kind: "credit_line", label: "Offer", title: "Working capital line from your bank", trigger: `Cash forecast goes to ${money(low.balance)} in ${low.week}`, body: creditOfferBody(scope, low) });
   }
   return out;
+}
+/** The credit offer text. With a line in place it points at the Credit line page, where a draw still needs a second approver. Lending is simulated. */
+function creditOfferBody(scope: string, low: { balance: number; week: string; from: string }) {
+  const gap = `Your forecast shows a gap of ${money(-low.balance)} in ${low.week} (from ${low.from}).`;
+  const line = CR.getLine(scope); const left = line?.status === "active" ? CR.usage(scope).available : 0;
+  return left > 0 ? `${gap} Your credit line has ${left.toFixed(2)} ${line!.currency} left to draw at ${line!.aprPct}% a year. Ask for a draw on the Credit line page. A second person must approve it, and nothing is drawn from here. ${CR.LENDER_NOTE}`
+    : `${gap} A credit line could cover it. Talk to your bank, nothing is drawn from here.`;
 }
 /** "Pay early and save": when the user asks about early payment or discounts, propose the open ones as maker checker changes.
  * The user confirms the card, then a second client admin approves on the Invoices page, in the Pay early and save card. No money moves from here. The saving is a demo figure. */
