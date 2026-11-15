@@ -232,6 +232,8 @@ export function orderLink(c: Card) {
   const po = db.pos.find((p) => p.id === c.poId && tenantOf(p) === c.tenantId);
   return { poId: c.poId, status: po?.status ?? "missing", supplierId: c.supplierId, supplier: db.suppliers.find((s) => s.id === c.supplierId)?.name ?? c.supplierId, total: po?.total ?? null, currency: c.currency, cartAmount: c.cartAmount, erpRef: po?.erpRef ?? null, mandate };
 }
+/** Every card bound to one order with its charges, oldest first. For the dispute evidence record. Last 4 only. */
+export const orderCards = (tenantId: string, poId: string) => (sql.prepare("SELECT * FROM cards WHERE tenant_id = ? AND po_id = ? ORDER BY created_at, rowid").all(tenantId, poId) as any[]).map((r) => { const c = toCard(r); return { card: view(c), authorizations: authsFor(tenantId, c.id).reverse() }; });
 export const cardDetail = (tenantId: string, id: string) => { const c = getCard(tenantId, id); return { card: view(c), authorizations: authsFor(tenantId, id), order: orderLink(c) }; };
 
 // Issue and approve

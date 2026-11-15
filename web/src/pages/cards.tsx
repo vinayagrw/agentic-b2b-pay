@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { EvidenceButton } from "../components/Mandates";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { CreditCard, Plus } from "lucide-react";
 import { api, useAct, useGet, useMe } from "../lib/api";
@@ -114,7 +115,7 @@ function Controls({ c, threshold }: { c: CardView; threshold: number }) {
 
 function OrderCard({ o, used }: { o: CardOrder; used: boolean }) {
   const m = o.mandate;
-  return <Card title="Linked order and mandate" action={<Badge v={m.ok ? "Mandate valid" : "Mandate problem"} tone={m.ok ? "ok" : "bad"} />}>
+  return <Card title="Linked order and mandate" action={<span className="flex items-center gap-2">{used && <EvidenceButton poId={o.poId} />}<Badge v={m.ok ? "Mandate valid" : "Mandate problem"} tone={m.ok ? "ok" : "bad"} /></span>}>
     <p className="mb-3 text-[13px]" data-testid="mandate-line">{mandateLine(o, used)}</p>
     <dl className="grid grid-cols-2 gap-2 text-[13px] sm:grid-cols-4">
       <div><dt className="text-xs text-muted">Order</dt><dd><Link className="text-primary hover:underline" to="/app/purchase-orders"><Mono>{o.poId}</Mono></Link></dd></div>

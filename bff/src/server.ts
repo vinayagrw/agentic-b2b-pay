@@ -381,6 +381,7 @@ export async function buildApp() {
   app.post("/ops/cases/:id/close", async (req: any) => O.closeCase(who(req), req.params.id, String(b(req).resolution ?? "")));
   // Step 6: revenue, KPIs, dispute evidence, developer keys and webhooks
   app.get("/ops/revenue", async (req) => { who(req); return A.revenue(); });
+  app.get("/orders/:poId/evidence", async (req: any) => S.disputeEvidence(scopeOf(req), req.params.poId));
   app.get("/payments/:id/mandates", async (req: any) => { const i = scoped(scopeOf(req)).intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found"); return S.mandatesView(i.id); });
   // Copilot. Read-only tools scoped like every other read view. Proposals are returned, never executed.
   const cpCtx = (req: any): CP.Ctx => { const u = who(req); const x = { ...(req.query ?? {}), ...b(req) }; return { user: u, scope: scopeOf(req), prefix: P.isOperator(u) ? "/operator" : "/app", route: x.route ? String(x.route).slice(0, 200) : undefined, recordId: x.recordId ? String(x.recordId).slice(0, 60) : undefined, voice: x.voice === true || x.voice === "1" }; };

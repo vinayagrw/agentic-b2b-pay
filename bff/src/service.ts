@@ -22,7 +22,7 @@ import { buyerDraft, readInvoice, explainRoute, renderInvoiceText } from "./agen
 import { pickRule, type ApprovalRule } from "./modules/rules.js";
 import { publish } from "./hooks.js";
 import * as AP2 from "./modules/ap2.js";
-import { paidByCard } from "./cards.js";
+import { paidByCard, orderCards } from "./cards.js";
 import { evaluateMandates } from "./modules/policy.js";
 
 export class HttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
@@ -168,8 +168,54 @@ export function mandatesView(intentId: string) {
   const inv = must(db.invoices.find((i) => i.id === pi.invoiceId), "invoice");
   const pair = AP2.currentPair(inv.poId);
   const result = evaluateMandates(pair.intent, pair.cart, { poId: inv.poId, supplierId: inv.supplierId, currency: pi.currency, amount: pi.amount, lines: inv.extract.lines });
-  const show = (m?: AP2.SignedMandate) => m && { id: m.id, kind: m.kind, signerId: m.signerId, signerKind: m.signerKind, hash: m.hash, createdAt: m.createdAt, body: m.body, keyFingerprint: AP2.keyFingerprint(AP2.publicKeyOf(m.signerId)), signatureValid: AP2.verifySigned(m) };
-  return { intent: show(pair.intent) ?? null, cart: show(pair.cart) ?? null, ...result };
+  return { poId: inv.poId, intent: showMandate(pair.intent), cart: showMandate(pair.cart), ...result };
+}
+const showMandate = (m?: AP2.SignedMandate) => m ? { id: m.id, kind: m.kind, signerId: m.signerId, signerKind: m.signerKind, hash: m.hash, createdAt: m.createdAt, body: m.body, keyFingerprint: AP2.keyFingerprint(AP2.publicKeyOf(m.signerId)), signatureValid: AP2.verifySigned(m) } : null;
+/** Masks any text value that is a whole card number, so a record never carries more than the last 4. */
+function maskPans<T>(v: T): T {
+  if (typeof v === "string") { const d = v.replace(/[ -]/g, ""); return (/^\d{13,19}$/.test(d) ? `**** ${d.slice(-4)}` : v) as T; }
+  if (Array.isArray(v)) return v.map(maskPans) as T;
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskPans(x)])) as T;
+  return v;
+}
+/**
+ * Dispute evidence for one paid order: the signed Intent and Cart mandates, the agent identity, who approved and when,
+ * the card decision and reason, and the audit events in time order. Scope is the caller's client tenant, or null for an operator.
+ */
+export function disputeEvidence(scope: string | null, poId: string) {
+  const po = db.pos.find((p) => p.id === poId && (!scope || tenantOf(p) === scope));
+  if (!po) throw new HttpError(404, "purchase order not found");
+  const tenantId = tenantOf(po);
+  const invs = db.invoices.filter((i) => i.poId === po.id);
+  const cards = orderCards(tenantId, po.id);
+  const byCard = paidByCard(tenantId, po.id);
+  if (!byCard && po.status !== "paid" && !invs.some((i) => i.paid)) throw new HttpError(409, "This order is not paid yet, so it has no evidence record");
+  const pis = db.intents.filter((p) => invs.some((i) => i.id === p.invoiceId));
+  const sup = db.suppliers.find((s) => s.id === po.supplierId);
+  const agent = db.agents.find((a) => a.id === po.agentId);
+  const authority = db.mandates.find((m) => m.id === po.mandateId);
+  const pair = AP2.currentPair(po.id);
+  const name = (id: string) => P.getUser(id)?.name ?? id;
+  const person = (x: { userId: string; at: string; comment?: string }, decision: "approved" | "rejected", level: number, role: string | null) => ({ level, role, decision, userId: x.userId, name: name(x.userId), at: x.at, comment: x.comment ?? "" });
+  const a = po.approval;
+  const approvals = [...(a?.levels ?? []).flatMap((l, n) => l.approvals.map((x) => person(x, "approved", n + 1, l.role))), ...(a?.rejectedBy ? [person(a.rejectedBy, "rejected", a.current + 1, a.levels[a.current]?.role ?? null)] : [])].sort((x, y) => x.at.localeCompare(y.at));
+  const subjects = new Set([po.id, ...invs.map((i) => i.id), ...pis.map((p) => p.id), ...cards.map((c) => c.card.id)]);
+  const timeline = db.evidence.filter((e) => subjects.has(e.subjectId)).sort((x, y) => x.seq - y.seq)
+    .map((e) => ({ seq: e.seq, at: e.createdAt, subjectType: e.subjectType, subjectId: e.subjectId, event: e.event, actor: (e.payload as any)?.actor ?? null, detail: e.payload, hash: e.hash }));
+  return maskPans({
+    generatedAt: new Date().toISOString(), tenantId,
+    order: { id: po.id, status: po.status, supplierId: po.supplierId, supplier: sup?.name ?? po.supplierId, category: po.category, total: po.total, currency: po.currency ?? "USD", lines: po.lines, justification: po.justification, erpRef: po.erpRef, createdAt: po.createdAt, requestedBy: po.requestedBy ?? null,
+      policy: { outcome: po.policy.outcome, reasons: po.policy.reasons, checks: po.policy.checks }, invoices: invs.map((i) => ({ id: i.id, number: i.number, amount: i.amount, currency: i.currency, matchStatus: i.matchStatus, paid: i.paid })) },
+    mandates: { intent: showMandate(pair.intent), cart: showMandate(pair.cart) },
+    agent: agent ? { id: agent.id, name: agent.name, kyaStatus: agent.kyaStatus, status: agent.status, orgId: agent.orgId, erpRole: agent.erpRole, protocols: agent.protocols, keyFingerprint: AP2.keyFingerprint(agent.publicKey),
+      authority: authority ? { id: authority.id, principalUserId: authority.principalUserId, principal: name(authority.principalUserId), perTxnMax: authority.perTxnMax, approvalThreshold: authority.approvalThreshold, validFrom: authority.validFrom, validTo: authority.validTo } : null } : null,
+    approvals: { rule: a?.ruleName ?? null, needed: !!a, decisions: approvals },
+    payment: { method: byCard ? "card" as const : "rail" as const,
+      cards: cards.map(({ card: c, authorizations }) => ({ id: c.id, kind: c.type === "mandate" ? "Mandate-bound virtual card" : `${c.typeText} card`, issuerLabel: c.issuerLabel, last4: c.last4, expiry: c.expiry, status: c.status, currency: c.currency, cartAmount: c.cartAmount, bindingHash: c.bindingHash, cartMandateId: c.cartMandateId, issuedBy: c.createdByName, approvedBy: c.approvedBy, createdAt: c.createdAt,
+        authorizations: authorizations.map((x) => ({ id: x.id, at: x.createdAt, merchant: x.merchant, amount: x.amount, currency: x.currency, decision: x.approved ? "approved" as const : "declined" as const, reason: x.reason, status: x.status, source: x.source })) })),
+      railPayments: pis.map((p) => ({ id: p.id, kind: p.kind ?? "payment", rail: p.rail ?? null, amount: p.amount, currency: p.currency, status: p.status, blockedReason: p.blockedReason ?? null, createdAt: p.createdAt ?? null })) },
+    timeline, chain: verifyChain(db.evidence),
+  });
 }
 function pushPoToErp(po: PurchaseOrder, sup: Supplier) {
   const { ref, event } = erpCreatePo(po, sup, db.seq); po.erpRef = ref; erp(event); ev("po", po.id, "erp.po_created", { system: sup.erp, ref });
