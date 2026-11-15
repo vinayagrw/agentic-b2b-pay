@@ -11,6 +11,7 @@ import { buildApp } from "../src/server.js";
 import { stepUp } from "./helpers/security.js";
 import * as AP2 from "../src/modules/ap2.js";
 import { sql } from "../src/db.js";
+import Stripe from "stripe";
 
 beforeEach(() => { useDb(":memory:"); reload(); reset(); P.seedPlatform(); S.bootstrap(); C.setIssuer(null); });
 const pat = () => P.getUser("usr-clerk-pat")!;
@@ -123,6 +124,39 @@ describe("mandate-bound virtual card", () => {
   /** An approved order with signed AP2 mandates, small enough to skip maker-checker. */
   const order = async () => { const po = S.createPo((await S.draftPo("Need 50 sealed 6204 bearings")).value); S.autoApprove(po); return db.pos.find((p) => p.id === po.id)!; };
   const bound = async () => { const po = await order(); const sup = db.suppliers.find((s) => s.id === po.supplierId)!; const r = await C.issueForOrder(pat(), "tnt-acme", null, po.id); return { po, sup, card: r.card }; };
+
+  const holdOn = (supplierId: string) => sql.prepare("INSERT INTO bank_change_requests (id, tenant_id, supplier_id, kind, status, new_enc, old_masked, new_masked, account_hash, channel, requested_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(`bcr-t-${supplierId}`, "tnt-acme", supplierId, "bank", "pending", "x", "{}", "{}", "h", "portal", "usr-clerk-pat", new Date().toISOString());
+
+  it("refuses to issue and declines charges while a bank change hold is on the supplier", async () => {
+    const po = await order(); holdOn(po.supplierId);
+    await expect(C.issueForOrder(pat(), "tnt-acme", null, po.id)).rejects.toThrow(/Payment held/);
+    sql.prepare("DELETE FROM bank_change_requests").run();
+    const { po: po2, sup, card } = await bound(); expect(po2).toBeTruthy(); holdOn(sup.id);
+    const d = auth(card.id, sup.name, card.cartAmount!); expect(d.decision.approved).toBe(false); expect(d.decision.code).toBe("bank_change_hold"); expect(d.card.status).toBe("active");
+  });
+
+  it("matches the merchant by id when known and falls back to the name", async () => {
+    const po = await order(); const sup = db.suppliers.find((s) => s.id === po.supplierId)!; sup.cardMerchantId = "mid-777";
+    const card = (await C.issueForOrder(pat(), "tnt-acme", null, po.id)).card; expect(card.merchantId).toBe("mid-777");
+    expect(auth(card.id, sup.name, card.cartAmount!, { merchantId: "mid-999" }).decision.code).toBe("wrong_merchant");
+    expect(auth(card.id, "Some Other Name", card.cartAmount!, { merchantId: "mid-777" }).decision.approved).toBe(true);
+    const po2 = await order(); delete sup.cardMerchantId; const c2 = (await C.issueForOrder(pat(), "tnt-acme", null, po2.id)).card; expect(c2.merchantId).toBeNull();
+    expect(auth(c2.id, "Some Other Name", c2.cartAmount!, { merchantId: "mid-777" }).decision.code).toBe("wrong_merchant");
+    expect(auth(c2.id, sup.name, c2.cartAmount!, { merchantId: "mid-777" }).decision.approved).toBe(true);
+  });
+
+  it("the Stripe webhook declines a charge whose merchant id does not match", async () => {
+    const po = await order(); const sup = db.suppliers.find((s) => s.id === po.supplierId)!; sup.cardMerchantId = "mid-777";
+    const card = (await C.issueForOrder(pat(), "tnt-acme", null, po.id)).card; sql.prepare("UPDATE cards SET provider_ref = ? WHERE id = ?").run("ic_test_1", card.id);
+    const keep = { k: process.env.STRIPE_SECRET_KEY, w: process.env.STRIPE_WEBHOOK_SECRET }; process.env.STRIPE_SECRET_KEY = "sk_test_x"; process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
+    try {
+      const send = (id: string, network_id: string) => { const body = JSON.stringify({ id: `evt_${id}`, object: "event", livemode: false, type: "issuing_authorization.request", data: { object: { id, card: "ic_test_1", amount: Math.round(card.cartAmount! * 100), currency: card.currency.toLowerCase(), merchant_data: { name: sup.name, network_id } } } });
+        return C.stripeWebhook(body, { "stripe-signature": Stripe.webhooks.generateTestHeaderString({ payload: body, secret: "whsec_test" }) }); };
+      expect(send("iauth_a", "mid-999").approved).toBe(false);
+      expect(send("iauth_b", "mid-777").approved).toBe(true);
+    } finally { process.env.STRIPE_SECRET_KEY = keep.k ?? ""; process.env.STRIPE_WEBHOOK_SECRET = keep.w ?? ""; if (!keep.k) delete process.env.STRIPE_SECRET_KEY; if (!keep.w) delete process.env.STRIPE_WEBHOOK_SECRET; }
+  });
 
   it("stores the cart binding hash and exact amount, and approves one exact charge", async () => {
     const { po, sup, card } = await bound(); const cart = AP2.currentPair(po.id).cart!;

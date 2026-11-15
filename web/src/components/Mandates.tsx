@@ -1,7 +1,10 @@
-import { useGet } from "../lib/api";
+import { api, useAct, useAppState, useGet, useMe } from "../lib/api";
+import { useNavigate } from "react-router-dom";
+import { can } from "../lib/perm";
+import { canIssueFromMandate } from "../lib/cards";
 import { usd } from "../lib/utils";
 import { useState } from "react";
-import { Download, FileCheck2 } from "lucide-react";
+import { CreditCard, Download, FileCheck2 } from "lucide-react";
 import { Badge, Button, Card, EmptyState, ErrorNote, Mono, Muted } from "./ui";
 import { Skeleton, SlidePanel, StatusDot } from "./kit";
 import { downloadJson, eventText, evidenceFileName, paidLine, type Evidence } from "../lib/evidence";
@@ -26,10 +29,12 @@ function MandateBlock({ m, title }: { m: M; title: string }) {
 /** AP2 style Intent and Cart mandates for one payment, checked again on every load. */
 export function MandatesCard({ id }: { id: string }) {
   const { data } = useGet<View>(`/payments/${id}/mandates`, !!id);
+  const { data: st } = useAppState(); const { data: me } = useMe(); const { run, busy, error } = useAct(); const nav = useNavigate();
   if (!data) return <Card title="Signed mandates"><Skeleton lines={3} /></Card>;
   if (!data.intent && !data.cart) return <Card title="Signed mandates"><EmptyState title="No signed mandates" body="This purchase order was created before signed mandates were switched on, so it has no signed Intent or Cart and the payment is blocked. Raise a new purchase order or reset the demo data." /></Card>;
   const plain = data.ok ? "The user approved this purchase and the agent's cart fits inside that approval. The payment matches the cart exactly." : `This payment is held. ${data.reason}`;
-  return <Card title="Signed mandates" action={<span className="flex items-center gap-2"><EvidenceButton poId={data.poId} /><Badge v={data.ok ? "valid" : "blocked"} tone={data.ok ? "ok" : "bad"} /></span>}>
+  return <Card title="Signed mandates" action={<span className="flex items-center gap-2">{canIssueFromMandate(data.ok, st?.pos?.find((p: any) => p.id === data.poId)?.status) && can(me, "flow.operate") && <Button size="sm" disabled={busy} title="A card that works only for this order and its exact amount" onClick={async () => { const r = await run(() => api<{ card: { id: string } }>(`/orders/${data.poId}/card`, {})); if (r?.card) nav(`/app/cards/${r.card.id}`); }}><CreditCard size={13} aria-hidden />Issue card</Button>}<EvidenceButton poId={data.poId} /><Badge v={data.ok ? "valid" : "blocked"} tone={data.ok ? "ok" : "bad"} /></span>}>
+    <ErrorNote msg={error} />
     <p className="text-sm mb-3">{plain}</p>
     <div className="grid gap-3 md:grid-cols-2">
       {data.intent && <MandateBlock m={data.intent} title="Intent, signed by the user" />}

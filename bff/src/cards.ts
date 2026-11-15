@@ -18,16 +18,17 @@ import * as P from "./platform.js";
 import * as I from "./iam.js";
 import * as SU from "./stepup.js";
 import * as AP2 from "./modules/ap2.js";
+import * as BC from "./bankchange.js";
 
 export type CardType = "one_time" | "vendor_locked" | "recurring" | "agent" | "mandate";
 export type CardStatus = "pending_approval" | "active" | "frozen" | "canceled" | "closed" | "rejected";
-export type DeclineCode = "frozen" | "canceled" | "already_used" | "expired" | "wrong_merchant" | "wrong_currency" | "over_limit" | "agent_paused" | "not_issued" | "wrong_amount" | "mandate_invalid" | "order_paid";
+export type DeclineCode = "frozen" | "canceled" | "already_used" | "expired" | "wrong_merchant" | "wrong_currency" | "over_limit" | "agent_paused" | "not_issued" | "wrong_amount" | "mandate_invalid" | "order_paid" | "bank_change_hold";
 export type Card = { id: string; tenantId: string; type: CardType; status: CardStatus; issuer: "stripe" | "simulated"; providerRef: string | null; cardholderRef: string | null; last4: string; expMonth: number; expYear: number;
   limit: number; currency: "USD" | "EUR" | "GBP"; allowedMerchants: string[]; allowedMccs: string[]; supplierId: string | null; poId: string | null; ownerType: "user" | "agent"; ownerId: string; label: string; createdBy: string; approvedBy: string | null; createdAt: string; updatedAt: string;
   /** Mandate-bound cards only: hash of the signed cart, the exact cart amount and the cart mandate id at issue time. */
-  bindingHash: string | null; cartAmount: number | null; cartMandateId: string | null };
+  bindingHash: string | null; cartAmount: number | null; cartMandateId: string | null; merchantId: string | null };
 /** supplierId is optional. When the caller knows the supplier, a mandate-bound card also checks it against the order supplier. */
-export type AuthRequest = { merchant: string; mcc?: string; amount: number; currency?: string; supplierId?: string };
+export type AuthRequest = { merchant: string; merchantId?: string; mcc?: string; amount: number; currency?: string; supplierId?: string };
 export type Decision = { approved: boolean; code: DeclineCode | null; reason: string };
 
 export class CardError extends P.AuthError {}
@@ -45,20 +46,21 @@ const DECLINE_TEXT: Record<DeclineCode, string> = {
   over_limit: "Declined. This charge goes over the card limit.", agent_paused: "Declined. The agent that owns this card is paused.", not_issued: "Declined. The card is not issued yet.",
   wrong_amount: "Declined. The charge must equal the order amount exactly.", mandate_invalid: "Declined. The signed mandate for this order is missing or has changed.",
   order_paid: "Declined. This order is already paid or a payment for it is in progress.",
+  bank_change_hold: "Declined. The supplier changed its payout details and payments are on hold.",
 };
 
 // Rows
 
 const toCard = (r: any): Card => ({ id: r.id, tenantId: r.tenant_id, type: r.type, status: r.status, issuer: r.issuer, providerRef: r.provider_ref, cardholderRef: r.cardholder_ref, last4: r.last4, expMonth: r.exp_month, expYear: r.exp_year,
-  limit: r.limit_amount, currency: r.currency, allowedMerchants: JSON.parse(r.allowed_merchants), allowedMccs: JSON.parse(r.allowed_mccs), supplierId: r.supplier_id, poId: r.po_id, ownerType: r.owner_type, ownerId: r.owner_id, label: r.label, createdBy: r.created_by, approvedBy: r.approved_by, createdAt: r.created_at, updatedAt: r.updated_at, bindingHash: r.binding_hash ?? null, cartAmount: r.cart_amount ?? null, cartMandateId: r.cart_mandate_id ?? null });
+  limit: r.limit_amount, currency: r.currency, allowedMerchants: JSON.parse(r.allowed_merchants), allowedMccs: JSON.parse(r.allowed_mccs), supplierId: r.supplier_id, poId: r.po_id, ownerType: r.owner_type, ownerId: r.owner_id, label: r.label, createdBy: r.created_by, approvedBy: r.approved_by, createdAt: r.created_at, updatedAt: r.updated_at, bindingHash: r.binding_hash ?? null, cartAmount: r.cart_amount ?? null, cartMandateId: r.cart_mandate_id ?? null, merchantId: r.allowed_merchant_id ?? null });
 const toAuth = (r: any) => ({ id: r.id as string, cardId: r.card_id as string, merchant: r.merchant as string, mcc: r.mcc as string | null, amount: r.amount as number, currency: r.currency as string, approved: !!r.approved, reason: r.reason as string, status: r.status as string, capturedAmount: r.captured_amount as number, journalId: r.journal_id as string | null, providerRef: r.provider_ref as string | null, source: r.source as string, createdAt: r.created_at as string });
 export type CardAuth = ReturnType<typeof toAuth>;
 
 export function getCard(tenantId: string, id: string): Card {
   const r = sql.prepare("SELECT * FROM cards WHERE id = ? AND tenant_id = ?").get(id, tenantId); if (!r) throw new CardError(404, "card not found"); return toCard(r);
 }
-const put = (c: Card) => sql.prepare(`INSERT OR REPLACE INTO cards (id, tenant_id, type, status, issuer, provider_ref, cardholder_ref, last4, exp_month, exp_year, limit_amount, currency, allowed_merchants, allowed_mccs, supplier_id, po_id, owner_type, owner_id, label, created_by, approved_by, created_at, updated_at, binding_hash, cart_amount, cart_mandate_id)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(c.id, c.tenantId, c.type, c.status, c.issuer, c.providerRef, c.cardholderRef, c.last4, c.expMonth, c.expYear, c.limit, c.currency, JSON.stringify(c.allowedMerchants), JSON.stringify(c.allowedMccs), c.supplierId, c.poId, c.ownerType, c.ownerId, c.label, c.createdBy, c.approvedBy, c.createdAt, (c.updatedAt = now()), c.bindingHash, c.cartAmount, c.cartMandateId);
+const put = (c: Card) => sql.prepare(`INSERT OR REPLACE INTO cards (id, tenant_id, type, status, issuer, provider_ref, cardholder_ref, last4, exp_month, exp_year, limit_amount, currency, allowed_merchants, allowed_mccs, supplier_id, po_id, owner_type, owner_id, label, created_by, approved_by, created_at, updated_at, binding_hash, cart_amount, cart_mandate_id, allowed_merchant_id)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(c.id, c.tenantId, c.type, c.status, c.issuer, c.providerRef, c.cardholderRef, c.last4, c.expMonth, c.expYear, c.limit, c.currency, JSON.stringify(c.allowedMerchants), JSON.stringify(c.allowedMccs), c.supplierId, c.poId, c.ownerType, c.ownerId, c.label, c.createdBy, c.approvedBy, c.createdAt, (c.updatedAt = now()), c.bindingHash, c.cartAmount, c.cartMandateId, c.merchantId);
 export const authsFor = (tenantId: string, cardId: string) => (sql.prepare("SELECT * FROM card_authorizations WHERE tenant_id = ? AND card_id = ? ORDER BY created_at DESC, rowid DESC").all(tenantId, cardId) as any[]).map(toAuth);
 const tenantAuths = (tenantId: string | null) => (sql.prepare(`SELECT * FROM card_authorizations ${tenantId ? "WHERE tenant_id = ?" : ""} ORDER BY created_at DESC, rowid DESC`).all(...(tenantId ? [tenantId] : [])) as any[]).map((r) => ({ ...toAuth(r), tenantId: r.tenant_id as string }));
 
@@ -174,9 +176,12 @@ export function decide(c: Card, req: AuthRequest, at = Date.now()): Decision {
   if (at > Date.UTC(c.expYear, c.expMonth, 1)) return no("expired");
   if ((req.currency ?? c.currency).toUpperCase() !== c.currency) return no("wrong_currency");
   const m = req.merchant.trim().toLowerCase();
-  const merchantOk = !c.allowedMerchants.length || c.allowedMerchants.some((x) => x.toLowerCase() === m);
+  // A known merchant id wins over the name. A different id declines even when the name matches.
+  if (c.merchantId && req.merchantId && req.merchantId !== c.merchantId) return no("wrong_merchant", "Declined. The merchant id does not match the card.");
+  const merchantOk = !c.allowedMerchants.length || (!!c.merchantId && req.merchantId === c.merchantId) || c.allowedMerchants.some((x) => x.toLowerCase() === m);
   const mccOk = !c.allowedMccs.length || (!!req.mcc && c.allowedMccs.includes(req.mcc));
   if (c.type === "vendor_locked" ? !(c.allowedMerchants.length ? merchantOk : mccOk) : !(merchantOk && mccOk)) return no("wrong_merchant");
+  if (c.supplierId) { const hold = BC.paymentHold(c.tenantId, c.supplierId, at); if (hold) return no("bank_change_hold", `Declined. ${hold}`); }
   if (c.type === "mandate") {
     if (req.supplierId && req.supplierId !== c.supplierId) return no("wrong_merchant", "Declined. The supplier does not match the order.");
     const ms = mandateStatus(c, at)!;
@@ -223,7 +228,7 @@ export function view(c: Card) {
   const sp = spent(c);
   return { id: c.id, type: c.type, typeText: TYPE_TEXT[c.type], status: c.status, issuer: c.issuer, issuerLabel: c.issuer === "stripe" ? "Stripe Issuing (test mode)" : "Simulated issuer", last4: c.last4, expiry: `${String(c.expMonth).padStart(2, "0")}/${String(c.expYear).slice(-2)}`,
     limit: c.limit, currency: c.currency, period: monthly(c.type) ? "month" : "card", spent: sp, remaining: r2(Math.max(0, c.limit - sp)), allowedMerchants: c.allowedMerchants, allowedMccs: c.allowedMccs, supplierId: c.supplierId, poId: c.poId,
-    ownerType: c.ownerType, ownerId: c.ownerId, owner: ownerName(c), label: c.label, createdBy: c.createdBy, createdByName: P.getUser(c.createdBy)?.name ?? c.createdBy, approvedBy: c.approvedBy, createdAt: c.createdAt, updatedAt: c.updatedAt, providerRef: c.providerRef, bindingHash: c.bindingHash, cartAmount: c.cartAmount, cartMandateId: c.cartMandateId };
+    ownerType: c.ownerType, ownerId: c.ownerId, owner: ownerName(c), label: c.label, createdBy: c.createdBy, createdByName: P.getUser(c.createdBy)?.name ?? c.createdBy, approvedBy: c.approvedBy, createdAt: c.createdAt, updatedAt: c.updatedAt, providerRef: c.providerRef, bindingHash: c.bindingHash, cartAmount: c.cartAmount, cartMandateId: c.cartMandateId, merchantId: c.merchantId };
 }
 export const listCards = (tenantId: string) => (sql.prepare("SELECT * FROM cards WHERE tenant_id = ? ORDER BY created_at DESC, rowid DESC").all(tenantId) as any[]).map((r) => view(toCard(r)));
 /** The linked order and a fresh mandate check, for the card page. Null for cards that are not mandate-bound. */
@@ -242,7 +247,7 @@ export const IssueInput = z.object({
   type: z.enum(["one_time", "vendor_locked", "recurring", "agent"]), label: z.string().trim().min(2).max(60),
   limit: z.coerce.number().positive().max(1_000_000), currency: z.enum(["USD", "EUR", "GBP"]).default("USD"),
   expiryMonths: z.coerce.number().int().min(1).max(60).default(12),
-  supplierId: z.string().optional(), merchant: z.string().trim().max(80).optional(), mcc: z.string().regex(/^\d{4}$/).optional(),
+  supplierId: z.string().optional(), merchant: z.string().trim().max(80).optional(), mcc: z.string().regex(/^\d{4}$/).optional(), merchantId: z.string().trim().max(64).optional(),
   poId: z.string().optional(), agentId: z.string().optional(), ownerUserId: z.string().optional(),
 });
 async function activate(c: Card) {
@@ -272,7 +277,7 @@ export async function issueCard(u: P.User, tenantId: string, sessionId: string |
   }
   const exp = new Date(); exp.setUTCMonth(exp.getUTCMonth() + x.expiryMonths);
   const c: Card = { id: nextId("card"), tenantId, type: x.type, status: "pending_approval", issuer: (await issuer()).kind, providerRef: null, cardholderRef: null, last4: "", expMonth: exp.getUTCMonth() + 1, expYear: exp.getUTCFullYear(),
-    limit: r2(limit), currency: x.currency, allowedMerchants: merchants, allowedMccs: mccs, supplierId: sup?.id ?? null, poId: x.poId ?? null, ownerType, ownerId, label: x.label, createdBy: u.id, approvedBy: null, createdAt: now(), updatedAt: now(), bindingHash: null, cartAmount: null, cartMandateId: null };
+    limit: r2(limit), currency: x.currency, allowedMerchants: merchants, allowedMccs: mccs, supplierId: sup?.id ?? null, poId: x.poId ?? null, ownerType, ownerId, label: x.label, createdBy: u.id, approvedBy: null, createdAt: now(), updatedAt: now(), bindingHash: null, cartAmount: null, cartMandateId: null, merchantId: x.merchantId ?? sup?.cardMerchantId ?? null };
   return finishIssue(u, sessionId, c);
 }
 /** Shared end of issuing: a large limit waits for a second approver, a small one is issued at once. */
@@ -302,10 +307,11 @@ export async function issueForOrder(u: P.User, tenantId: string, sessionId: stri
   if (sql.prepare("SELECT id FROM cards WHERE tenant_id = ? AND po_id = ? AND type = 'mandate' AND status IN ('pending_approval','active','frozen','closed')").get(tenantId, po.id)) throw new CardError(409, "This order already has a mandate-bound virtual card");
   if (paidByCard(tenantId, po.id)) throw new CardError(409, "This order was already paid by a mandate-bound virtual card");
   const paid = railPaid(po); if (paid) throw new CardError(409, `${paid}, so it cannot get a card`);
+  const hold = BC.paymentHold(tenantId, sup.id); if (hold) throw new CardError(409, `${hold} A card cannot be issued until it clears.`);
   const exp = new Date(pair.intent.body.expiresAt);
   const c: Card = { id: nextId("card"), tenantId, type: "mandate", status: "pending_approval", issuer: (await issuer()).kind, providerRef: null, cardholderRef: null, last4: "", expMonth: exp.getUTCMonth() + 1, expYear: exp.getUTCFullYear(),
     limit: r2(cart.amount), currency: cart.currency as Card["currency"], allowedMerchants: [sup.name], allowedMccs: [], supplierId: sup.id, poId: po.id, ownerType: "user", ownerId: u.id, label: `Order ${po.id}`.slice(0, 60), createdBy: u.id, approvedBy: null, createdAt: now(), updatedAt: now(),
-    bindingHash: AP2.cartBindingHash(cart), cartAmount: r2(cart.amount), cartMandateId: pair.cart.id };
+    bindingHash: AP2.cartBindingHash(cart), cartAmount: r2(cart.amount), cartMandateId: pair.cart.id, merchantId: sup.cardMerchantId ?? null };
   const out = await finishIssue(u, sessionId, c);
   P.audit(u.id, "card", c.id, "card.bound_to_order", { poId: po.id, supplierId: sup.id, amount: c.cartAmount, currency: c.currency, bindingHash: c.bindingHash, cartMandate: pair.cart.id, intentMandate: pair.intent.id });
   return out;
@@ -384,7 +390,7 @@ export function stripeWebhook(raw: Buffer | string, headers: Record<string, any>
   const dup = sql.prepare("SELECT approved FROM card_authorizations WHERE provider_ref = ?").get(a.id) as any;
   if (dup) return { approved: !!dup.approved };
   const amount = (a.pending_request?.amount ?? a.amount) / 100;
-  const r = authorize(row.tenant_id, row.id, { merchant: a.merchant_data?.name ?? "Unknown merchant", mcc: a.merchant_data?.category_code ?? undefined, amount, currency: String(a.currency).toUpperCase() }, { source: "stripe", actor: null, providerRef: a.id });
+  const r = authorize(row.tenant_id, row.id, { merchant: a.merchant_data?.name ?? "Unknown merchant", merchantId: a.merchant_data?.network_id || undefined, mcc: a.merchant_data?.category_code ?? undefined, amount, currency: String(a.currency).toUpperCase() }, { source: "stripe", actor: null, providerRef: a.id });
   return { approved: r.decision.approved };
 }
 

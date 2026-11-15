@@ -20,3 +20,13 @@ describe("mandate-bound virtual card helpers", () => {
     expect(bad).toMatch(/will decline/); expect(bad).not.toMatch(/[\u2014;]/);
   });
 });
+
+describe("canIssueFromMandate", () => {
+  it("needs valid mandates and an approved order that is not paid", async () => {
+    const { canIssueFromMandate } = await import("../src/lib/cards");
+    expect(canIssueFromMandate(true, "approved")).toBe(true);
+    expect(canIssueFromMandate(false, "approved")).toBe(false);
+    expect(canIssueFromMandate(true, "paid")).toBe(false);
+    expect(canIssueFromMandate(true, undefined)).toBe(false);
+  });
+});
