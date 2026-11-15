@@ -17,6 +17,7 @@ import type { RailEnv } from "./rails/types.js";
 import { walletActivity } from "./rails/onchain.js";
 import { sql } from "./db.js";
 import * as P from "./platform.js";
+import * as DLG from "./delegation.js";
 import { erpCreatePo, erpPostPayment } from "./modules/erp.js";
 import { mpcSign, SIGNERS } from "./modules/custody.js";
 import { buyerDraft, readInvoice, explainRoute, renderInvoiceText } from "./agents.js";
@@ -220,7 +221,8 @@ export function disputeEvidence(scope: string | null, poId: string) {
   const name = (id: string) => P.getUser(id)?.name ?? id;
   const person = (x: { userId: string; at: string; comment?: string }, decision: "approved" | "rejected", level: number, role: string | null) => ({ level, role, decision, userId: x.userId, name: name(x.userId), at: x.at, comment: x.comment ?? "" });
   const a = po.approval;
-  const approvals = [...(a?.levels ?? []).flatMap((l, n) => l.approvals.map((x) => person(x, "approved", n + 1, l.role))), ...(a?.rejectedBy ? [person(a.rejectedBy, "rejected", a.current + 1, a.levels[a.current]?.role ?? null)] : [])].sort((x, y) => x.at.localeCompare(y.at));
+  const past = (a?.history ?? []).flatMap((h) => [...h.levels.flatMap((l, n) => l.approvals.map((x) => ({ ...person(x, "approved", n + 1, l.role), round: h.round }))), ...(h.rejectedBy ? [{ ...person(h.rejectedBy, "rejected", 0, null), round: h.round }] : [])]);
+  const approvals = [...past, ...(a?.levels ?? []).flatMap((l, n) => l.approvals.map((x) => person(x, "approved", n + 1, l.role))), ...(a?.rejectedBy ? [person(a.rejectedBy, "rejected", a.current + 1, a.levels[a.current]?.role ?? null)] : [])].sort((x, y) => x.at.localeCompare(y.at));
   const subjects = new Set([po.id, ...invs.map((i) => i.id), ...pis.map((p) => p.id), ...cards.map((c) => c.card.id)]);
   const timeline = db.evidence.filter((e) => subjects.has(e.subjectId)).sort((x, y) => x.seq - y.seq)
     .map((e) => ({ seq: e.seq, at: e.createdAt, subjectType: e.subjectType, subjectId: e.subjectId, event: e.event, actor: (e.payload as any)?.actor ?? null, detail: e.payload, hash: e.hash }));
@@ -242,16 +244,28 @@ export function disputeEvidence(scope: string | null, poId: string) {
 function pushPoToErp(po: PurchaseOrder, sup: Supplier) {
   const { ref, event } = erpCreatePo(po, sup, db.seq); po.erpRef = ref; erp(event); ev("po", po.id, "erp.po_created", { system: sup.erp, ref });
 }
-/** Can this user act on the PO's current approval level? */
-export function canApprove(po: PurchaseOrder, user: { id: string; role: string; tenantId: string | null }) {
+/** Who asked for the order: the signed-in maker, or for an agent order the person who gave the agent its mandate. */
+export function requesterOf(po: PurchaseOrder): string | null {
+  return po.requestedBy ?? db.mandates.find((m) => m.id === po.mandateId)?.principalUserId ?? null;
+}
+/** Can this user act on the PO's current approval level? A delegate may act for someone who handed approvals to them. */
+export function canApprove(po: PurchaseOrder, user: { id: string; role: string; tenantId: string | null }): { ok: boolean; why: string; onBehalfOf?: string } {
   if (po.status !== "pending_approval") return { ok: false, why: `PO is ${po.status}` };
   if (user.tenantId && user.tenantId !== tenantOf(po)) return { ok: false, why: "Wrong tenant" };
   if (po.requestedBy && po.requestedBy === user.id) return { ok: false, why: "You raised this order, so another person must approve it" };
   const a = po.approval; if (!a) return { ok: ["approver", "client_admin", "operator_admin"].includes(user.role), why: "Needs an approver" };
   const lvl = a.levels[a.current];
-  if (a.levels.some((l) => l.approvals.some((x) => x.userId === user.id))) return { ok: false, why: "You already approved this PO at an earlier level" };
-  if (user.role !== lvl.role) return { ok: false, why: `Level ${a.current + 1} needs ${lvl.role.replace("_", " ")}` };
-  return { ok: true, why: "" };
+  const approvedBefore = (id: string) => a.levels.some((l) => l.approvals.some((x) => x.userId === id || x.onBehalfOf === id));
+  if (approvedBefore(user.id)) return { ok: false, why: "You already approved this PO at an earlier level" };
+  if (user.role === lvl.role) return { ok: true, why: "" };
+  for (const d of DLG.activeFor(user.id, tenantOf(po))) {
+    const from = P.getUser(d.fromUser);
+    if (!from || from.active === false || from.role !== lvl.role) continue;
+    if (from.id === po.requestedBy) continue;
+    if (approvedBefore(from.id)) continue;
+    return { ok: true, why: "", onBehalfOf: from.id };
+  }
+  return { ok: false, why: `Level ${a.current + 1} needs ${lvl.role.replace("_", " ")}` };
 }
 export function decideApproval(poId: string, approve: boolean, approver = "usr-controller-sam", comment = "") {
   const po = must(db.pos.find((p) => p.id === poId), "po");
@@ -260,14 +274,35 @@ export function decideApproval(poId: string, approve: boolean, approver = "usr-c
   const can = canApprove(po, user);
   if (!can.ok) throw new HttpError(403, can.why);
   const at = new Date().toISOString(); const c = comment.trim().slice(0, 500);
-  if (!approve) { po.status = "rejected"; if (po.approval) po.approval.rejectedBy = { userId: user.id, at, comment: c }; }
+  const mark = { userId: user.id, at, comment: c, ...(can.onBehalfOf ? { onBehalfOf: can.onBehalfOf } : {}) };
+  if (!approve) { po.status = "rejected"; if (po.approval) po.approval.rejectedBy = mark; }
   else if (po.approval) {
-    const lvl = po.approval.levels[po.approval.current]; lvl.approvals.push({ userId: user.id, at, comment: c });
+    const lvl = po.approval.levels[po.approval.current]; lvl.approvals.push(mark);
     if (lvl.approvals.length >= lvl.count) po.approval.current += 1;
     if (po.approval.current >= po.approval.levels.length) po.status = "approved";
   } else po.status = "approved";
-  ev("po", po.id, approve ? (po.status === "approved" ? "approval.granted" : "approval.level_passed") : "approval.rejected", { approver: user.id, comment: c, level: po.approval ? po.approval.current : 0, rule: po.approval?.ruleName ?? null });
+  ev("po", po.id, approve ? (po.status === "approved" ? "approval.granted" : "approval.level_passed") : "approval.rejected", { approver: user.id, onBehalfOf: can.onBehalfOf ?? null, comment: c, level: po.approval ? po.approval.current : 0, rule: po.approval?.ruleName ?? null, round: po.approval?.round ?? 1 });
+  if (can.onBehalfOf) P.audit(user.id, "po", po.id, approve ? "approval.delegate_approved" : "approval.delegate_rejected", { onBehalfOf: can.onBehalfOf, comment: c, total: po.total });
   if (po.status === "approved") { pushPoToErp(po, supplier(po.supplierId)); publish(tenantOf(po), "purchase_order.approved", { id: po.id, total: po.total }); }
+  save(); return po;
+}
+/** The requester sends a rejected order back for approval with a change note. The old round is kept in the history. */
+export function resubmitPo(poId: string, userId: string, note: string) {
+  const po = must(db.pos.find((p) => p.id === poId), "po");
+  if (po.status !== "rejected") throw new HttpError(409, `Only a rejected order can be sent again. This one is ${po.status.replaceAll("_", " ")}`);
+  if (po.policy.outcome === "deny") throw new HttpError(409, "Policy denies this order, so it cannot be sent again");
+  if (requesterOf(po) !== userId) throw new HttpError(403, "Only the person who asked for this order can send it again");
+  const n = note.trim(); if (n.length < 3) throw new HttpError(422, "Say what changed, in a few words");
+  const at = new Date().toISOString(); const c = n.slice(0, 500);
+  const a = po.approval ?? { ruleId: null, ruleName: "Mandate threshold", levels: [{ role: "approver", count: 1, approvals: [] }], current: 0 };
+  const round = a.round ?? 1;
+  if ((a.history?.length ?? 0) >= 5) throw new HttpError(409, "This order was sent again too many times. Raise a new order");
+  a.history = [...(a.history ?? []), { round, levels: a.levels.map((l) => ({ ...l, approvals: [...l.approvals] })), ...(a.rejectedBy ? { rejectedBy: a.rejectedBy } : {}), resubmittedBy: userId, resubmittedAt: at, note: c }];
+  a.levels = a.levels.map((l) => ({ ...l, approvals: [] })); a.current = 0; delete a.rejectedBy; a.round = round + 1;
+  po.approval = a; po.status = "pending_approval";
+  ev("po", po.id, "approval.resubmitted", { by: userId, note: c, round: a.round });
+  P.audit(userId, "po", po.id, "approval.resubmitted", { note: c, round: a.round });
+  for (const f of pendingSinks) { try { f(po); } catch { /* a notifier must not break the order path */ } }
   save(); return po;
 }
 /** Approves every level with seeded users of the right role. Used by the scenario runner only. */

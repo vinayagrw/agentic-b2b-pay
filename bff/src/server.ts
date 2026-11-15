@@ -42,6 +42,7 @@ import * as CH from "./chatops.js";
 import * as CARDS from "./cards.js";
 import * as BC from "./bankchange.js";
 import * as CR from "./credit.js";
+import * as DLG from "./delegation.js";
 import { buildMcpServer } from "./mcp.js";
 import { verifyAgent } from "./modules/kya.js";
 import swagger from "@fastify/swagger";
@@ -166,7 +167,7 @@ export async function buildApp() {
   const PUBLIC = new Set(["/health", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle", "/webhooks/stripe-issuing", "/mcp", "/integrations/slack/actions", "/integrations/teams/actions"]);
   const ROUTE_PERMS: Record<string, I.Permission> = {
     "POST /reset": "platform.reset", "POST /kill-switch": "agents.manage", "POST /agents": "agents.manage", "POST /agents/:id/verify": "agents.manage", "POST /agents/:id/suspend": "agents.manage", "POST /agents/:id/resume": "agents.manage",
-    "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /invoices/:id/override": "payments.approve", "POST /invoices/:id/credit-notes": "payments.approve", "POST /invoices/:id/hold": "flow.operate", "POST /refunds": "payments.refund", "POST /payments/:id/retry": "payments.pay", "POST /payments/:id/ach-return": "payments.refund",
+    "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /approvals/delegations": "payments.approve", "POST /approvals/delegations/:id/revoke": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /invoices/:id/override": "payments.approve", "POST /invoices/:id/credit-notes": "payments.approve", "POST /invoices/:id/hold": "flow.operate", "POST /refunds": "payments.refund", "POST /payments/:id/retry": "payments.pay", "POST /payments/:id/ach-return": "payments.refund",
     "POST /erp/vendor-master/changes": "erp.vendor_master",
     "GET /rails/balances": "rails.balances", "GET /users": "users.read", "PATCH /tenants/:id/branding": "settings.branding", "POST /tenants/:id/logo": "settings.branding",
     "POST /changes": "changes.request", "POST /copilot/ask": "workspace.read", "POST /copilot/answer": "workspace.read", "POST /copilot/threads/:id": "workspace.read", "DELETE /copilot/threads/:id": "workspace.read", "POST /copilot/feedback": "workspace.read", "POST /copilot/memories": "workspace.read", "PATCH /copilot/memories/:id": "workspace.read", "DELETE /copilot/memories/:id": "workspace.read", "DELETE /copilot/memories": "workspace.read", "DELETE /copilot/answers/:id": "workspace.read", "POST /changes/:id/decide": "changes.decide",
@@ -349,6 +350,10 @@ export async function buildApp() {
 
   app.post("/buyer/draft", async (req) => { const { t } = ctx(req); return S.draftPo(z.object({ need: z.string().min(3) }).parse(b(req)).need, t); });
   app.post("/purchase-orders", async (req) => { const d = PoDraft.parse(b(req).draft); const sup = db.suppliers.find((x) => x.id === d.supplierId); if (sup) await S.ensureRates({ currency: d.currency, entityId: d.entityId, tenantId: sup.tenantId ?? "tnt-acme" }); const po = S.createPo(d, b(req).agentId); po.requestedBy = who(req).id; save(); return po; });
+  app.get("/approvals/delegations", async (req: any) => { const { u, t } = ctx(req); return DLG.list(u, t); });
+  app.post("/approvals/delegations", async (req: any) => { const { u, t } = ctx(req); return DLG.create(u, t, b(req)); });
+  app.post("/approvals/delegations/:id/revoke", async (req: any) => { const { u, t } = ctx(req); return DLG.revoke(u, t, req.params.id); });
+  app.post("/approvals/:poId/resubmit", async (req: any) => { const { u, t } = ctx(req); const po = db.pos.find((p) => p.id === req.params.poId); if (!po || (po.tenantId ?? "tnt-acme") !== t) throw new S.HttpError(404, "po not found"); return S.resubmitPo(po.id, u.id, String(b(req).note ?? "")); });
   app.post("/approvals/:poId", async (req: any) => { const { u, t } = ctx(req); const po = db.pos.find((p) => p.id === req.params.poId); if (!po || (po.tenantId ?? "tnt-acme") !== t) throw new S.HttpError(404, "po not found"); if (b(req).approve) { I.requirePermission(u, "payments.approve", { amount: po.total, tenantId: t }); SU.requireFresh(u, req.sessionId ?? null, po.usdEquivalent ?? po.total); } return S.decideApproval(po.id, !!b(req).approve, u.id, String(b(req).comment ?? "")); });
   app.post("/goods-receipts", async (req) => { ownPo(who(req), b(req).poId); return S.receiveGoods(b(req).poId, Number(b(req).shortBy ?? 0)); });
   app.post("/invoices/render", async (req) => { ownPo(who(req), b(req).poId); return { text: S.invoiceText(b(req).poId, { priceBumpPct: Number(b(req).priceBumpPct ?? 0), poison: !!b(req).poison }) }; });

@@ -8,6 +8,10 @@ import { Badge, Button, Card, ErrorNote, Input, Mono, Muted, Textarea } from "./
 import { StatusDot } from "./kit";
 import { ConfidenceList } from "./ConfidenceBar";
 import type { Confidence } from "../lib/live";
+import { resubmitBlock } from "../lib/delegation";
+
+type Mark = { userId: string; name: string; comment?: string; onBehalfOfName?: string };
+const byText = (a: Mark) => `${a.name}${a.onBehalfOfName ? ` for ${a.onBehalfOfName}` : ""}`;
 
 export type ApprovalItem = {
   id: string; status: string; total: number; category: string; supplier: string; agent: string; justification: string; createdAt?: string;
@@ -15,8 +19,9 @@ export type ApprovalItem = {
   maker?: { kind: "agent" | "person"; name: string }; rail?: string | null;
   policy?: { outcome: "allow" | "needs_approval" | "deny"; checks: { rule: string; pass: boolean; detail: string }[] };
   riskFlags?: string[]; confidence?: Confidence[];
-  approval: null | { ruleName: string; current: number; levels: { role: string; count: number; approvals: { userId: string; name: string; comment?: string }[] }[]; rejectedBy?: { name: string; comment?: string } };
-  canAct: boolean; why?: string;
+  approval: null | { ruleName: string; current: number; levels: { role: string; count: number; approvals: Mark[] }[]; rejectedBy?: Mark; round?: number;
+    history?: { round: number; note: string; resubmittedByName: string; resubmittedAt: string; levels: { role: string; approvals: Mark[] }[]; rejectedBy?: Mark }[] };
+  canAct: boolean; why?: string; delegatedFrom?: { userId: string; name: string } | null; canResubmit?: boolean;
 };
 
 const OUTCOME: Record<string, { text: string; tone: "ok" | "warn" | "bad" }> = { allow: { text: "Policy allows", tone: "ok" }, needs_approval: { text: "Policy needs approval", tone: "warn" }, deny: { text: "Policy denies", tone: "bad" } };
@@ -92,8 +97,17 @@ export function ApprovalCard({ p, onDecided, selected, onSelect }: { p: Approval
     {p.approval && <div className="mt-3 rounded-lg bg-subtle p-3"><div className="text-xs font-medium">Rule: {p.approval.ruleName}</div>
       <ol className="mt-2 flex flex-col gap-1">{p.approval.levels.map((l, n) => { const done = l.approvals.length >= l.count; const cur = n === p.approval!.current && p.status === "pending_approval";
         return <li key={n} className="flex flex-wrap items-center gap-2 text-xs"><span className={cn("grid h-5 w-5 place-items-center rounded-full", done ? "bg-ok text-white" : cur ? "bg-primary text-primary-fg" : "bg-border")}>{done ? <Check size={11} aria-hidden /> : n + 1}</span>
-          <span className="font-medium">{l.count} {roleText(l.role)}{l.count > 1 ? "s" : ""}</span>{l.approvals.map((a) => <span key={a.userId} className="text-muted">{a.name}{a.comment ? `: "${a.comment}"` : ""}</span>)}</li>; })}</ol>
-      {p.approval.rejectedBy && <div className="mt-2 text-xs text-bad">Rejected by {p.approval.rejectedBy.name}{p.approval.rejectedBy.comment ? `: "${p.approval.rejectedBy.comment}"` : ""}</div>}</div>}
+          <span className="font-medium">{l.count} {roleText(l.role)}{l.count > 1 ? "s" : ""}</span>{l.approvals.map((a) => <span key={a.userId} className="text-muted">{byText(a)}{a.comment ? `: "${a.comment}"` : ""}</span>)}</li>; })}</ol>
+      {p.approval.rejectedBy && <div className="mt-2 text-xs text-bad">Rejected by {byText(p.approval.rejectedBy)}{p.approval.rejectedBy.comment ? `: "${p.approval.rejectedBy.comment}"` : ""}</div>}
+      {!!p.approval.history?.length && <details className="mt-2 text-xs"><summary className="cursor-pointer text-muted">Round {p.approval.round ?? p.approval.history.length + 1}. Earlier rounds ({p.approval.history.length})</summary>
+        <ol className="mt-1 flex flex-col gap-1">{p.approval.history.map((h) => <li key={h.round} className="rounded border border-border p-2">
+          <div className="font-medium">Round {h.round}</div>
+          {h.levels.flatMap((l) => l.approvals).map((a) => <div key={a.userId + a.name} className="text-muted">Approved by {byText(a)}{a.comment ? `: "${a.comment}"` : ""}</div>)}
+          {h.rejectedBy && <div className="text-bad">Rejected by {byText(h.rejectedBy)}{h.rejectedBy.comment ? `: "${h.rejectedBy.comment}"` : ""}</div>}
+          <div>Sent again by {h.resubmittedByName}: "{h.note}"</div></li>)}</ol></details>}</div>}
+
+    {p.delegatedFrom && p.status === "pending_approval" && <div className="mt-2"><Badge v={`Handed to you by ${p.delegatedFrom.name}`} tone="primary" /></div>}
+    {p.status === "rejected" && p.canResubmit && <Resubmit id={p.id} item={p} />}
 
     {p.status === "pending_approval" && (blocked ? <Muted className="mt-3 block">{blocked}</Muted> : <div className="mt-3 flex flex-col gap-2">
       {needStepUp && su && <StepUpPrompt s={su} threshold={su.thresholdUsd} />}
@@ -106,4 +120,16 @@ export function ApprovalCard({ p, onDecided, selected, onSelect }: { p: Approval
     </div>)}
     <ErrorNote msg={error} />
   </Card>;
+}
+
+/** The requester sends a rejected order back with a note on what changed. */
+function Resubmit({ id, item }: { id: string; item: Pick<ApprovalItem, "status" | "canResubmit"> }) {
+  const { run, busy, error } = useAct(); const [note, setNote] = useState("");
+  const block = resubmitBlock(item, note);
+  return <div className="mt-3 flex flex-col gap-2">
+    <label className="text-xs font-medium text-muted" htmlFor={`resubmit-${id}`}>What did you change?</label>
+    <Textarea id={`resubmit-${id}`} className="min-h-12 font-sans text-base sm:text-[13px]" placeholder="For example, fewer units or a new quote" value={note} onChange={(e) => setNote(e.target.value)} />
+    <div><Button variant="primary" className="h-11 sm:h-8" disabled={busy || !!block} title={block ?? undefined} onClick={async () => { const r = await run(() => api(`/approvals/${id}/resubmit`, { note: note.trim() })); if (r !== undefined) setNote(""); }}>Send for approval again</Button></div>
+    <ErrorNote msg={error} />
+  </div>;
 }

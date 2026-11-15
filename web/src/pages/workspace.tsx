@@ -1,3 +1,4 @@
+import { delegationBlock, DELEGATION_STATE, type DelegationList } from "../lib/delegation";
 import { ExportButton } from "../components/TableKit";
 import { useEffect, useState } from "react";
 import { applyTheme } from "../lib/theme";
@@ -146,12 +147,14 @@ export function ApprovalsInbox() {
   const [sel, setSel] = useState<Set<string>>(new Set());
   if (!data) return error ? <Loading error={error as Error} /> : <div className="grid gap-3 lg:grid-cols-2">{[0, 1].map((n) => <Card key={n}><Skeleton lines={5} /></Card>)}</div>;
   const pending = data.filter((p) => p.status === "pending_approval"); const mine = pending.filter((p) => p.canAct);
+  const delegated = mine.filter((p) => p.delegatedFrom).length;
   const list = tab === "mine" ? mine : tab === "all" ? pending : data.filter((p) => p.status !== "pending_approval");
   const chosen = data.filter((p) => sel.has(p.id) && p.status === "pending_approval");
   const toggle = (id: string, on: boolean) => setSel((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; });
   return <div className="flex flex-col gap-3">
-    <div className="flex flex-wrap items-center gap-1">{([["mine", `For you (${mine.length})`], ["all", `All waiting (${pending.length})`], ["done", "Decided"]] as const).map(([k, l]) => <Button key={k} size="sm" className="h-10 sm:h-7" variant={tab === k ? "primary" : "ghost"} onClick={() => setTab(k)}>{l}</Button>)}
+    <div className="flex flex-wrap items-center gap-1">{([["mine", `For you (${mine.length}${delegated ? `, ${delegated} handed to you` : ""})`], ["all", `All waiting (${pending.length})`], ["done", "Decided"]] as const).map(([k, l]) => <Button key={k} size="sm" className="h-10 sm:h-7" variant={tab === k ? "primary" : "ghost"} onClick={() => setTab(k)}>{l}</Button>)}
       <span className="ml-auto flex gap-1">{tab !== "done" && list.length > 0 && <Button size="sm" variant="ghost" className="h-10 sm:h-7" onClick={() => setSel(chosen.length === list.length ? new Set() : new Set(list.map((p) => p.id)))}>{chosen.length === list.length ? "Clear selection" : "Select all"}</Button>}<ExportButton kind="approvals" /></span></div>
+    <Delegations />
     {chosen.length > 0 && <BulkApprovals items={chosen} onDone={() => setSel(new Set())} />}
     {!list.length ? <Card><EmptyState icon={Inbox} title={tab === "mine" ? "Inbox zero" : "Nothing here"} body="Purchases that match a rule, or go above the mandate threshold, land here for the right people." /></Card> : <div className="grid gap-3 lg:grid-cols-2">{list.map((p) => <ApprovalCard key={p.id} p={p} selected={sel.has(p.id)} onSelect={(on) => toggle(p.id, on)} />)}</div>}
   </div>;
@@ -177,6 +180,31 @@ function BulkApprovals({ items, onDone }: { items: any[]; onDone: () => void }) 
       <ExportButton kind="approvals" ids={items.map((p) => p.id)} label="Export selected" />
     </div>
     {result && <p className="mt-2 text-xs" role="status">{result.ok} decided.{result.failed.length ? ` ${result.failed.length} not decided: ${result.failed.join(". ")}` : ""}</p>}
+  </Card>;
+}
+
+/** Hand approvals to another approver for a date range, and see what was handed to you. */
+function Delegations() {
+  const { data: me } = useMe(); const { data } = useGet<DelegationList>("/approvals/delegations", can(me, "payments.approve"));
+  const { run, busy, error } = useAct(); const today = new Date().toISOString().slice(0, 10);
+  const [f, setF] = useState({ toUserId: "", startsOn: today, endsOn: today, note: "" });
+  if (!me || !data) return null;
+  const block = delegationBlock(f, me.user.id);
+  const live = data.delegations.filter((d) => d.state === "active" || d.state === "upcoming");
+  return <Card title="Hand over approvals">
+    <p className="text-xs text-muted">When you are away, another approver can decide for you. Their own amount limit still applies, and they cannot approve an order they asked for.</p>
+    {live.length > 0 && <ul className="mt-2 flex flex-col gap-1 text-xs">{live.map((d) => <li key={d.id} className="flex flex-wrap items-center gap-2">
+      <Badge v={DELEGATION_STATE[d.state].text} tone={DELEGATION_STATE[d.state].tone} />
+      <span>{d.fromUser === me.user.id ? `You to ${d.toName}` : `${d.fromName} to ${d.toUser === me.user.id ? "you" : d.toName}`}, {d.startsOn} to {d.endsOn}{d.note ? `. ${d.note}` : ""}</span>
+      {d.fromUser === me.user.id && <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(() => api(`/approvals/delegations/${d.id}/revoke`, {}))}>Stop</Button>}</li>)}</ul>}
+    {data.candidates.length > 0 && <div className="mt-2 flex flex-wrap items-end gap-2 text-xs">
+      <label className="flex flex-col gap-1">Approver<Select aria-label="Approver" value={f.toUserId} onChange={(e) => setF({ ...f, toUserId: e.target.value })}><option value="">Pick a person</option>{data.candidates.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select></label>
+      <label className="flex flex-col gap-1">From<Input type="date" value={f.startsOn} onChange={(e) => setF({ ...f, startsOn: e.target.value })} /></label>
+      <label className="flex flex-col gap-1">To<Input type="date" value={f.endsOn} onChange={(e) => setF({ ...f, endsOn: e.target.value })} /></label>
+      <label className="flex flex-col gap-1">Note<Input value={f.note} placeholder="Optional" onChange={(e) => setF({ ...f, note: e.target.value })} /></label>
+      <Button variant="primary" disabled={busy || !!block} title={block ?? undefined} onClick={async () => { const r = await run(() => api("/approvals/delegations", f)); if (r !== undefined) setF({ ...f, toUserId: "", note: "" }); }}>Hand over</Button>
+    </div>}
+    <ErrorNote msg={error} />
   </Card>;
 }
 

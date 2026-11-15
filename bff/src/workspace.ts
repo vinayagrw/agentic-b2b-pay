@@ -140,11 +140,14 @@ export function riskFlags(p: { total: number; policy: { checks: { rule: string; 
 export function approvalsInbox(user: P.User, tenantId: string) {
   const users = P.listUsers();
   const name = (id: string) => users.find((u) => u.id === id)?.name ?? id;
+  const mark = <T extends { userId: string; onBehalfOf?: string }>(a: T) => ({ ...a, name: name(a.userId), ...(a.onBehalfOf ? { onBehalfOfName: name(a.onBehalfOf) } : {}) });
   return db.pos.filter((p) => tenantOf(p) === tenantId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((p) => {
     const sup = db.suppliers.find((s) => s.id === p.supplierId); const agent = db.agents.find((a) => a.id === p.agentId);
     const can = S.canApprove(p, user);
     return { id: p.id, status: p.status, total: p.total, category: p.category, createdAt: p.createdAt, justification: p.justification, supplier: sup?.name ?? p.supplierId, agent: agent?.name ?? p.agentId, lines: p.lines,
-      reasons: p.policy.reasons, approval: p.approval ? { ...p.approval, levels: p.approval.levels.map((l) => ({ ...l, approvals: l.approvals.map((a) => ({ ...a, name: name(a.userId) })) })), rejectedBy: p.approval.rejectedBy ? { ...p.approval.rejectedBy, name: name(p.approval.rejectedBy.userId) } : undefined } : null,
+      reasons: p.policy.reasons, approval: p.approval ? { ...p.approval, levels: p.approval.levels.map((l) => ({ ...l, approvals: l.approvals.map(mark) })), rejectedBy: p.approval.rejectedBy ? mark(p.approval.rejectedBy) : undefined,
+        round: p.approval.round ?? 1, history: (p.approval.history ?? []).map((h) => ({ ...h, resubmittedByName: name(h.resubmittedBy), levels: h.levels.map((l) => ({ ...l, approvals: l.approvals.map(mark) })), rejectedBy: h.rejectedBy ? mark(h.rejectedBy) : undefined })) } : null,
+      delegatedFrom: can.onBehalfOf ? { userId: can.onBehalfOf, name: name(can.onBehalfOf) } : null, canResubmit: p.status === "rejected" && p.policy.outcome !== "deny" && S.requesterOf(p) === user.id && (p.approval?.history?.length ?? 0) < 5,
       maker: { kind: "agent", name: agent?.name ?? p.agentId }, rail: sup?.preferredRail ?? null, policy: { outcome: p.policy.outcome, checks: p.policy.checks },
       riskFlags: riskFlags(p, sup), confidence: LV.confidenceForPo(p.id), canAct: can.ok, why: can.why };
   }).filter((p) => p.approval || p.status === "pending_approval");
