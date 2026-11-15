@@ -209,6 +209,14 @@ describe("ERP vendor master changes go through the bank-change check", () => {
     expect(northwind().bankDetailsRef).toBe(before);
     expect((await app.inject({ method: "POST", url: "/erp/vendor-master/changes", headers: { cookie: pat }, payload: { supplierId: "sup-northwind", ...rest } })).statusCode).toBe(403);
     expect((await app.inject({ method: "POST", url: `/erp/vendor-master/changes/${r.json().id}/approve`, headers: { cookie: jane }, payload: {} })).statusCode).toBe(404);
+    expect(r.json().requestedBy).toBe("usr-cfo-jane");
     expect((await app.inject({ method: "POST", url: "/workspace/suppliers/sup-northwind/payee-change", headers: { cookie: pat }, payload: {} })).statusCode).toBe(404);
+  });
+
+  it("does not let a clerk label a manual request as sent from the ERP", async () => {
+    const app = await buildApp(); const pat = await login(app, "usr-clerk-pat");
+    const r = await ask(app, pat, "sup-northwind", { ...bank(), channel: "erp" });
+    expect(r.statusCode).toBe(422);
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM bank_change_requests WHERE channel = 'erp'").get()).toEqual({ n: 0 });
   });
 });

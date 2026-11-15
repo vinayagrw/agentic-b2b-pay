@@ -46,7 +46,7 @@ const mask = (f: Full): Masked => f.kind === "wallet"
 
 const BankInput = z.object({ holderName: z.string().trim().min(2).max(80), bankName: z.string().trim().min(2).max(80), country: z.string().trim().length(2), iban: z.string().optional(), routingNumber: z.string().optional(), accountNumber: z.string().optional() });
 export const RequestInput = z.object({ kind: z.enum(["bank", "wallet"]).default("bank"), bank: BankInput.optional(), wallet: z.object({ address: z.string().trim().regex(/^0x[0-9a-fA-F]{40}$/, "Enter a 0x wallet address") }).optional(),
-  channel: z.enum(["email", "portal", "phone", "other", "erp"]), channelNote: z.string().trim().max(500).default("") });
+  channel: z.enum(["email", "portal", "phone", "other"]), channelNote: z.string().trim().max(500).default("") });
 function fullOf(x: z.infer<typeof RequestInput>): Full {
   if (x.kind === "wallet") { if (!x.wallet) throw new BankChangeError(422, "Enter the new wallet address"); return { kind: "wallet", address: x.wallet.address }; }
   const b = x.bank; if (!b) throw new BankChangeError(422, "Enter the new bank details");
@@ -165,16 +165,17 @@ export function setPhone(u: P.User, tenantId: string, supplierId: string, raw: u
 // Request, call-back and decision
 
 /** A change pushed from the ERP vendor master. It becomes a normal pending request with the ERP channel. */
+// The ERP path needs only erp.vendor_master. The channel is set here and never comes from the body.
 export function requestFromErp(u: P.User, tenantId: string, raw: any) {
   I.requirePermission(u, "erp.vendor_master", { tenantId });
-  return request(u, tenantId, String(raw?.supplierId ?? ""), { ...raw, channel: "erp" });
+  return request(u, tenantId, String(raw?.supplierId ?? ""), { ...raw, channel: "email" }, { erp: true });
 }
 
 /** The maker asks for a change. Nothing is applied here. */
-export function request(u: P.User, tenantId: string, supplierId: string, raw: unknown) {
-  I.requirePermission(u, "suppliers.payee_change", { tenantId });
+export function request(u: P.User, tenantId: string, supplierId: string, raw: unknown, opts: { erp?: boolean } = {}) {
+  if (!opts.erp) I.requirePermission(u, "suppliers.payee_change", { tenantId });
   if (!isPerson(u)) throw new BankChangeError(403, "Only a signed-in person can ask for a bank detail change. Agent keys and API keys cannot.");
-  const sup = supplierIn(tenantId, supplierId); const x = RequestInput.parse(raw); const f = fullOf(x);
+  const sup = supplierIn(tenantId, supplierId); const parsed = RequestInput.parse(raw); const x = { ...parsed, channel: opts.erp ? "erp" : parsed.channel }; const f = fullOf(parsed);
   // Without a phone on file the call-back can never happen, so the request would hold payments with no way to approve it.
   if (!sup.contactPhone) throw new BankChangeError(409, "There is no call-back phone on the supplier record. An admin must add one on the supplier page before a change can be asked for.");
   if (sql.prepare("SELECT 1 FROM bank_change_requests WHERE supplier_id = ? AND kind = ? AND status = 'pending'").get(sup.id, f.kind)) throw new BankChangeError(409, "A change for this supplier is already waiting for a check");
