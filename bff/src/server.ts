@@ -47,12 +47,25 @@ import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 
 /** MCP style tool registry. Same names as REST operations. */
+/** 404 unless the caller can see the PO's tenant. Same rule as /invoices/:id/pay. */
+export function ownPo(u: any, poId: unknown) {
+  const po = db.pos.find((p) => p.id === poId);
+  if (!po || !P.canAccessTenant(u, po.tenantId ?? "tnt-acme") || !I.inEntityScope(u, po.tenantId ?? "tnt-acme")) throw new S.HttpError(404, "po not found");
+  return po;
+}
+export function ownInvoice(u: any, invId: unknown) {
+  const inv = db.invoices.find((i) => i.id === invId);
+  if (!inv) throw new S.HttpError(404, "invoice not found");
+  try { ownPo(u, inv.poId); } catch { throw new S.HttpError(404, "invoice not found"); }
+  return inv;
+}
+
 export const TOOLS = [
   { name: "draft_purchase_order", description: "Turn a natural language need into a PO draft", input: { need: "string" }, run: (a: any) => S.draftPo(String(a.need)) },
   { name: "create_purchase_order", description: "Submit PO draft, runs policy engine", input: { draft: "PoDraft" }, run: (a: any) => S.createPo(PoDraft.parse(a.draft)) },
   { name: "evaluate_policy", description: "Dry run policy for supplier, category and amount", input: { supplierId: "string", category: "string", amount: "number" }, run: (a: any) => S.policyFor("agt-buyer-1", a.supplierId, a.category, Number(a.amount)).decision },
-  { name: "submit_invoice", description: "Supplier agent submits invoice text for a PO", input: { poId: "string", text: "string" }, run: (a: any) => S.submitInvoice(a.poId, a.text) },
-  { name: "match_invoice", description: "Run 3-way match", input: { invoiceId: "string" }, run: (a: any) => S.matchInvoice(a.invoiceId) },
+  { name: "submit_invoice", description: "Supplier agent submits invoice text for a PO", input: { poId: "string", text: "string" }, run: (a: any, u?: any) => { if (u) ownPo(u, a.poId); return S.submitInvoice(a.poId, a.text); } },
+  { name: "match_invoice", description: "Run 3-way match", input: { invoiceId: "string" }, run: (a: any, u?: any) => { if (u) ownInvoice(u, a.invoiceId); return S.matchInvoice(a.invoiceId); } },
   { name: "execute_payment", description: "Route, screen, sign and settle a matched invoice", input: { invoiceId: "string", idempotencyKey: "string" }, run: (a: any) => S.payInvoice(a.invoiceId, a.idempotencyKey) },
   { name: "get_evidence", description: "Evidence chain for a subject", input: { subjectId: "string" }, run: (a: any) => S.evidenceView(a.subjectId) },
 ];
@@ -293,7 +306,7 @@ export async function buildApp() {
 
   // Agent gateway: MCP style
   app.get("/mcp/tools", async () => ({ tools: TOOLS.map(({ run, ...t }) => t) }));
-  app.post("/mcp/call", async (req) => { const { name, arguments: args } = b(req); const t = TOOLS.find((x) => x.name === name); if (!t) throw new S.HttpError(404, `unknown tool ${name}`); return { content: await t.run(args ?? {}) }; });
+  app.post("/mcp/call", async (req) => { const { name, arguments: args } = b(req); const t = TOOLS.find((x) => x.name === name); if (!t) throw new S.HttpError(404, `unknown tool ${name}`); return { content: await (t.run as any)(args ?? {}, who(req)) }; });
   // A2A style agent card
   app.get("/.well-known/agent.json", async () => ({ name: "B2B pay gateway", protocols: ["mcp", "a2a"], skills: TOOLS.map((t) => t.name), url: "http://localhost:8790" }));
 
@@ -309,8 +322,8 @@ export async function buildApp() {
   app.post("/approvals/:poId", async (req: any) => { const { u, t } = ctx(req); const po = db.pos.find((p) => p.id === req.params.poId); if (!po || (po.tenantId ?? "tnt-acme") !== t) throw new S.HttpError(404, "po not found"); if (b(req).approve) { I.requirePermission(u, "payments.approve", { amount: po.total, tenantId: t }); SU.requireFresh(u, req.sessionId ?? null, po.usdEquivalent ?? po.total); } return S.decideApproval(po.id, !!b(req).approve, u.id, String(b(req).comment ?? "")); });
   app.post("/goods-receipts", async (req) => S.receiveGoods(b(req).poId, Number(b(req).shortBy ?? 0)));
   app.post("/invoices/render", async (req) => ({ text: S.invoiceText(b(req).poId, { priceBumpPct: Number(b(req).priceBumpPct ?? 0), poison: !!b(req).poison }) }));
-  app.post("/invoices", async (req) => S.submitInvoice(b(req).poId, String(b(req).text), { invoiceDate: b(req).invoiceDate ? String(b(req).invoiceDate) : undefined }));
-  app.post("/invoices/:id/match", async (req: any) => { const inv = db.invoices.find((i) => i.id === req.params.id); if (inv) await S.ensureRates({ currency: inv.currency, entityId: S.invoiceEntity(inv).id, tenantId: inv.tenantId ?? "tnt-acme", invoiceDate: inv.invoiceDate }); return S.matchInvoice(req.params.id); });
+  app.post("/invoices", async (req) => { ownPo(who(req), b(req).poId); return S.submitInvoice(b(req).poId, String(b(req).text), { invoiceDate: b(req).invoiceDate ? String(b(req).invoiceDate) : undefined }); });
+  app.post("/invoices/:id/match", async (req: any) => { const inv = ownInvoice(who(req), req.params.id); if (inv) await S.ensureRates({ currency: inv.currency, entityId: S.invoiceEntity(inv).id, tenantId: inv.tenantId ?? "tnt-acme", invoiceDate: inv.invoiceDate }); return S.matchInvoice(req.params.id); });
   app.post("/invoices/:id/pay", async (req: any) => {
     const key = req.headers["idempotency-key"]; if (!key) throw new S.HttpError(400, "Idempotency-Key header required");
     const u = who(req); const inv = db.invoices.find((i) => i.id === req.params.id); const po = inv && db.pos.find((p) => p.id === inv.poId);
