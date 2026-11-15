@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { CreditCard, Plus } from "lucide-react";
 import { api, useAct, useGet, useMe } from "../lib/api";
 import { can, type StepUpStatus } from "../lib/perm";
-import { actionsFor, masked, money, STATUS_TEXT, statusTone, TYPES, usedPct, type CardAuth, type CardView } from "../lib/cards";
+import { actionsFor, masked, money, STATUS_TEXT, statusTone, mandateLine, TYPES, usedPct, type CardAuth, type CardOrder, type CardView } from "../lib/cards";
 import { Badge, Button, Card, EmptyState, ErrorNote, Input, Label, Mono, Muted, PageHeader, Select, Table } from "../components/ui";
 import { Section } from "../components/Shell";
 import { SkeletonTable } from "../components/kit";
@@ -77,7 +77,7 @@ export function CardsPage() {
 
 function Simulator({ c }: { c: CardView }) {
   const { run, busy, error } = useAct();
-  const [f, setF] = useState({ merchant: c.allowedMerchants[0] ?? "", mcc: c.allowedMccs[0] ?? "", amount: "25" });
+  const [f, setF] = useState({ merchant: c.allowedMerchants[0] ?? "", mcc: c.allowedMccs[0] ?? "", amount: c.cartAmount != null ? String(c.cartAmount) : "25" });
   const [res, setRes] = useState<{ decision: { approved: boolean; reason: string }; note: string | null } | null>(null);
   const go = async () => { const r = await run(() => api<any>(`/cards/${c.id}/simulate`, { merchant: f.merchant, mcc: f.mcc, amount: Number(f.amount) })); if (r) setRes(r); };
   return <Card title="Try a charge">
@@ -106,21 +106,39 @@ function Controls({ c, threshold }: { c: CardView; threshold: number }) {
       {a.decide && can(me, "payments.approve") && <><Button variant="primary" disabled={busy} onClick={() => act("decide", { approve: true })}>Approve card</Button><Button disabled={busy} onClick={() => act("decide", { approve: false })}>Reject</Button></>}
       {c.last4 && <Button disabled={busy} onClick={async () => { const r = await act("reveal"); if (r) setShown(r as any); }}>Reveal</Button>}
     </div>
-    {a.limit && <div className="mt-3 flex items-end gap-2"><div className="flex flex-col gap-1"><Label>New limit ({c.currency})</Label><Input className="w-36" inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value)} /></div><Button disabled={busy || !(Number(limit) > 0)} onClick={() => act("limit", { limit: Number(limit) })}>Change limit</Button></div>}
+    {a.limit && c.type !== "mandate" && <div className="mt-3 flex items-end gap-2"><div className="flex flex-col gap-1"><Label>New limit ({c.currency})</Label><Input className="w-36" inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value)} /></div><Button disabled={busy || !(Number(limit) > 0)} onClick={() => act("limit", { limit: Number(limit) })}>Change limit</Button></div>}
     {shown && <div className="mt-3 rounded-md border border-border bg-subtle p-3 text-[13px]"><Mono>{shown.number}</Mono> <Mono>CVC {shown.cvc}</Mono> <Mono>Exp {shown.expiry}</Mono><div className="mt-1 text-xs text-muted">{shown.note}</div></div>}
     <ErrorNote msg={error} /><StepUpIfNeeded error={error} threshold={threshold} />
   </Card>;
 }
 
+function OrderCard({ o, used }: { o: CardOrder; used: boolean }) {
+  const m = o.mandate;
+  return <Card title="Linked order and mandate" action={<Badge v={m.ok ? "Mandate valid" : "Mandate problem"} tone={m.ok ? "ok" : "bad"} />}>
+    <p className="mb-3 text-[13px]" data-testid="mandate-line">{mandateLine(o, used)}</p>
+    <dl className="grid grid-cols-2 gap-2 text-[13px] sm:grid-cols-4">
+      <div><dt className="text-xs text-muted">Order</dt><dd><Link className="text-primary hover:underline" to="/app/purchase-orders"><Mono>{o.poId}</Mono></Link></dd></div>
+      <div><dt className="text-xs text-muted">Order status</dt><dd>{o.status.replace("_", " ")}</dd></div>
+      <div><dt className="text-xs text-muted">Supplier</dt><dd>{o.supplier}</dd></div>
+      <div><dt className="text-xs text-muted">Exact amount</dt><dd className="tabular-nums">{money(o.cartAmount, o.currency)}</dd></div>
+      <div><dt className="text-xs text-muted">Intent mandate</dt><dd><Mono>{m.intentId ?? "Missing"}</Mono></dd></div>
+      <div><dt className="text-xs text-muted">Cart mandate</dt><dd><Mono>{m.cartId ?? "Missing"}</Mono></dd></div>
+      <div className="col-span-2"><dt className="text-xs text-muted">Cart binding hash on this card</dt><dd className="break-all"><Mono>{m.bindingHash ?? "None"}</Mono></dd></div>
+    </dl>
+    {!!m.checks.length && <ul className="mt-3 space-y-1 text-[13px]">{m.checks.map((c) => <li key={c.rule} className="flex items-center justify-between gap-2"><span><Badge v={c.pass ? "pass" : "fail"} tone={c.pass ? "ok" : "bad"} /> {c.rule}</span><span className="text-xs text-muted">{c.detail}</span></li>)}</ul>}
+    <p className="mt-3 text-xs text-muted">A charge is approved only when the supplier matches, the amount equals the cart amount, both signed mandates still verify and the card has not been used.</p>
+  </Card>;
+}
+
 export function CardDetailPage() {
   const { id = "" } = useParams();
-  const { data, isLoading, error } = useGet<{ card: CardView; authorizations: CardAuth[] }>(`/cards/${id}`);
+  const { data, isLoading, error } = useGet<{ card: CardView; authorizations: CardAuth[]; order: CardOrder | null }>(`/cards/${id}`);
   const { data: list } = useGet<ListResp>("/cards");
   if (isLoading) return <Section><Card pad={false}><SkeletonTable rows={4} cols={4} /></Card></Section>;
   if (!data) return <Section><ErrorNote msg={(error as any)?.message ?? "Card not found"} /></Section>;
   const c = data.card; const threshold = list?.stepUpThresholdUsd ?? 10000;
   return <Section>
-    <PageHeader title={c.label} sub={`${c.typeText} card for ${c.owner}. ${c.issuerLabel}.`} actions={<Link to="/app/cards" className="text-[13px] text-primary hover:underline">All cards</Link>} />
+    <PageHeader title={c.label} sub={`${c.type === "mandate" ? "Mandate-bound virtual card" : `${c.typeText} card`} for ${c.owner}. ${c.issuerLabel}.`} actions={<Link to="/app/cards" className="text-[13px] text-primary hover:underline">All cards</Link>} />
     <div className="grid gap-4 lg:grid-cols-3">
       <Card className="lg:col-span-2" title="Card">
         <div className="flex flex-wrap items-center gap-3"><Mono className="text-base">{masked(c.last4)}</Mono><Muted>Exp {c.expiry}</Muted><Badge v={STATUS_TEXT[c.status] ?? c.status} tone={statusTone(c.status)} /></div>
@@ -135,6 +153,7 @@ export function CardDetailPage() {
       </Card>
       <Controls c={c} threshold={threshold} />
     </div>
+    {data.order && <OrderCard o={data.order} used={c.status === "closed"} />}
     {c.status !== "pending_approval" && c.status !== "rejected" && <Simulator key={c.id} c={c} />}
     <Card title="Authorization history" pad={false}>{!data.authorizations.length ? <div className="p-4"><Muted>No charges yet.</Muted></div> :
       <Table head={["When", "Merchant", "Amount", "Result", "Reason", "Source"]}>{data.authorizations.map((a) => <tr key={a.id} className="border-t border-border text-[13px]">

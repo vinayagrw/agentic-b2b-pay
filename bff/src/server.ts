@@ -500,6 +500,7 @@ export async function buildApp() {
   // Virtual cards. Test mode only. No route returns a full card number or CVC.
   app.get("/cards", async (req) => { const { t } = ctx(req); return { cards: CARDS.listCards(t), issuer: await CARDS.issuerInfo(), stepUpThresholdUsd: SU.thresholdUsd() }; });
   app.post("/cards", async (req: any) => { const { u, t } = ctx(req); return CARDS.issueCard(u, t, req.sessionId ?? null, b(req)); });
+  app.post("/orders/:poId/card", async (req: any) => { const { u, t } = ctx(req); return CARDS.issueForOrder(u, t, req.sessionId ?? null, req.params.poId); });
   app.get("/cards/:id", async (req: any) => { const { t } = ctx(req); return CARDS.cardDetail(t, req.params.id); });
   app.post("/cards/:id/decide", async (req: any) => { const { u, t } = ctx(req); return CARDS.decideIssue(u, t, req.sessionId ?? null, req.params.id, !!b(req).approve); });
   app.post("/cards/:id/limit", async (req: any) => { const { u, t } = ctx(req); return CARDS.changeLimit(u, t, req.sessionId ?? null, req.params.id, Number(b(req).limit)); });

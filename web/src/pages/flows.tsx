@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { can } from "../lib/perm";
+import { canIssueForOrder } from "../lib/cards";
 import { Ban, Play, ShieldAlert, Sparkles } from "lucide-react";
 import { api, useAppState, useGet, useMe, useAct } from "../lib/api";
 import { usd } from "../lib/utils";
@@ -75,12 +78,14 @@ export function BuyerDraft({ onPo }: { onPo?: (id: string) => void }) {
 }
 
 export function PoTable({ st }: { st: any }) {
-  const { run, busy, error } = useAct();
+  const { run, busy, error } = useAct(); const nav = useNavigate(); const { data: me } = useMe();
+  const issueCard = async (poId: string) => { const r = await run(() => api<{ card: { id: string } }>(`/orders/${poId}/card`, {})); if (r?.card) nav(`/app/cards/${r.card.id}`); };
   return <Card title="Purchase orders" pad={false}>
     <ErrorNote msg={error} />
     {st.pos.length ? <Table head={["PO", "Supplier", "Category", "Total", "Policy", "Status", ""]}>{[...st.pos].reverse().map((p: any) => <tr key={p.id}>
       <td><Mono>{p.id}</Mono></td><td>{p.supplierId}</td><td>{p.category}</td><td className="tabular-nums">{usd(p.total)}</td><td><Badge v={p.policy.outcome} /></td><td><Badge v={p.status} /></td>
-      <td className="text-right">{p.status === "approved" && <Button size="sm" disabled={busy} onClick={() => run(() => api("/goods-receipts", { poId: p.id }))}>Post goods receipt</Button>}</td></tr>)}</Table>
+      <td className="text-right"><div className="flex flex-wrap justify-end gap-2">{canIssueForOrder(p.status) && can(me, "flow.operate") && <Button size="sm" disabled={busy} title="A mandate-bound virtual card that works once, for the exact order amount" onClick={() => issueCard(p.id)}>Issue card for this order</Button>}
+        {p.status === "approved" && <Button size="sm" disabled={busy} onClick={() => run(() => api("/goods-receipts", { poId: p.id }))}>Post goods receipt</Button>}</div></td></tr>)}</Table>
       : <EmptyState title="No purchase orders" body="The buyer agent drafts POs from a plain language need." />}
   </Card>;
 }

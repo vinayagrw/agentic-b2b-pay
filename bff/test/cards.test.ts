@@ -9,6 +9,8 @@ import * as FV from "../src/flowview.js";
 import * as O from "../src/ops.js";
 import { buildApp } from "../src/server.js";
 import { stepUp } from "./helpers/security.js";
+import * as AP2 from "../src/modules/ap2.js";
+import { sql } from "../src/db.js";
 
 beforeEach(() => { useDb(":memory:"); reload(); reset(); P.seedPlatform(); S.bootstrap(); C.setIssuer(null); });
 const pat = () => P.getUser("usr-clerk-pat")!;
@@ -114,5 +116,72 @@ describe("virtual cards", () => {
     const t = CP.runTool({ user: P.getUser("usr-cfo-jane")!, scope: "tnt-acme", prefix: "/app" }, "cardSpend");
     expect(t.rows).toHaveLength(1); expect((t.rows[0] as any).spent).toBe(80);
     expect(CP.mockPlan("how much have we spent on cards").map((p) => p.name)).toContain("cardSpend");
+  });
+});
+
+describe("mandate-bound virtual card", () => {
+  /** An approved order with signed AP2 mandates, small enough to skip maker-checker. */
+  const order = async () => { const po = S.createPo((await S.draftPo("Need 50 sealed 6204 bearings")).value); S.autoApprove(po); return db.pos.find((p) => p.id === po.id)!; };
+  const bound = async () => { const po = await order(); const sup = db.suppliers.find((s) => s.id === po.supplierId)!; const r = await C.issueForOrder(pat(), "tnt-acme", null, po.id); return { po, sup, card: r.card }; };
+
+  it("stores the cart binding hash and exact amount, and approves one exact charge", async () => {
+    const { po, sup, card } = await bound(); const cart = AP2.currentPair(po.id).cart!;
+    expect(card.status).toBe("active"); expect(card.typeText).toBe("Mandate-bound"); expect(card.issuerLabel).toBe("Simulated issuer");
+    expect(card.bindingHash).toBe(AP2.cartBindingHash(cart.body)); expect(card.cartAmount).toBe(cart.body.amount); expect(card.limit).toBe(cart.body.amount); expect(card.cartMandateId).toBe(cart.id);
+    const d = C.cardDetail("tnt-acme", card.id); expect(d.order?.poId).toBe(po.id); expect(d.order?.mandate.ok).toBe(true);
+    const ok = auth(card.id, sup.name, card.cartAmount!, { supplierId: sup.id }); expect(ok.decision.approved).toBe(true); expect(ok.card.status).toBe("closed");
+    const again = auth(card.id, sup.name, card.cartAmount!); expect(again.decision.code).toBe("already_used"); expect(again.decision.reason).toMatch(/already used/);
+    expect(db.evidence.some((e) => e.subjectId === card.id && e.event === "card.bound_to_order")).toBe(true);
+    await expect(C.issueForOrder(pat(), "tnt-acme", null, po.id)).rejects.toThrow(/already has/);
+  });
+
+  it("declines a wrong amount, above or below the cart", async () => {
+    const { sup, card } = await bound();
+    for (const a of [card.cartAmount! - 1, card.cartAmount! + 0.01, 1]) { const r = auth(card.id, sup.name, a); expect(r.decision.approved).toBe(false); expect(["wrong_amount", "over_limit"]).toContain(r.decision.code); }
+    const low = auth(card.id, sup.name, card.cartAmount! - 1); expect(low.decision.code).toBe("wrong_amount"); expect(low.decision.reason).toMatch(/equal the order amount/);
+    expect(auth(card.id, sup.name, card.cartAmount! + 5).decision.code).toBe("wrong_amount");
+    expect(C.cardDetail("tnt-acme", card.id).card.status).toBe("active");
+  });
+
+  it("declines a different supplier", async () => {
+    const { sup, card } = await bound(); const other = db.suppliers.find((s) => s.id !== sup.id)!;
+    expect(auth(card.id, other.name, card.cartAmount!).decision.code).toBe("wrong_merchant");
+    expect(auth(card.id, sup.name, card.cartAmount!, { supplierId: other.id }).decision.code).toBe("wrong_merchant");
+  });
+
+  it("declines when the mandate is missing", async () => {
+    const { po, sup, card } = await bound();
+    sql.prepare("DELETE FROM purchase_mandates WHERE po_id = ?").run(po.id);
+    const r = auth(card.id, sup.name, card.cartAmount!); expect(r.decision.code).toBe("mandate_invalid"); expect(r.decision.reason).toMatch(/missing/);
+    expect(C.cardDetail("tnt-acme", card.id).order?.mandate.ok).toBe(false);
+  });
+
+  it("declines when the cart was signed again with other content", async () => {
+    const { po, sup, card } = await bound(); const { intent, cart } = AP2.currentPair(po.id);
+    const amount = cart!.body.amount - 5; const lines = [{ sku: "BRG-6204", qty: 1, unitPrice: amount }];
+    AP2.signCart({ poId: po.id, tenantId: "tnt-acme", agentId: po.agentId, intentHash: intent!.hash, supplierId: sup.id, currency: cart!.body.currency, amount, lines, railHint: null });
+    expect(auth(card.id, sup.name, card.cartAmount!).decision.code).toBe("mandate_invalid");
+    const r = auth(card.id, sup.name, amount); expect(r.decision.code).toBe("mandate_invalid"); expect(r.decision.reason).toMatch(/changed/);
+  });
+
+  it("declines when the stored cart was tampered with or the intent expired", async () => {
+    const { po, sup, card } = await bound(); const cart = AP2.currentPair(po.id).cart!;
+    expect(auth(card.id, sup.name, card.cartAmount!, {}, new Date(AP2.currentPair(po.id).intent!.body.expiresAt).getTime() + 1000).decision.approved).toBe(false);
+    sql.prepare("UPDATE purchase_mandates SET signature = ? WHERE id = ?").run(Buffer.from("x".repeat(64)).toString("base64"), cart.id);
+    const r = auth(card.id, sup.name, card.cartAmount!); expect(r.decision.code).toBe("mandate_invalid"); expect(r.decision.reason).toMatch(/no longer verify/);
+  });
+
+  it("only issues from an approved order with mandates, and the limit cannot change", async () => {
+    const po = await order(); const app = await buildApp();
+    const r0 = await app.inject({ method: "POST", url: "/auth/login", payload: { userId: "usr-clerk-pat" } }); const cookie = `sid=${r0.cookies.find((x: any) => x.name === "sid")!.value}`;
+    expect((await app.inject({ method: "POST", url: "/orders/po-nope/card", headers: { cookie } })).statusCode).toBe(404);
+    po.status = "pending_approval"; expect((await app.inject({ method: "POST", url: `/orders/${po.id}/card`, headers: { cookie } })).statusCode).toBe(409);
+    po.status = "approved";
+    const made = await app.inject({ method: "POST", url: `/orders/${po.id}/card`, headers: { cookie } }); expect(made.statusCode).toBe(200);
+    const id = made.json().card.id; expect(made.body).not.toMatch(/\b\d{13,19}\b/);
+    const lim = await app.inject({ method: "POST", url: `/cards/${id}/limit`, headers: { cookie }, payload: { limit: 5 } }); expect(lim.statusCode).toBe(422);
+    const view = (await app.inject({ url: `/cards/${id}`, headers: { cookie } })).json(); expect(view.order.mandate.ok).toBe(true); expect(view.order.poId).toBe(po.id);
+    const po2 = await order(); sql.prepare("DELETE FROM purchase_mandates WHERE po_id = ?").run(po2.id);
+    const none = await app.inject({ method: "POST", url: `/orders/${po2.id}/card`, headers: { cookie } }); expect(none.statusCode).toBe(409); expect(none.json().error).toMatch(/no signed mandates/);
   });
 });
