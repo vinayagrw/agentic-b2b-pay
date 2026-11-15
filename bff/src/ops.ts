@@ -79,7 +79,7 @@ export function runRecon(tenantId: string, at = new Date()) {
   const found: Exc[] = [];
   const add = (x: Omit<Exc, "tenantId" | "status" | "detectedAt">) => found.push({ ...x, tenantId, status: "open", detectedAt: now() });
   const intents = db.intents.filter((i) => tenantOf(i) === tenantId && i.kind !== "refund");
-  for (const st of db.settlements.filter((s) => intents.some((i) => i.id === s.paymentIntentId))) {
+  for (const st of db.settlements.filter((s) => s.status !== "returned" && intents.some((i) => i.id === s.paymentIntentId))) {
     const pi = intents.find((i) => i.id === st.paymentIntentId)!;
     const j = db.journals.find((x) => x.ref === pi.id && x.memo.startsWith("Payment"));
     const amt = apDebit(j);

@@ -588,8 +588,11 @@ export function paymentAttempts(intentId: string) {
  * can be retried once, the invoice paid check stops a double payment, and attempts are capped. */
 export async function retryPayment(intentId: string, mode: "same" | "reroute", idempotencyKey: string) {
   const key = sql.prepare("SELECT intent_id FROM idempotency_keys WHERE key = ?").get(idempotencyKey) as { intent_id: string } | undefined;
-  const prior = key && db.intents.find((p) => p.id === key.intent_id);
-  if (prior) return { intent: prior, replay: true };
+  if (key) {
+    const prior = db.intents.find((p) => p.id === key.intent_id);
+    if (prior && prior.retryOf === intentId) return { intent: prior, replay: true };
+    throw new HttpError(409, "This Idempotency-Key was already used for another request");
+  }
   const pi = must(db.intents.find((i) => i.id === intentId), "payment intent");
   if (pi.kind === "refund") throw new HttpError(409, "A refund cannot be retried");
   if (pi.status !== "failed") throw new HttpError(409, `Only a failed payment can be retried. This one is ${pi.status}.`);
@@ -604,7 +607,11 @@ export async function retryPayment(intentId: string, mode: "same" | "reroute", i
     rails = allAdapters().map((a) => a.id as Rail).filter((r) => !tried.has(r));
     if (!rails.length) throw new HttpError(409, "No other rail left to try");
   }
-  const r = await payInvoice(pi.invoiceId, idempotencyKey, { rails, retryOf: pi.id, attempt: chain.length + 1 });
+  // Claim the retry before any await so a second concurrent retry is refused.
+  pi.retriedBy = `pending:${idempotencyKey}`;
+  let r: Awaited<ReturnType<typeof payInvoice>>;
+  try { r = await payInvoice(pi.invoiceId, idempotencyKey, { rails, retryOf: pi.id, attempt: chain.length + 1 }); }
+  catch (e) { if (pi.retriedBy === `pending:${idempotencyKey}`) pi.retriedBy = undefined; throw e; }
   pi.retriedBy = r.intent.id;
   ev("payment", pi.id, "payment.retried", { mode, newIntentId: r.intent.id, rail: r.intent.rail ?? null, attempt: chain.length + 1 });
   save(); return r;
@@ -621,6 +628,9 @@ export function achReturn(intentId: string, code: string, by: string) {
   if (pi.status === "returned") throw new HttpError(409, `Payment was already returned with ${pi.achReturn?.code}`);
   if (pi.status !== "settled") throw new HttpError(409, "Only a settled payment can be returned");
   if ((pi.env ?? "sandbox") !== "sandbox") throw new HttpError(409, "ACH returns are simulated in sandbox only");
+  const refunded = db.refunds.filter((r) => r.originalIntentId === pi.id && r.status !== "failed" && r.status !== "rejected");
+  if (refunded.length || db.intents.some((i) => i.kind === "refund" && i.linkedIntentId === pi.id && i.status !== "failed"))
+    throw new HttpError(409, "This payment has a refund. A return cannot be simulated on it.");
   const inv = must(db.invoices.find((i) => i.id === pi.invoiceId), "invoice");
   const po = db.pos.find((p) => p.id === inv.poId);
   const journalIds: string[] = [];
@@ -630,9 +640,12 @@ export function achReturn(intentId: string, code: string, by: string) {
     db.journals.push(rj); journalIds.push(rj.id);
   }
   inv.paid = false; if (po && po.status === "paid") po.status = "invoiced";
+  const st = db.settlements.find((x) => x.id === pi.settlementId);
+  // The settlement no longer counts in totals or recon. The bank fee is reversed with it and kept on record.
+  if (st) { st.status = "returned"; st.returnedAt = now(); st.returnCode = code; st.bankFeeReversedUsd = st.bankFeeUsd ?? 0; }
   pi.achReturn = { code, reason, at: now(), by, journalIds };
   mark(pi, "returned", "platform", `ACH return ${code}: ${reason}`); pi.blockedReason = `ACH return ${code}: ${reason}`;
-  ev("payment", pi.id, "payment.ach_returned", { code, reason, journalIds, invoice: inv.id });
+  ev("payment", pi.id, "payment.ach_returned", { code, reason, journalIds, invoice: inv.id, settlementId: st?.id ?? null, bankFeeReversedUsd: st?.bankFeeReversedUsd ?? 0 });
   publish(tenantOf(pi), "payment.returned", { id: pi.id, amount: pi.amount, code, reason });
   save(); return pi;
 }
@@ -794,7 +807,7 @@ export async function refund(intentId: string, amount: number, reason: string) {
 }
 
 export function ledgerView() {
-  const settlements = db.settlements.map((s) => ({ id: s.id, paymentIntentId: s.paymentIntentId, amount: (() => { const i = db.intents.find((x) => x.id === s.paymentIntentId)!; return i.fx?.realised?.apFunctional ?? i.amount; })() }));
+  const settlements = db.settlements.filter((s) => s.status !== "returned").map((s) => ({ id: s.id, paymentIntentId: s.paymentIntentId, amount: (() => { const i = db.intents.find((x) => x.id === s.paymentIntentId)!; return i.fx?.realised?.apFunctional ?? i.amount; })() }));
   return { journals: db.journals, trialBalance: trialBalance(db.journals), reconciliation: reconcile(settlements, db.journals) };
 }
 /** Ids of every row a client tenant owns, so evidence never crosses tenants. */

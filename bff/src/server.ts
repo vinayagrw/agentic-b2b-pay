@@ -399,6 +399,8 @@ export async function buildApp() {
   });
   app.post("/payments/:id/ach-return", async (req: any) => {
     const u = who(req); const i = scoped(scopeOf(req)).intents.find((x) => x.id === req.params.id); if (!i) throw new S.HttpError(404, "payment not found");
+    // Same weight as a payment: own invoice, payments.pay and maker-checker on top of payments.refund.
+    payGuard(u, i.invoiceId);
     const r = S.achReturn(i.id, String(b(req).code ?? "R01"), u.id); P.audit(u.id, "payment", i.id, "payment.ach_return_simulated", { code: r.achReturn!.code }); return r;
   });
   app.post("/payments/poll", async () => ({ checked: await S.pollSettlements() }));

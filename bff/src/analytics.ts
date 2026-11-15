@@ -9,6 +9,7 @@ export function revenue() {
   const tenants = P.listTenants();
   const rows = new Map<string, { tenantId: string; tenant: string; bank: string; rail: string; month: string; count: number; volume: number; railFees: number; bankFees: number; net: number; refunds: number }>();
   for (const st of db.settlements) {
+    if (st.status === "returned") continue;
     const pi = db.intents.find((i) => i.id === st.paymentIntentId); if (!pi || pi.kind === "refund") continue;
     const t = tenants.find((x) => x.id === tenantOf(pi)); const bank = tenants.find((x) => x.id === t?.parentId);
     const month = st.confirmedAt.slice(0, 7); const k = `${tenantOf(pi)}|${st.rail}|${month}`;

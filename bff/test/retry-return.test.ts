@@ -55,10 +55,36 @@ describe("simulated ACH return", () => {
     expect(() => S.achReturn(pi.id, "R01", "usr-x")).toThrow(/already returned/);
     const again = await S.payInvoice(pi.invoiceId, "after-return"); expect(again.intent.status).toBe("pending");
   });
+  it("refuses a return on a refunded payment", async () => {
+    const r = await S.runFlow("Need 100 nitrile gloves"); await S.pollSettlements();
+    await S.refund(r.intentId!, 10, "damaged");
+    expect(() => S.achReturn(r.intentId!, "R01", "usr-x")).toThrow(/has a refund/);
+  });
+  it("marks the settlement returned and drops it from totals and recon", async () => {
+    const r = await S.runFlow("Need 100 nitrile gloves"); await S.pollSettlements();
+    const pi = db.intents.find((i) => i.id === r.intentId)!; const st = db.settlements.find((s) => s.id === pi.settlementId)!;
+    S.achReturn(pi.id, "R02", "usr-x");
+    expect(st.status).toBe("returned"); expect(st.returnCode).toBe("R02"); expect(st.bankFeeReversedUsd).toBe(st.bankFeeUsd ?? 0);
+    expect(S.ledgerView().reconciliation.find((x) => x.settlementId === st.id)).toBeUndefined();
+  });
   it("refuses a return on a non ACH rail", async () => {
     rails = installFakes(); reset(); S.bootstrap();
     const r = await S.runFlow("Need 100 nitrile gloves"); await S.pollSettlements();
     expect(() => S.achReturn(r.intentId!, "R01", "usr-x")).toThrow(/Only an ACH/);
+  });
+});
+
+describe("retry guards", () => {
+  beforeEach(() => { rails = installFakes(); reset(); S.bootstrap(); });
+  it("claims the retry before awaiting so a concurrent retry is refused", async () => {
+    const pi = await failed();
+    const a = S.retryPayment(pi.id, "same", "cc-1");
+    await expect(S.retryPayment(pi.id, "reroute", "cc-2")).rejects.toThrow(/already retried/);
+    await a; expect(pi.retriedBy).not.toMatch(/^pending:/);
+  });
+  it("refuses a key that belongs to another payment", async () => {
+    const pi = await failed();
+    await expect(S.retryPayment(pi.id, "same", pi.idempotencyKey)).rejects.toThrow(/already used/);
   });
 });
 
@@ -70,6 +96,8 @@ describe("retry and return routes", () => {
     expect((await app.inject({ method: "POST", url: `/payments/${pi.id}/retry`, headers: { cookie: sam }, payload: { mode: "same" } })).statusCode).toBe(400);
     expect((await app.inject({ method: "POST", url: `/payments/${pi.id}/retry`, headers: { cookie: sam, "idempotency-key": "k1" }, payload: { mode: "x" } })).statusCode).toBe(422);
     expect((await app.inject({ method: "POST", url: `/payments/nope/ach-return`, headers: { cookie: sam }, payload: { code: "R01" } })).statusCode).toBe(404);
+    const ops = await app.inject({ method: "POST", url: `/payments/${pi.id}/ach-return`, headers: { cookie: sam }, payload: { code: "R01" } });
+    expect([403, 409]).toContain(ops.statusCode);
     const g = await app.inject({ method: "GET", url: `/payments/${pi.id}`, headers: { cookie: sam } });
     expect(g.json().attempts).toHaveLength(1); expect(g.json().maxAttempts).toBe(3);
   });
