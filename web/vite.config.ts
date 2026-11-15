@@ -1,7 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-const bff = `http://127.0.0.1:${process.env.BFF_PORT ?? 8790}`;
+import { waitForBff } from "./dev/waitForBff";
+const bffPort = Number(process.env.BFF_PORT ?? 8790);
+const bff = `http://127.0.0.1:${bffPort}`;
 /** Vendor chunks so no single file carries every library. Pages are split per route in App.tsx. */
 const VENDOR: [string, RegExp][] = [
   ["charts-d3", /node_modules\/(d3-[^/]+|victory-vendor|internmap|decimal\.js-light|lodash)\//],
@@ -14,7 +16,7 @@ const VENDOR: [string, RegExp][] = [
 /** Pre-bundle every runtime dep at start. When Vite finds a new dep mid session it re-optimizes and changes the ?v= hash, so a tab that is already open loads a second React copy and throws "Invalid hook call". */
 const PREBUNDLE = ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "react-router-dom", "@tanstack/react-query", "@tanstack/react-table", "@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-slot", "@xyflow/react", "recharts", "cmdk", "lucide-react", "clsx", "tailwind-merge", "class-variance-authority", "zod"];
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), { name: "wait-for-bff", configureServer(server) { server.middlewares.use(waitForBff(bffPort)); } }],
   resolve: { dedupe: ["react", "react-dom"] },
   optimizeDeps: { include: PREBUNDLE },
   server: { port: 5180, strictPort: true, proxy: { "/api": { target: bff, rewrite: (p) => p.replace(/^\/api/, "") } } },

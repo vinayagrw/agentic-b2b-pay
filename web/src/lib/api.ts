@@ -1,3 +1,5 @@
+import { validationText } from "./errors";
+import { plainForbidden } from "./perm";
 import { useEffect, useRef, useState } from "react";
 import { useSSE } from "./stream";
 import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,7 +12,7 @@ export async function api<T = any>(path: string, body?: unknown, opts: { method?
   const ct = r.headers.get("content-type") ?? "";
   const j: any = ct.includes("json") ? await r.json().catch(() => ({})) : await r.text();
   if (r.status === 429) toast(rateLimitText(r.headers.get("retry-after")));
-  if (!r.ok) throw new ApiError(r.status, j?.error ?? `HTTP ${r.status}`);
+  if (!r.ok) throw new ApiError(r.status, r.status === 403 ? plainForbidden(j?.error ?? "") || "Not allowed" : validationText(j) || `HTTP ${r.status}`);
   return j as T;
 }
 /** Startup calls only: the bff may still be booting behind the dev proxy. */
@@ -43,7 +45,7 @@ export type Me = { user: { id: string; name: string; role: string; tenantId: str
 export type Branding = { name: string; logo: string | null; primary: string; accent: string };
 export type Tenant = { id: string; kind: "bank" | "client"; parentId: string | null; name: string; branding: Branding; railSettings: Record<string, { provider: string; env: "sandbox" | "live" }>; createdAt: string };
 
-export const useMe = () => useQuery<Me | null>({ queryKey: ["me"], queryFn: () => startupApi<Me>("/me").catch((e) => { if (e instanceof ApiError && e.status === 401) return null; throw e; }) });
+export const useMe = () => useQuery<Me | null>({ queryKey: ["me"], queryFn: () => startupApi<{ me: Me | null }>("/session").then((r) => r.me) });
 export const useAppState = () => useQuery<any>({ queryKey: ["state"], queryFn: () => api("/state") });
 export const useGet = <T = any,>(path: string, enabled = true) => useQuery<T>({ queryKey: [path], queryFn: () => api<T>(path), enabled });
 export const useStartupGet = <T = any,>(path: string) => useQuery<T>({ queryKey: [path], queryFn: () => startupApi<T>(path) });

@@ -202,7 +202,7 @@ export async function buildApp() {
   });
   const b = (req: any) => (req.body ?? {}) as any;
   // Every route needs a signed-in user unless listed as public. Each route maps to one permission, checked here by requirePermission.
-  const PUBLIC = new Set(["/health", "/ready", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle", "/webhooks/stripe-issuing", "/mcp", "/integrations/slack/actions", "/integrations/teams/actions"]);
+  const PUBLIC = new Set(["/health", "/ready", "/session", "/auth/config", "/auth/demo-users", "/auth/login", "/auth/logout", "/auth/oidc/start", "/auth/oidc/callback", "/auth/saml/start", "/auth/saml/acs", "/auth/saml/metadata", "/.well-known/agent.json", "/webhooks/stripe", "/webhooks/circle", "/webhooks/stripe-issuing", "/mcp", "/integrations/slack/actions", "/integrations/teams/actions"]);
   const ROUTE_PERMS: Record<string, I.Permission> = {
     "POST /reset": "platform.reset", "POST /kill-switch": "agents.manage", "POST /agents": "agents.manage", "POST /agents/:id/verify": "agents.manage", "POST /agents/:id/suspend": "agents.manage", "POST /agents/:id/resume": "agents.manage",
     "POST /policy/evaluate": "workspace.read", "POST /me/tenant": "workspace.read", "POST /approvals/:poId": "payments.approve", "POST /approvals/:poId/resubmit": "workspace.read", "POST /approvals/delegations": "payments.approve", "POST /approvals/delegations/:id/revoke": "payments.approve", "POST /invoices/:id/pay": "payments.pay", "POST /invoices/:id/override": "payments.approve", "POST /invoices/:id/credit-notes": "payments.approve", "POST /invoices/:id/hold": "flow.operate", "POST /refunds": "payments.refund", "POST /payments/:id/retry": "payments.pay", "POST /payments/:id/ach-return": "payments.refund",
@@ -297,11 +297,16 @@ export async function buildApp() {
     const redirect = ended?.idpId ? await OIDC.endSessionUrl(ended.idpId, ended.idToken) : null;
     return { ok: true, redirect };
   });
-  app.get("/me", async (req) => {
-    const u = userOf(req); if (!u) throw new P.AuthError(401, "Sign in required");
+  const meBody = (req: any, u: NonNullable<ReturnType<typeof userOf>>) => {
     const t = activeTenant(req, u); const g = I.grantOf(u);
     return { user: u, operator: P.isOperator(u), tenant: t, theme: P.themeFor(t), tenants: P.tenantsFor(u).filter((x) => x.kind !== "client" || I.inEntityScope(u, x.id)), llmMode: llmMode(), permissions: [...g.permissions], roleName: g.roleName, approveLimit: g.approveLimit };
+  };
+  app.get("/me", async (req) => {
+    const u = userOf(req); if (!u) throw new P.AuthError(401, "Sign in required");
+    return meBody(req, u);
   });
+  /** Same as /me but answers 200 with me: null when signed out, so the login page logs no 401. */
+  app.get("/session", async (req) => { const u = userOf(req); return { me: u ? meBody(req, u) : null }; });
   app.post("/me/tenant", async (req, reply) => {
     const u = who(req); const id = String(b(req).tenantId ?? "");
     const t = P.tenantsFor(u).find((x) => x.id === id);
