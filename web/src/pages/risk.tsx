@@ -10,6 +10,7 @@ import { SkeletonTable, SlidePanel, StatusDot, toneOf } from "../components/kit"
 import { SmartTable } from "../components/TableKit";
 import { RiskChip } from "../components/RiskChip";
 import { Section } from "../components/Shell";
+import { BankChangesWaiting } from "../components/BankChange";
 
 export type RiskRow = { paymentId: string; tenantId: string; supplier: string; amount: number; status: string; rail: string | null; createdAt: string | null; score: number; level: "low" | "medium" | "high"; reasons: { code: string; label: string; points: number; detail: string }[]; review: "open" | "cleared" | "escalated"; reviewReason: string | null; decidedBy: string | null; decidedAt: string | null };
 const REVIEW_TONE = { open: "warn", cleared: "ok", escalated: "bad" } as const;
@@ -31,8 +32,9 @@ export function RiskInboxPage() {
     { header: "Tenant", accessorKey: "tenantId", cell: (c) => <Muted>{c.getValue<string>()}</Muted> },
   ], []);
   return <Section>
-    <PageHeader title="Risk inbox" sub="Payments scored 30 or more by the risk rules. Clear with a reason or escalate to compliance." actions={<div className="flex gap-1">{["open", "escalated", "cleared", "all"].map((s) => <Button key={s} size="sm" variant={status === s ? "primary" : "ghost"} onClick={() => setStatus(s)}>{s[0].toUpperCase() + s.slice(1)}</Button>)}</div>} />
+    <PageHeader title="Risk inbox" sub="Payments scored 30 or more by the risk rules, and bank detail changes waiting for a check. Payments held by a bank detail change show here too." actions={<div className="flex gap-1">{["open", "escalated", "cleared", "all"].map((s) => <Button key={s} size="sm" variant={status === s ? "primary" : "ghost"} onClick={() => setStatus(s)}>{s[0].toUpperCase() + s.slice(1)}</Button>)}</div>} />
     {error && <ErrorNote msg={(error as Error).message} />}
+    <BankChangesWaiting />
     <Card pad={false}>{!data ? <SkeletonTable cols={6} /> : <SmartTable table="risk" data={data} columns={cols} getId={(r) => r.paymentId} onRow={setOpen} extraState={{ status }} onExtraState={(s) => s.status && setStatus(s.status)}
       empty={<div className="flex flex-col items-center gap-2 px-6 py-12 text-center"><ShieldAlert size={20} className="text-muted" aria-hidden /><div className="text-sm font-medium">Nothing to review</div><Muted>Payments with a risk score of 30 or more land here.</Muted></div>} />}</Card>
     <SlidePanel open={!!open} onClose={() => setOpen(null)} title={open ? `Risk review ${open.paymentId}` : ""} description="Risk score, reasons and review decision">

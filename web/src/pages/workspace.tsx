@@ -10,7 +10,8 @@ import { Badge, Button, Card, EmptyState, ErrorNote, Input, Label, Mono, Muted, 
 import { Section } from "../components/Shell";
 import { Loading } from "./flows";
 import { ApprovalCard, StepUpPrompt } from "../components/ApprovalCard";
-import { stepUpNeeded, type StepUpStatus } from "../lib/perm";
+import { can, stepUpNeeded, type StepUpStatus } from "../lib/perm";
+import { BankChangeForm, BankChangesWaiting } from "../components/BankChange";
 import { Skeleton, SkeletonTable } from "../components/kit";
 
 const CATS = ["mro", "components", "logistics", "it"] as const;
@@ -230,10 +231,10 @@ function SupplierRow({ s, me }: { s: any; me: any }) {
       </Table> : <Muted>Seeded supplier, verified before onboarding existed.</Muted>}
       {o && o.status !== "verified" && ["client_admin", "ap_clerk", "operator_admin"].includes(role) && <div className="flex flex-wrap items-center gap-2"><Button size="sm" disabled={busy} onClick={async () => { const r = await run(() => api(`/workspace/suppliers/${s.id}/link`, {})); if (r) setLink(`${location.origin}${r.link}`); }}>New onboarding link</Button>{link && <Reveal secret={link} what="onboarding link" onDone={() => setLink("")} />}</div>}
       {o?.status === "submitted" && role === "client_admin" && <div className="flex flex-col gap-2"><Input placeholder="Review note" value={note} onChange={(e) => setNote(e.target.value)} /><div className="flex gap-2"><Button size="sm" variant="primary" disabled={busy} onClick={() => run(() => api(`/workspace/suppliers/${s.id}/review`, { verify: true, note }))}>Verify supplier</Button><Button size="sm" disabled={busy} onClick={() => run(() => api(`/workspace/suppliers/${s.id}/review`, { verify: false, note }))}>Reject</Button></div></div>}
-      {s.status === "verified" && ["client_admin", "ap_clerk"].includes(role) && <div className="flex flex-col gap-2"><div className="flex gap-2"><Button size="sm" variant={change === "bank" ? "primary" : "outline"} onClick={() => setChange(change === "bank" ? "" : "bank")}>Change bank account</Button><Button size="sm" variant={change === "wallet" ? "primary" : "outline"} onClick={() => setChange(change === "wallet" ? "" : "wallet")}>Change wallet</Button></div>
-        <Muted>Changes wait for an approver to check them before they apply.</Muted>
-        {change === "bank" && <BankFields busy={busy} label="Request bank change" onSubmit={async (bank) => { if (await run(() => api(`/workspace/suppliers/${s.id}/payee-change`, { field: "bank", bank }))) setChange(""); }} />}
-        {change === "wallet" && <WalletProof busy={busy} getMessage={async (address) => (await api(`/workspace/suppliers/${s.id}/wallet-message`, { address })).message} onSubmit={async (address, signature) => { await api(`/workspace/suppliers/${s.id}/payee-change`, { field: "wallet", address, signature }); setChange(""); await run(async () => null); }} />}</div>}
+      <Table><tr><td className="text-muted">Call-back phone on file</td><td>{s.contactPhone ? <Mono>{s.contactPhone}</Mono> : "None"}</td></tr></Table>
+      {s.status === "verified" && can(me, "suppliers.payee_change") && <div className="flex flex-col gap-2"><div><Button size="sm" variant={change === "bank" ? "primary" : "outline"} onClick={() => setChange(change === "bank" ? "" : "bank")}>Change bank details</Button></div>
+        {change === "bank" && <BankChangeForm supplierId={s.id} onDone={() => setChange("")} />}</div>}
+      <BankChangesWaiting supplierId={s.id} />
       {s.pendingChanges.map((c: any) => <div key={c.id} className="flex flex-wrap items-center gap-2 text-xs"><Badge v="waiting for checker" tone="warn" />{c.payload.field === "bank" ? `Bank ending ${c.payload.bank.last4}` : <Mono>{c.payload.wallet.address}</Mono>}<Muted>requested by {c.requestedBy}</Muted>
         {role === "approver" && c.requestedBy !== me.user.id && <><Button size="sm" variant="primary" disabled={busy} onClick={() => run(() => api(`/changes/${c.id}/decide`, { approve: true }))}>Approve change</Button><Button size="sm" disabled={busy} onClick={() => run(() => api(`/changes/${c.id}/decide`, { approve: false }))}>Reject</Button></>}</div>)}
       <ErrorNote msg={error} />

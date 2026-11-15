@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import * as BC from "./bankchange.js";
 import * as Risk from "./risk.js";
 import { isUsdc, type PoDraft, type Rail } from "@b2b/shared";
 import { db, save, nextId, tenantOf, TENANT, type PurchaseOrder, type Supplier, type PaymentIntent, type Settlement, type TimelineEntry } from "./modules/store.js";
@@ -36,6 +37,7 @@ export function bootstrap() {
   seedRules();
   FX.seedEntities();
   backfillMandates();
+  BC.seedDemo();
   save();
 }
 /** Open POs from before signed mandates existed get an Intent and Cart on reset or seed, so demo data is never blocked. */
@@ -346,6 +348,9 @@ async function payInvoiceCore(invId: string, idempotencyKey: string, opts: { urg
   if (intent.fx) ev("payment", intent.id, "fx.quote_locked", { lockId: intent.fx.lockId, from: intent.fx.invoiceCurrency, to: "USD", rate: intent.fx.rate, functionalRate: intent.fx.functionalRate, stale: intent.fx.stale, source: intent.fx.source, expiresAt: intent.fx.expiresAt });
   const stop = (status: "denied" | "blocked", why: string) => { mark(intent, status, "platform", why); intent.blockedReason = why; ev("payment", intent.id, `payment.${status}`, { reason: why }); save(); return { intent, replay: false }; };
   if (db.killSwitch || agent.status !== "active") return stop("denied", db.killSwitch ? "Kill switch on" : "Agent suspended");
+  // Bank-detail change check: a pending change, or the cooling-off time after one, holds payments to this supplier.
+  const bankHold = BC.paymentHold(TENANT, sup.id);
+  if (bankHold) { intent.holdKind = "bank_change"; return stop("blocked", bankHold); }
   const pair = AP2.currentPair(po.id);
   const mv = evaluateMandates(pair.intent, pair.cart, { poId: po.id, supplierId: sup.id, currency: invCcy, amount: inv.amount, lines: inv.extract.lines });
   ev("payment", intent.id, "ap2.mandates_verified", { ok: mv.ok, intent: pair.intent?.hash ?? null, cart: pair.cart?.hash ?? null, failed: mv.checks.filter((c) => !c.pass).map((c) => c.rule) });

@@ -11,7 +11,7 @@ const DAY = 864e5;
 /** Countries treated as high risk payment corridors. FATF high risk and other monitored jurisdictions. */
 export const HIGH_RISK_COUNTRIES = ["IR", "KP", "MM", "SY", "CU", "RU", "BY", "VE", "AF", "YE"];
 export const REVIEW_AT = 30;
-export const POINTS = { new_supplier: 20, amount_spike: 25, payee_change: 30, odd_hour: 10, velocity: 15, first_rail: 10, high_risk_corridor: 30 } as const;
+export const POINTS = { new_supplier: 20, amount_spike: 25, payee_change: 30, odd_hour: 10, velocity: 15, first_rail: 10, high_risk_corridor: 30, bank_change_hold: 40 } as const;
 const PAYEE_EVENTS = new Set(["payee_change.applied", "payee.changed"]);
 const LIVE = new Set(["created", "routed", "submitted", "pending", "settled"]);
 const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -55,6 +55,9 @@ export function scorePayment(pi: PaymentIntent): RiskScore {
   // High risk corridor: supplier country is on the monitored list.
   const country = sup ? db.orgs.find((o) => o.id === sup.orgId)?.country : undefined;
   if (country && HIGH_RISK_COUNTRIES.includes(country)) add("high_risk_corridor", "High risk corridor", `Supplier is registered in ${country}, a monitored corridor`);
+
+  // Held by the bank-detail change check: a change is waiting for a check, or the cooling-off time is running.
+  if (pi.holdKind === "bank_change") add("bank_change_hold", "Held for bank detail change", pi.blockedReason ?? "A bank detail change for this supplier holds payments");
 
   const score = Math.min(100, reasons.reduce((a, r) => a + r.points, 0));
   return { score, level: levelOf(score), reasons, scoredAt: new Date().toISOString(), rail };

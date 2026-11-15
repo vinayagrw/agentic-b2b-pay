@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { scoped, tenantOf, db } from "./modules/store.js";
 import * as S from "./service.js";
 import * as X from "./explain.js";
+import * as BC from "./bankchange.js";
 import * as Risk from "./risk.js";
 import * as FX from "./modules/fx.js";
 import * as I from "./iam.js";
@@ -91,6 +92,12 @@ export const TOOLS: Tool[] = [
     const rows = st.invoices.filter((i) => !i.paid).map((i) => ({ invoiceId: i.id, number: i.number, supplier: supName(i.supplierId), amount: i.amount, currency: i.currency, match: i.matchStatus, memo: String((i as any).memo ?? "") }));
     const summary = rows.length ? rows.slice(0, 6).map((r) => `${r.number} from ${r.supplier} ${money(r.amount)} ${r.match}`).join(", ") : "No open invoices";
     return { summary, rows, source: src("openInvoices", rows.map((r) => ({ id: r.invoiceId, href: `${c.prefix === "/app" ? "/app/invoices" : "/operator/payments"}` }))) };
+  } },
+  { name: "bankChanges", description: "Supplier bank detail change requests with status, masked old and new account (last 4 only), risk signals, call-back state and whether payments are held", args: [], run: (c) => {
+    const rows = BC.list(c.scope).map((r) => ({ requestId: r.id, supplierId: r.supplierId, supplier: r.supplierName, kind: r.kind, status: r.status, oldAccount: r.old.last4 ? `ending ${r.old.last4}` : "on file", newAccount: `ending ${r.new.last4 ?? "----"}`, newCountry: r.new.country ?? "", signals: r.signals.map((x) => x.label), callBack: r.callback?.outcome ?? "not done", requestedBy: r.requestedByName ?? r.requestedBy, paymentsHeld: r.paymentsHeld, holdUntil: r.holdUntil ?? "" }));
+    const open = rows.filter((r) => r.status === "pending");
+    const summary = rows.length ? `${open.length} waiting of ${rows.length} bank detail change requests. ` + rows.slice(0, 5).map((r) => `${r.requestId} ${r.supplier} ${r.status}, new account ${r.newAccount}, call-back ${r.callBack}, payments ${r.paymentsHeld ? "held" : "not held"} (${r.signals.join(", ")})`).join(". ") : "No bank detail change requests";
+    return { summary, rows, source: src("bankChanges", rows.slice(0, 8).map((r) => ({ id: r.requestId, href: `${c.prefix}/bank-changes` }))) };
   } },
   { name: "riskInbox", description: "Payments flagged by the risk rules, with score, reasons and review state", args: [], run: (c) => {
     const rows = Risk.inbox(c.scope).map((r) => ({ paymentId: r.paymentId, supplier: r.supplier, amount: r.amount, score: r.score, level: r.level, reasons: r.reasons.map((x) => x.label), review: r.review }));
@@ -290,6 +297,7 @@ export function mockPlan(q: string, c: Partial<Ctx> = {}): { name: string; args:
   if (/draft.*(rule|policy)|(rule|policy).*draft|approval rule|polic/.test(s)) add("approvalRules");
   if (/risk|fraud|flagged|suspicious/.test(s) && !plan.some((p) => p.name === "riskScore")) add("riskInbox");
   if (/forecast|runway|cash flow|next (week|month)|upcoming/.test(s)) add("cashForecast");
+  if (/bank detail|bank change|bank account change|payee change|payout change|changed? (their |its )?bank/.test(s)) add("bankChanges");
   if (/\bcards?\b|card spend|virtual card/.test(s)) add("cardSpend");
   if (/mandate|limit|agent/.test(s) && !plan.some((p) => p.name === "cardSpend") && !/pause|suspend|resume/.test(s)) add("mandates");
   if (/lock/.test(s)) add("fxLocksAndRates");
@@ -383,7 +391,7 @@ export function proposalsFor(c: Ctx, q: string): Proposal[] {
   return out.slice(0, 4);
 }
 
-const LABEL: Record<string, string> = { spendBySupplier: "Spend by supplier", paymentsByStatus: "Payments by status", pendingApprovals: "Waiting for approval", entityBalances: "Entity balances", fxExposure: "FX", openInvoices: "Open invoices", whyPayment: "Why", riskInbox: "Risk inbox",
+const LABEL: Record<string, string> = { spendBySupplier: "Spend by supplier", paymentsByStatus: "Payments by status", pendingApprovals: "Waiting for approval", entityBalances: "Entity balances", fxExposure: "FX", openInvoices: "Open invoices", whyPayment: "Why", riskInbox: "Risk inbox", bankChanges: "Bank detail changes",
   mandates: "Mandates", fxLocksAndRates: "FX locks", railHealth: "Rail health", cashForecast: "Cash forecast", supplierProfile: "Supplier", auditSearch: "Evidence", approvalRules: "Approval rules", riskScore: "Risk score", fxGainLoss: "FX gain or loss", query: "Query", dailyDigest: "Today", opsQueues: "Ops queues", riskEscalations: "Risk escalations", recurringPayments: "Recurring payments", tenants: "Clients", railToggles: "Rail toggles", killSwitchState: "Kill switch", slaBreaches: "SLA" };
 const mockAnswer = (q: string, results: ToolResult[]) => {
   const base = results.map((r) => `${LABEL[r.tool] ?? r.tool}: ${r.summary}.`).join(" ");

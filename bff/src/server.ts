@@ -39,6 +39,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import * as SP from "./sparky.js";
 import * as CH from "./chatops.js";
 import * as CARDS from "./cards.js";
+import * as BC from "./bankchange.js";
 import { buildMcpServer } from "./mcp.js";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -140,6 +141,7 @@ export async function buildApp() {
     "GET /identity/configs": "identity.manage", "POST /identity/configs": "identity.manage", "GET /iam/users": "roles.manage", "GET /iam/roles": "roles.manage", "POST /iam/roles": "roles.manage", "PUT /iam/roles/:id": "roles.manage", "DELETE /iam/roles/:id": "roles.manage", "POST /iam/users/:id/role": "roles.manage",
     "POST /sessions/:id/revoke": "workspace.read", "POST /risk/:paymentId/decide": "risk.review", "POST /views": "workspace.read", "DELETE /views/:id": "workspace.read", "GET /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens": "developers.keys", "POST /dev/scim-tokens/:id/revoke": "developers.keys",
     "POST /copilot/outcome": "workspace.read", "POST /copilot/skills/:slug": "workspace.read", "POST /workspace/suppliers/:id/portal-link": "suppliers.invite", "GET /ops/agent-view": "treasury.read", "GET /ops/copilot-metrics": "treasury.read", "GET /ops/offers": "treasury.read", "POST /ops/offers/:tenantId": "settings.live_toggle", "POST /cards/:id/decide": "payments.approve",
+    "POST /suppliers/:id/bank-changes": "suppliers.payee_change", "POST /bank-changes/:id/callback": "payments.approve", "POST /bank-changes/:id/decide": "payments.approve", "PUT /bank-changes/settings": "rules.edit",
   };
   /** The permission a route needs. Developer routes need developers.keys, other reads need workspace.read, other writes need flow.operate. */
   const permFor = (method: string, url: string): I.Permission => ROUTE_PERMS[`${method} ${url}`] ?? (url.startsWith("/dev/") ? "developers.keys" : method === "GET" ? "workspace.read" : "flow.operate");
@@ -485,6 +487,14 @@ export async function buildApp() {
     if (src === "slack" && (CH.slackLive() || CH.slackSigningOn())) throw new P.AuthError(401, "Slack buttons must come from Slack");
     return CH.act(src, token, String(x.chatUserId ?? ""));
   });
+  // Supplier bank-detail change check. Every response is masked: last 4 only, no sealed values and no hashes.
+  app.get("/bank-changes", async (req: any) => { const scope = scopeOf(req); return { requests: BC.list(scope, { status: req.query?.status ? String(req.query.status) : undefined, supplierId: req.query?.supplierId ? String(req.query.supplierId) : undefined }), settings: scope ? BC.settings(scope) : null }; });
+  app.get("/bank-changes/settings", async (req) => { const { t } = ctx(req); return BC.settings(t); });
+  app.put("/bank-changes/settings", async (req: any) => { const { u, t } = ctx(req); return BC.saveSettings(u, t, b(req)); });
+  app.get("/bank-changes/:id", async (req: any) => BC.detail(scopeOf(req), req.params.id));
+  app.post("/suppliers/:id/bank-changes", async (req: any) => { const { u, t } = ctx(req); return BC.request(u, t, req.params.id, b(req)); });
+  app.post("/bank-changes/:id/callback", async (req: any) => { const { u, t } = ctx(req); return BC.recordCallback(u, t, req.params.id, b(req)); });
+  app.post("/bank-changes/:id/decide", async (req: any) => { const { u, t } = ctx(req); return BC.decide(u, t, req.sessionId ?? null, req.params.id, b(req)); });
   // Virtual cards. Test mode only. No route returns a full card number or CVC.
   app.get("/cards", async (req) => { const { t } = ctx(req); return { cards: CARDS.listCards(t), issuer: await CARDS.issuerInfo(), stepUpThresholdUsd: SU.thresholdUsd() }; });
   app.post("/cards", async (req: any) => { const { u, t } = ctx(req); return CARDS.issueCard(u, t, req.sessionId ?? null, b(req)); });

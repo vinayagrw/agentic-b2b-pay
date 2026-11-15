@@ -32,12 +32,12 @@ export function decisionBlock(item: Pick<ApprovalItem, "status" | "canAct" | "wh
 
 
 /** Asks for a code from the authenticator app, with first time setup. */
-export function StepUpPrompt({ s, threshold }: { s: StepUpStatus; threshold: number }) {
+export function StepUpPrompt({ s, threshold, text }: { s: StepUpStatus; threshold: number; text?: string }) {
   const { run, busy, error } = useAct(); const [code, setCode] = useState(""); const [setup, setSetup] = useState<{ secret: string; otpauthUri: string } | null>(null);
   const verify = async () => { const r = await run(() => api("/auth/step-up/verify", { code })); if (r !== undefined) setCode(""); };
   return <div className="mt-3 rounded-lg border border-warn/40 bg-warn/10 p-3" data-testid="step-up">
     <div className="flex items-center gap-1.5 text-xs font-medium"><KeyRound size={13} aria-hidden className="text-warn" />Confirm it is you</div>
-    <p className="mt-1 text-xs text-muted">Approvals above {usd(threshold)} need a fresh code from your authenticator app. It stays valid for a few minutes.</p>
+    <p className="mt-1 text-xs text-muted">{text ?? `Approvals above ${usd(threshold)} need a fresh code from your authenticator app. It stays valid for a few minutes.`}</p>
     {!s.enrolled && !setup && <Button size="sm" className="mt-2 h-11 w-full sm:h-7 sm:w-auto" disabled={busy} onClick={async () => { const r = await run(() => api<{ secret: string; otpauthUri: string }>("/auth/step-up/enroll", {})); if (r) setSetup(r); }}>Set up authenticator</Button>}
     {setup && <div className="mt-2 text-xs">Add this key to your authenticator app, then enter the 6 digit code. <Mono className="break-all">{setup.secret}</Mono> <a className="text-primary underline" href={setup.otpauthUri}>Open in app</a></div>}
     {(s.enrolled || setup) && <div className="mt-2 flex gap-2"><Input aria-label="Authenticator code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="123456" className="h-11 w-full text-base sm:h-8 sm:w-28 sm:text-[13px]" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
