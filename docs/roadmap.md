@@ -108,3 +108,20 @@ Impact is 1 to 5. Effort is S (under 2 weeks), M (2 to 6 weeks), L (over 6 weeks
 3. **Explainable decisions**: cheap to build on the audit chain and loved by compliance.
 4. **Multi entity ledger with FX**: unlocks cross border, where stablecoins beat wires.
 5. **Agent copilot chat**: the demo moment that makes the platform feel 2026, with every action routed through maker-checker.
+
+## Persona gap backlog
+
+Gaps found by walking the product as each persona. Impact and effort are H (high), M (medium) or L (low).
+
+| # | Persona | What is missing | Impact | Effort | Mark |
+|---|---|---|---|---|---|
+| 1 | Security lead | Tenant check on invoices | H | L | Shipped |
+| 2 | Agent builder | MCP agent identity | H | M | Shipped |
+| 3 | AP clerk | Duplicate invoice check | H | L | Shipped |
+| 4 | AP clerk | Match exceptions and credit notes | H | M | Shipped |
+| 5 | Treasury | Payment retry and ACH returns | H | M | Shipped |
+| 6 | Approver | Approval delegation and resubmit | H | M | Shipped |
+| 7 | Bank operator | Import bank statements (camt.053, MT940, BAI2) and reconcile payments against them | H | M | Not started |
+| 8 | Supplier | A supplier portal to send invoices, raise disputes, see remittance advice and get email notices | H | M | Not started |
+| 9 | Auditor | Data retention rules, legal hold, and a full audit chain export that can be checked | H | M | Not started |
+| 10 | CFO | Roll up many entities into one view, plus 1099 and W-9 tax forms | H | L | Not started |
