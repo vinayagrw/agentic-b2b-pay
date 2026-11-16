@@ -1,0 +1,145 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Voyix Gateway Meeting Brief</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: single reading column, a briefing-dossier feel; tables scroll in their own box */
+:root{
+  --bg:#f6f7f8; --surface:#ffffff; --fg:#1b2329; --muted:#5a6772; --line:#dde2e6;
+  --accent:#0f6e6a; --accent-soft:#e2f1ef; --warn:#9a5b00; --warn-soft:#fbf0de;
+  --display:"Source Serif 4",Georgia,serif; --body:"IBM Plex Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12171b; --surface:#1a2126; --fg:#e4e9ec; --muted:#9aa7b1; --line:#2c363d;
+  --accent:#5cc4bb; --accent-soft:#163a37; --warn:#e6b45c; --warn-soft:#3a2d16; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12171b; --surface:#1a2126; --fg:#e4e9ec; --muted:#9aa7b1; --line:#2c363d;
+  --accent:#5cc4bb; --accent-soft:#163a37; --warn:#e6b45c; --warn-soft:#3a2d16; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:16px/1.6 var(--body)}
+.wrap{max-width:780px;margin:0 auto;padding-block:40px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:40px}
+header{display:grid;gap:8px;border-bottom:2px solid var(--fg);padding-bottom:20px}
+.eyebrow{font:500 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font:700 clamp(28px,5vw,40px)/1.15 var(--display);margin:0;text-wrap:balance}
+h2{font:600 22px/1.3 var(--display);margin:0 0 12px;text-wrap:balance}
+.meta{color:var(--muted);font-size:14px}
+p,li{max-width:68ch}
+ul,ol{margin:0;padding-left:1.3em;display:grid;gap:6px}
+section{min-width:0}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+.fact b{display:block;font:600 22px/1.2 var(--display);font-variant-numeric:tabular-nums}
+.fact span{font-size:13px;color:var(--muted)}
+.note{background:var(--warn-soft);color:var(--fg);border-left:3px solid var(--warn);padding:10px 14px;border-radius:0 6px 6px 0;font-size:14px}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:15px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:500 12px/1.3 var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+td:first-child{font-weight:600;width:32%}
+.pains{counter-reset:p;list-style:none;padding:0}
+.pains li{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+.next{background:var(--accent-soft);border-radius:8px;padding:18px 20px}
+.next h2{color:var(--accent)}
+.src{font-size:13px;color:var(--muted)}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">Ciklum presales · prepared 18 Oct 2026</div>
+  <h1>NCR Voyix: meeting with Pravinkumar Nallamaruthamuthu</h1>
+  <div class="meta">Head of Engineering, Payment Gateway · Priorities: AI transformation and legacy conversion, speed to market, fuel and C-store payments</div>
+</header>
+
+<section>
+  <h2>Snapshot</h2>
+  <p><b>Person.</b> In payments since 1997: ICICI, NPCI, First Data/Fiserv, InComm, and Infinite Computer Solutions (merchant solutions and integration). He took the Voyix gateway role in Sep 2024. His likely boss is Darren Wilson, EVP &amp; President Retail &amp; Payments; that is inferred, not confirmed. He has almost no public posting history.</p>
+  <div class="facts">
+    <div class="fact"><b>$523M</b><span>Q2 2026 revenue, +1% pro forma</span></div>
+    <div class="fact"><b>$435M</b><span>Q2 recurring revenue</span></div>
+    <div class="fact"><b>85,000</b><span>platform sites</span></div>
+    <div class="fact"><b>~8,500</b><span>payment sites, about 10% of platform sites</span></div>
+  </div>
+  <p><b>His gateway, Voyix Connect.</b> It is live in the US and Latin America, and Voyix is now a registered acquirer in the US. <b>Europe and APAC slipped to 2027.</b> Customers have moved off the old JetPay front end, but the legacy Secure Pay tokenization layer still runs. Fleet cards are integrated: Voyager, Corpay, WEX.</p>
+  <p><b>Fuel and C-store momentum.</b> Pilot (900+ sites, 5-year exclusive, Mar 2026), Rutter's (platform plus fuel payments, 1 Oct), TruAge digital age verification (6 Oct), and Voyager fleet cards across 18,000+ stations.</p>
+  <p class="note">Payment-site growth is reported as +2% in one source and +13% in another. Check the Q2 release before quoting it.</p>
+</section>
+
+<section>
+  <h2>What he is likely dealing with</h2>
+  <ol class="pains">
+    <li><b>Reliability under fuel volume.</b> Third-party trackers report a Secure Pay incident of about 19 days and a 6.6-hour Voyix Connect outage on 21 Apr 2026. Pilot's and Rutter's volume raises the stakes.</li>
+    <li><b>Legacy consolidation competing with the roadmap.</b> Two gateway and token generations, the 2027 Europe/APAC launch, and a certification for every processor and fleet network. Voyix isn't visibly hiring gateway engineers, so delivery capacity is the likely constraint.</li>
+    <li><b>Pressure to show AI and agentic commerce.</b> Stripe, Adyen and Worldpay have shipped checkout for AI agents. Voyix is hiring a PM for Agentic Commerce and an Agentic Migration Engineer (payments/POS background, GCP and Vertex AI). Its public AI use covers migration and developer tools, not routing or fraud.</li>
+    <li><b>Competition in fuel.</b> Toast Fuel launched around 29 Sep and requires Toast processing. Gilbarco Passport and Verifone Commander already serve the forecourt.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Ciklum offers, mapped to his priorities</h2>
+  <div class="tbl"><table>
+    <tr><th>His priority</th><th>What we propose</th></tr>
+    <tr><td>AI transformation and legacy conversion</td><td>AI-assisted gateway modernization: code comprehension, generated tests, and migrating the remaining Secure Pay token vault, with human review gates.</td></tr>
+    <tr><td>Speed to market</td><td>A certification factory: simulators for processors, fleet hosts and EMV, plus AI-generated regression suites to shorten certification cycles. A nearshore pod for the 2027 Europe/APAC acquirer integrations.</td></tr>
+    <tr><td>Fuel and C-store</td><td>A forecourt integration kit: Conexxus/IFSF point-of-sale-to-pump-controller adapters, fleet-host connectors, and EV payment handling that meets the federal (NEVI) rules.</td></tr>
+    <tr><td>Reliability (likely unstated)</td><td>A payments SRE and resilience review on GCP, Kubernetes and Datadog: failover, routing across several acquirers, incident runbooks.</td></tr>
+    <tr><td>Agentic commerce (next)</td><td>A 90-day adapter for the agent payment protocols (ACP and AP2) on Voyix Connect, plus AI to raise authorization rates and catch fraud.</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>Discovery questions</h2>
+  <ol>
+    <li>What does the target architecture look like after Secure Pay and JetPay are retired, and on what timeline?</li>
+    <li>What is setting the 2027 Europe/APAC date: acquirer certifications, local card schemes, or team capacity?</li>
+    <li>How long does a new processor or fleet-network certification take today, and how much of it is manual testing?</li>
+    <li>How is the gateway preparing for Pilot-scale fuel volume: offline authorizations, pump pre-authorization, store-and-forward?</li>
+    <li>Where is AI already in your engineering lifecycle, and where has it disappointed you?</li>
+    <li>Is the agentic migration work aimed at POS configuration or at the gateway code itself?</li>
+    <li>Who owns forecourt integrations: your team, the convenience and fuel group, or partners?</li>
+    <li>Do you route between processors today, and do you track authorization rates by processor?</li>
+    <li>Is there interest in AI-driven fraud detection or smart routing for card-not-present and loyalty traffic?</li>
+    <li>How do you work with offshore and partner teams today, and what has worked?</li>
+    <li>What would make a 90-day pilot a clear success for you and Darren Wilson?</li>
+    <li>Is the gateway expected to accept payments started by AI agents, and when?</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Talking points</h2>
+  <ul>
+    <li>Lead with payments depth, not generic AI. He has more than 25 years in payments and will test our domain knowledge quickly.</li>
+    <li>Use India's real-time rails (UPI, run by NPCI) as the scale reference. That is his own background.</li>
+    <li>Bring Ciklum fintech and payments case studies on reliability, PCI and automated certification.</li>
+    <li>Present AI as a way to cut certification and migration time, with numbers attached.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Likely objections</h2>
+  <div class="tbl"><table>
+    <tr><th>If he says</th><th>We answer</th></tr>
+    <tr><td>"We already use AI internally."</td><td>We plug into your Vertex AI stack. The value is in payments-specific tooling such as simulators and test oracles, not the model.</td></tr>
+    <tr><td>"Vendors add risk to our PCI scope."</td><td>Our teams work under your PCI controls, in your environments, with clear data boundaries.</td></tr>
+    <tr><td>"Budget is tight while we restructure."</td><td>Start with a fixed-price 2-week assessment, then a pilot priced on outcomes.</td></tr>
+  </table></div>
+</section>
+
+<section class="next">
+  <h2>Proposed next step</h2>
+  <p>A 2-week <b>Gateway Modernization and Certification Acceleration assessment</b>. It inventories the legacy footprint, measures today's certification cycle time, and produces a prioritized AI-assisted roadmap with one pilot candidate, either a fleet-card certification or the Secure Pay token migration.</p>
+</section>
+
+<section>
+  <h2>Avoid</h2>
+  <ul>
+    <li>Quoting outages as fact. They come from third-party trackers, so ask about resilience instead.</li>
+    <li>Implying we have read his posts.</li>
+    <li>Leading with POS or hardware. His remit is the gateway.</li>
+    <li>Ignoring Q3 earnings, due in early November. Check the date in case it falls near the meeting.</li>
+  </ul>
+</section>
+
+<p class="src">Based on public sources gathered 18 Oct 2026: company filings and earnings coverage, Voyix's careers site, trade press and status trackers. Claims marked inferred in the research notes are not presented here as fact.</p>
+</div>
+
+</body></html>
