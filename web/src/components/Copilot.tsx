@@ -8,7 +8,7 @@ import { useStream } from "../lib/stream";
 import { foldStream, recordFromPath, snapProblem, speechCtor, SNAP_TYPES, TOOL_NAMES, type Answer, type Chart, type Memory, type Offer, type Proposal, type Skill, type Thread } from "../lib/copilot";
 import { SlidePanel } from "./kit";
 import { BarList, DataTable, DonutChart } from "./live";
-import { Badge, Button, Input } from "./ui";
+import { Badge, Button, ConfirmButton, Input } from "./ui";
 const SpecChart = lazy(() => import("./SpecChart"));
 type View = "bar" | "line" | "area" | "donut" | "stacked" | "table";
 /** PNG of the chart SVG: serialize, draw on a canvas, download. No extra library. */
@@ -146,7 +146,7 @@ function Memories() {
           <button aria-label={`Edit ${m.text}`} className="rounded p-1 text-muted hover:bg-subtle" onClick={() => setEdit({ id: m.id, text: m.text })}><Pencil size={13} /></button>
           <button aria-label={`Forget ${m.text}`} className="rounded p-1 text-muted hover:bg-subtle hover:text-bad" onClick={() => run(() => api(`/copilot/memories/${m.id}`, undefined, { method: "DELETE" }))}><Trash2 size={13} /></button></>}
       </li>)}</ul>
-      <div className="flex justify-end"><Button size="sm" variant="outline" onClick={() => { if (confirm("Forget everything the copilot remembers for you here?")) run(() => api("/copilot/memories", undefined, { method: "DELETE" })); }}>Forget all</Button></div></>}
+      <div className="flex justify-end"><ConfirmButton size="sm" variant="outline" question="Forget everything the copilot remembers for you here?" onConfirm={() => void run(() => api("/copilot/memories", undefined, { method: "DELETE" }))}>Forget all</ConfirmButton></div></>}
   </div>;
 }
 

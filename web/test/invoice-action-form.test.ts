@@ -20,3 +20,11 @@ describe("invoice action form", () => {
     expect(actionRequest(inv, "resubmit", { text: "INV fixed" })).toEqual({ path: "/invoices/inv-1/resubmit", body: { text: "INV fixed" } });
   });
 });
+import { exceptionActions } from "../src/lib/invoices";
+describe("accept needs a known sender", () => {
+  it("hides accept when nobody is recorded as the sender", () => {
+    const sam = { id: "usr-sam", permissions: ["payments.approve", "flow.operate"] };
+    expect(exceptionActions({ matchStatus: "exception" }, sam)).not.toContain("accept");
+    expect(exceptionActions({ matchStatus: "exception", submittedBy: "supplier-portal:x" }, sam)).toContain("accept");
+  });
+});

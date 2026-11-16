@@ -5,7 +5,7 @@ import { CreditCard, Plus } from "lucide-react";
 import { api, useAct, useGet, useMe } from "../lib/api";
 import { can, type StepUpStatus } from "../lib/perm";
 import { actionsFor, masked, money, STATUS_TEXT, statusTone, mandateLine, TYPES, usedPct, type CardAuth, type CardOrder, type CardView } from "../lib/cards";
-import { Badge, Button, Card, EmptyState, ErrorNote, Input, Label, Mono, Muted, PageHeader, Select, Table } from "../components/ui";
+import { Badge, Button, ConfirmButton, Card, EmptyState, ErrorNote, Input, Label, Mono, Muted, PageHeader, Select, Table } from "../components/ui";
 import { Section } from "../components/Shell";
 import { SkeletonTable } from "../components/kit";
 import { StepUpPrompt } from "../components/ApprovalCard";
@@ -103,7 +103,7 @@ function Controls({ c, threshold }: { c: CardView; threshold: number }) {
     <div className="flex flex-wrap gap-2">
       {a.freeze && <Button disabled={busy} onClick={() => act("freeze")}>Freeze</Button>}
       {a.unfreeze && <Button disabled={busy} onClick={() => act("unfreeze")}>Unfreeze</Button>}
-      {a.cancel && <Button disabled={busy} onClick={() => { if (confirm("Cancel this card? This cannot be undone.")) void act("cancel"); }}>Cancel card</Button>}
+      {a.cancel && <ConfirmButton disabled={busy} question="Cancel this card? This cannot be undone." onConfirm={() => void act("cancel")}>Cancel card</ConfirmButton>}
       {a.decide && can(me, "payments.approve") && <><Button variant="primary" disabled={busy} onClick={() => act("decide", { approve: true })}>Approve card</Button><Button disabled={busy} onClick={() => act("decide", { approve: false })}>Reject</Button></>}
       {c.last4 && <Button disabled={busy} onClick={async () => { const r = await act("reveal"); if (r) setShown(r as any); }}>Reveal</Button>}
     </div>

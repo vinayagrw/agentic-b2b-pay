@@ -14,7 +14,7 @@ export function exceptionActions(inv: InvLike, me: { id: string; permissions?: s
   const perms = me.permissions ?? []; const op = perms.includes("flow.operate"); const appr = perms.includes("payments.approve");
   const out: ExceptionAction[] = [];
   if (op) out.push(inv.hold?.on ? "release" : "hold");
-  if (inv.matchStatus === "exception" && appr && inv.submittedBy !== me.id) out.push("accept");
+  if (inv.matchStatus === "exception" && appr && inv.submittedBy && inv.submittedBy !== me.id) out.push("accept");
   if (appr && inv.submittedBy !== me.id) out.push("credit");
   if (inv.matchStatus === "exception" && op) out.push("resubmit");
   return out;

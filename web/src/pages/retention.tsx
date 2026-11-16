@@ -3,7 +3,7 @@ import { Download } from "lucide-react";
 import { api, useAct, useGet, useMe } from "../lib/api";
 import { can } from "../lib/perm";
 import { daysError, exportUrl, keepText, runSummary, TYPE_LABEL, verifyText, type Policy, type RetentionView, type VerifyResult } from "../lib/retention";
-import { Badge, Button, Card, ErrorNote, Input, Label, Muted, PageHeader, Select, Table } from "../components/ui";
+import { Badge, Button, ConfirmButton, Card, ErrorNote, Input, Label, Muted, PageHeader, Select, Table } from "../components/ui";
 import { Section } from "../components/Shell";
 import { SkeletonTable } from "../components/kit";
 
@@ -48,7 +48,7 @@ export function RetentionPage() {
           <td>{edit && !h.releasedAt && <Button size="sm" variant="ghost" disabled={release.busy} onClick={() => release.run(() => api(`/ops/retention/holds/${h.id}/release`, {}))}>Release</Button>}</td></tr>)}</Table>
           {!v.holds.length && <Muted>No holds yet.</Muted>}</div>
       </Card>
-      <Card title="Purge" action={edit ? <Button variant="primary" size="sm" disabled={purge.busy} onClick={() => { if (confirm("Remove every record older than its rule? Held records stay. This cannot be undone.")) purge.run(() => api("/ops/retention/purge", {})); }}>Run purge now</Button> : undefined}>
+      <Card title="Purge" action={edit ? <ConfirmButton variant="primary" size="sm" disabled={purge.busy} question="Remove every record older than its rule? Held records stay. This cannot be undone." onConfirm={() => void purge.run(() => api("/ops/retention/purge", {}))}>Run purge now</ConfirmButton> : undefined}>
         <ErrorNote msg={purge.error} />
         {v.anchor && <Muted>Audit links up to {v.anchor.seq} were purged on {v.anchor.at.slice(0, 10)}. Checks start from there.</Muted>}
         <ul className="mt-2 space-y-1 text-sm">{v.runs.map((r) => <li key={r.id}><span className="font-mono text-xs">{r.ranAt.slice(0, 16).replace("T", " ")}</span> {runSummary(r)} <Muted>by {r.ranBy}</Muted></li>)}</ul>

@@ -4,7 +4,7 @@ import { Download, FileWarning, Landmark, RefreshCw, Scale, ShieldAlert } from "
 import { api, useAct, useGet, type Tenant } from "../lib/api";
 import { usd } from "../lib/utils";
 import { payEarlyLines, payOnDueLines } from "../lib/terms";
-import { Badge, Button, Card, EmptyState, ErrorNote, Input, Mono, Muted, PageHeader, Select, Stat, Table, Textarea } from "../components/ui";
+import { Badge, Button, ConfirmButton, Card, EmptyState, ErrorNote, Input, Mono, Muted, PageHeader, Select, Stat, Table, Textarea } from "../components/ui";
 import { Section } from "../components/Shell";
 import { Loading, EvidenceLog } from "./flows";
 import { railName } from "./payments";
@@ -106,7 +106,7 @@ function CaseCard({ c }: { c: any }) {
         <div className="mt-2 flex flex-wrap gap-2">
           {(!c.sar || c.sar.status === "draft") && <Button size="sm" disabled={busy} onClick={() => run(() => api(`/ops/cases/${c.id}/sar/draft`, {}))}>{c.sar ? "Redraft with the model" : "Draft SAR with the model"}</Button>}
           {c.sar?.status === "draft" && (text === null ? <Button size="sm" onClick={() => setText(c.sar.text)}>Edit</Button> : <Button size="sm" variant="primary" disabled={busy} onClick={async () => { if (await run(() => api(`/ops/cases/${c.id}/sar`, { text }, { method: "PUT" }))) setText(null); }}>Save edit</Button>)}
-          {c.sar?.status === "draft" && text === null && <Button size="sm" variant="primary" disabled={busy} onClick={() => confirm("File this SAR internally? It cannot be edited after.") && run(() => api(`/ops/cases/${c.id}/sar/file`, {}))}>File internally</Button>}
+          {c.sar?.status === "draft" && text === null && <ConfirmButton size="sm" variant="primary" disabled={busy} question="File this SAR internally? It cannot be edited after." onConfirm={() => run(() => api(`/ops/cases/${c.id}/sar/file`, {}))}>File internally</ConfirmButton>}
         </div><Muted className="mt-1 block">A person reviews every draft. Filing here records it internally, nothing is sent to a regulator.</Muted></div>}
       {c.kind === "dispute" && <Button size="sm" asChild className="self-start"><a href={`/api/cases/${c.id}/evidence-pack`}><Download size={13} />Evidence pack</a></Button>}
       {c.status === "open" ? <div className="flex gap-2"><Input placeholder="Why close it" value={res} onChange={(e) => setRes(e.target.value)} /><Button size="sm" disabled={busy || !res} onClick={() => run(() => api(`/ops/cases/${c.id}/close`, { resolution: res }))}>Close case</Button></div> : <Muted>Closed by {c.closedBy}: {c.resolution}</Muted>}

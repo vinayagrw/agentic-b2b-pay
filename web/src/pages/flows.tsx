@@ -9,7 +9,7 @@ import { usd } from "../lib/utils";
 import { invoiceSubmitNote, exceptionActions, invoiceStateLabel, actionRequest, type ExceptionAction, type ActionForm } from "../lib/invoices";
 import { RAIL_LABEL, TARIFF_NOTE, landedCost, dutyDue, fullDuty, exclusionCovers, hasDutyFields, type Rail, type PoLine } from "@b2b/shared";
 import { BankChangesWaiting } from "../components/BankChange";
-import { Badge, Button, Card, EmptyState, ErrorNote, Input, Json, Label, Mono, Muted, Select, Table, Textarea } from "../components/ui";
+import { Badge, Button, ConfirmButton, Card, EmptyState, ErrorNote, Input, Json, Label, Mono, Muted, Select, Table, Textarea } from "../components/ui";
 
 const EMPTY = { pos: [], invoices: [], intents: [], settlements: [], refunds: [], receipts: [], agents: [], mandates: [], suppliers: [], alerts: [], erp: [], evidence: [], journals: [], signers: [], killSwitch: false };
 /** The BFF scopes /state to the active client tenant. */
@@ -177,7 +177,7 @@ export function EarlyPayCard() {
       <td>{r.payBy}<div><Muted>{r.status === "missed" ? `Due ${r.dueDate}` : `${r.daysLeft} days left, due ${r.dueDate}`}</Muted></div></td>
       <td className="tabular-nums">{money(r.discount, r.currency)}<div><Muted>{money(r.net, r.currency)} in place of {money(r.amount, r.currency)}</Muted></div></td>
       <td><Badge v={STATUS_TEXT[r.status]} tone={statusTone(r.status)} /></td>
-      <td className="text-right">{canAskEarlyPay(r, allowed) && <Button size="sm" disabled={busy} onClick={() => { if (confirm(`Ask to pay ${r.number} early? A second client admin must approve it here. No money moves now.`)) void run(() => api(`/invoices/${r.invoiceId}/early-pay`, {})); }}>Ask to pay early</Button>}</td></tr>)}</Table>
+      <td className="text-right">{canAskEarlyPay(r, allowed) && <ConfirmButton size="sm" disabled={busy} question={`Ask to pay ${r.number} early? A second client admin must approve it here. No money moves now.`} onConfirm={() => void run(() => api(`/invoices/${r.invoiceId}/early-pay`, {}))}>Ask to pay early</ConfirmButton>}</td></tr>)}</Table>
     {!!waiting.length && <>
       <div className="px-4 pt-3"><Label>Requests waiting for a second client admin</Label><Muted>The person who asked cannot approve. Sign in as a second client admin account to decide. Approval records the plan and moves no money.</Muted></div>
       <Table head={["Request", "Invoice", "Saving (demo)", "Asked by", ""]}>{waiting.map((c) => { const r = rowOf(c); const d = earlyPayDecision(c, me); return <tr key={c.id}>
@@ -202,6 +202,7 @@ export function InvoiceTable({ st }: { st: any }) {
     if (!open) return;
     const req = actionRequest(i, open.a, form);
     if ("error" in req) { setFormErr(req.error); return; }
+    setFormErr("");
     void run(() => api(req.path, req.body)).then((r) => { if (r !== undefined) setOpen(null); });
   };
   const ASK: Record<ExceptionAction, string> = { accept: "Why is it fine to pay this invoice as it is? This is logged.", hold: "Why hold this invoice?", release: "Why release the hold?", credit: "Why is this credit given?", resubmit: "" };

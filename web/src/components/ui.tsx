@@ -1,4 +1,5 @@
 import * as React from "react";
+import { confirmStep, type ConfirmState } from "../lib/confirm";
 import { Slot } from "@radix-ui/react-slot";
 import * as DM from "@radix-ui/react-dropdown-menu";
 import { cva, type VariantProps } from "class-variance-authority";
@@ -93,3 +94,14 @@ export function MenuContent({ children, align = "end" }: { children: React.React
 export const MenuItem = ({ className, ...p }: DM.DropdownMenuItemProps) => <DM.Item className={cn("flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] outline-none data-[highlighted]:bg-subtle", className)} {...p} />;
 export const MenuLabel = ({ children }: { children: React.ReactNode }) => <DM.Label className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted">{children}</DM.Label>;
 export const MenuSep = () => <DM.Separator className="my-1 h-px bg-border" />;
+
+/** A button that asks inline before it acts. Embedded browsers block window.confirm(). */
+export function ConfirmButton({ question, onConfirm, children, ...p }: ButtonProps & { question: string; onConfirm: () => void }) {
+  const [state, setState] = React.useState<ConfirmState>("idle");
+  const step = (ev: "click" | "yes" | "cancel") => { const r = confirmStep(state, ev); setState(r.state); if (r.run) onConfirm(); };
+  if (state === "asking") return <span role="group" aria-label="Confirm" className="inline-flex flex-wrap items-center gap-1 text-xs">
+    <span>{question}</span>
+    <Button size="sm" variant="primary" disabled={p.disabled} onClick={() => step("yes")}>Yes</Button>
+    <Button size="sm" variant="outline" onClick={() => step("cancel")}>Cancel</Button></span>;
+  return <Button {...p} onClick={() => step("click")}>{children}</Button>;
+}

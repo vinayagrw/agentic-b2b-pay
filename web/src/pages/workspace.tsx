@@ -7,7 +7,7 @@ import { ArrowDown, ArrowUp, Bot, Check, Copy, KeyRound, Plus, Power, Trash2, Us
 import { RAIL_LABEL, type Rail } from "@b2b/shared";
 import { api, useAct, useGet, useMe } from "../lib/api";
 import { usd } from "../lib/utils";
-import { Badge, Button, Card, EmptyState, ErrorNote, Input, Label, Mono, Muted, PageHeader, Select, Table, Textarea } from "../components/ui";
+import { Badge, Button, ConfirmButton, Card, EmptyState, ErrorNote, Input, Label, Mono, Muted, PageHeader, Select, Table, Textarea } from "../components/ui";
 import { Section } from "../components/Shell";
 import { Loading } from "./flows";
 import { ApprovalCard, StepUpPrompt } from "../components/ApprovalCard";
@@ -55,7 +55,7 @@ export function AgentsPage() {
   const admin = me && ["client_admin", "operator_admin"].includes(me.user.role);
   const st = useGet<any>("/state");
   const create = async () => { const r = await run(() => api("/workspace/agents", { name, mandate: { ...m, validTo: new Date(m.validTo).toISOString() } })); if (r) { setSecret(r.key.key); setOpen(false); setName(""); } };
-  const act = (id: string, a: string) => { if (a === "kill" && !confirm("Kill this agent? Its keys are revoked and it cannot be resumed.")) return; run(() => api(`/workspace/agents/${id}/${a}`, {})); };
+  const act = (id: string, a: string) => { run(() => api(`/workspace/agents/${id}/${a}`, {})); };
   if (!data) return <Loading error={error as Error} />;
   return <Section>
     <PageHeader title="Agents" sub="Each agent has a signed mandate, a scoped key and a kill switch. Every change is in the audit log." actions={<>
@@ -87,7 +87,7 @@ export function AgentsPage() {
               {mm && edit !== a.id && !a.killed && <Button size="sm" onClick={() => { setEdit(a.id); setEm({ perTxnMax: mm.perTxnMax, monthlyLimit: mm.monthlyLimit ?? mm.maxAmount, allowedCategories: mm.allowedCategories, allowedRails: mm.allowedRails, validTo: mm.validTo }); }}>Edit mandate</Button>}
               {!a.killed && a.status === "active" && <Button size="sm" disabled={busy} onClick={async () => { const k = await run(() => api(`/workspace/agents/${a.id}/keys`, {})); if (k) setSecret(k.key); }}><KeyRound size={13} />New key</Button>}
               {!a.killed && <Button size="sm" disabled={busy} onClick={() => act(a.id, a.status === "active" ? "suspend" : "resume")}>{a.status === "active" ? "Suspend" : "Resume"}</Button>}
-              {!a.killed && <Button size="sm" variant="danger" disabled={busy} onClick={() => act(a.id, "kill")}><Power size={13} />Kill</Button>}
+              {!a.killed && <ConfirmButton size="sm" variant="danger" disabled={busy} question="Kill this agent? Its keys are revoked and it cannot be resumed." onConfirm={() => act(a.id, "kill")}><Power size={13} />Kill</ConfirmButton>}
             </div>}
           </div>
         </Card>; })}</div>}
@@ -135,7 +135,7 @@ export function RulesPage() {
           <Muted>{band(r)}. {r.categories.length ? r.categories.map((c) => CAT_LABEL[c]).join(", ") : "Any category"}. {r.entities.length ? r.entities.map((e) => sup.data?.find((s) => s.id === e)?.name ?? e).join(", ") : "Any supplier"}.</Muted>
           <div className="mt-1 flex flex-wrap items-center gap-1">{r.levels.map((l, n) => <span key={n} className="flex items-center gap-1">{n > 0 && <span className="text-muted">then</span>}<Badge v={`${l.count} ${roleName(l.role)}${l.count > 1 ? "s" : ""}`} tone="primary" /></span>)}</div></div>
         {admin && <div className="flex gap-1"><Button size="icon" variant="ghost" aria-label="Move up" disabled={busy || i === 0} onClick={() => move(i, -1)}><ArrowUp size={14} /></Button><Button size="icon" variant="ghost" aria-label="Move down" disabled={busy || i === data.length - 1} onClick={() => move(i, 1)}><ArrowDown size={14} /></Button>
-          <Button size="sm" onClick={() => setEdit(r)}>Edit</Button><Button size="icon" variant="ghost" aria-label="Delete rule" disabled={busy} onClick={() => confirm(`Delete ${r.name}?`) && run(() => api(`/workspace/rules/${r.id}`, undefined, { method: "DELETE" }))}><Trash2 size={14} /></Button></div>}
+          <Button size="sm" onClick={() => setEdit(r)}>Edit</Button><ConfirmButton size="icon" variant="ghost" aria-label="Delete rule" disabled={busy} question={`Delete ${r.name}?`} onConfirm={() => run(() => api(`/workspace/rules/${r.id}`, undefined, { method: "DELETE" }))}><Trash2 size={14} /></ConfirmButton></div>}
       </li>)}</ol>}</Card>
   </Section>;
 }

@@ -3,6 +3,7 @@ import { flexRender, getCoreRowModel, getFilteredRowModel, getSortedRowModel, us
 import { ArrowUpDown, Bookmark, Columns3, Download, Search, Trash2, X } from "lucide-react";
 import { api, useAct, useGet } from "../lib/api";
 import { cn } from "../lib/utils";
+import { viewNameRequest } from "../lib/views";
 import { Button, EmptyState, Input, Menu, MenuContent, MenuItem, MenuLabel, MenuSep, MenuTrigger } from "./ui";
 
 export type ExportKind = "payments" | "approvals" | "suppliers" | "ledger" | "risk";
@@ -28,16 +29,29 @@ export function ExportButton({ kind, ids, label }: { kind: ExportKind; ids?: str
 export function ViewsMenu({ table, current, onApply }: { table: ExportKind; current: ViewState; onApply: (s: ViewState) => void }) {
   const { data } = useGet<SavedView[]>(`/views?table=${table}`);
   const { run, error } = useAct();
-  const save = () => { const name = window.prompt("Name this view"); if (name?.trim()) run(() => api("/views", { table, name: name.trim(), state: current })); };
-  return <Menu><MenuTrigger asChild><Button size="sm" variant="ghost" aria-label="Saved views"><Bookmark size={13} aria-hidden />Views{data?.length ? ` (${data.length})` : ""}</Button></MenuTrigger>
+  const [naming, setNaming] = React.useState(false);
+  const [name, setName] = React.useState("");
+  const [nameErr, setNameErr] = React.useState("");
+  const open = () => { setNaming(true); setName(""); setNameErr(""); };
+  const save = (e: React.FormEvent) => {
+    e.preventDefault();
+    const req = viewNameRequest(table, name, current);
+    if ("error" in req) { setNameErr(req.error); return; }
+    void run(() => api("/views", req.body)).then((r) => { if (r !== undefined) setNaming(false); });
+  };
+  return <span className="inline-flex flex-wrap items-center gap-1"><Menu><MenuTrigger asChild><Button size="sm" variant="ghost" aria-label="Saved views"><Bookmark size={13} aria-hidden />Views{data?.length ? ` (${data.length})` : ""}</Button></MenuTrigger>
     <MenuContent>
       <MenuLabel>Saved views</MenuLabel>
       {!data?.length && <div className="px-2 py-1 text-xs text-muted">No saved views yet</div>}
       {data?.map((v) => <MenuItem key={v.id} onSelect={() => onApply(v.state)}><span className="flex-1">{v.name}</span>
         <button className="rounded p-1 text-muted hover:text-bad" aria-label={`Delete view ${v.name}`} onClick={(e) => { e.stopPropagation(); e.preventDefault(); run(() => api(`/views/${v.id}`, undefined, { method: "DELETE" })); }}><Trash2 size={12} /></button></MenuItem>)}
-      <MenuSep /><MenuItem onSelect={save}>Save current view</MenuItem>
-      {error && <div role="alert" className="px-2 py-1 text-xs text-bad">{error}</div>}
-    </MenuContent></Menu>;
+      <MenuSep /><MenuItem onSelect={open}>Save current view</MenuItem>
+    </MenuContent></Menu>
+    {naming && <form className="inline-flex flex-wrap items-center gap-1" onSubmit={save}>
+      <Input aria-label="Name this view" placeholder="Name this view" className="h-8 w-40" autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+      <Button size="sm" variant="primary" type="submit">Save</Button><Button size="sm" variant="ghost" type="button" onClick={() => setNaming(false)}>Cancel</Button>
+      {nameErr && <span role="alert" className="text-xs text-bad">{nameErr}</span>}</form>}
+    {error && <span role="alert" className="text-xs text-bad">{error}</span>}</span>;
 }
 
 /** Table with search, column picker, saved views, row selection, bulk actions and CSV export. */
