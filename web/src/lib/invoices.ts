@@ -26,3 +26,20 @@ export function invoiceStateLabel(inv: InvLike): string {
   if (inv.override) return `Accepted by ${inv.override.by}: ${inv.override.reason}`;
   return "";
 }
+export type ActionForm = { reason?: string; amount?: string; text?: string };
+export type ActionRequest = { path: string; body: Record<string, unknown> } | { error: string };
+/** Turns the inline invoice action form into an API call, or a plain error to show next to the form. */
+export function actionRequest(inv: { id: string; amount: number }, a: ExceptionAction, f: ActionForm): ActionRequest {
+  const reason = (f.reason ?? "").trim();
+  if (a === "resubmit") { const text = (f.text ?? "").trim(); return text ? { path: `/invoices/${inv.id}/resubmit`, body: { text } } : { error: "Paste the corrected invoice text." }; }
+  if (a === "credit") {
+    const amount = Number(f.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return { error: "Enter a credit amount above 0." };
+    if (amount > inv.amount) return { error: `Most you can credit is ${inv.amount}.` };
+    if (!reason) return { error: "Add a reason." };
+    return { path: `/invoices/${inv.id}/credit-notes`, body: { amount, reason } };
+  }
+  if (!reason) return { error: "Add a reason." };
+  if (a === "accept") return { path: `/invoices/${inv.id}/override`, body: { reason } };
+  return { path: `/invoices/${inv.id}/hold`, body: { reason, release: a === "release" } };
+}

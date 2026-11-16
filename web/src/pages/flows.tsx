@@ -6,7 +6,7 @@ import { payByLine, termsText, STATUS_TEXT, statusTone, canAskEarlyPay, DEMO_NOT
 import { Ban, Play, ShieldAlert, Sparkles } from "lucide-react";
 import { api, useAppState, useGet, useMe, useAct } from "../lib/api";
 import { usd } from "../lib/utils";
-import { invoiceSubmitNote, exceptionActions, invoiceStateLabel, type ExceptionAction } from "../lib/invoices";
+import { invoiceSubmitNote, exceptionActions, invoiceStateLabel, actionRequest, type ExceptionAction, type ActionForm } from "../lib/invoices";
 import { RAIL_LABEL, TARIFF_NOTE, landedCost, dutyDue, fullDuty, exclusionCovers, hasDutyFields, type Rail, type PoLine } from "@b2b/shared";
 import { BankChangesWaiting } from "../components/BankChange";
 import { Badge, Button, Card, EmptyState, ErrorNote, Input, Json, Label, Mono, Muted, Select, Table, Textarea } from "../components/ui";
@@ -194,22 +194,35 @@ export function InvoiceTable({ st }: { st: any }) {
   const user = me ? { id: me.user.id, permissions: me.permissions } : null;
   const last = st.invoices.filter((i: any) => i.match).slice(-1)[0];
   const LABEL: Record<ExceptionAction, string> = { release: "Release hold", hold: "Hold", accept: "Accept with reason", credit: "Add credit note", resubmit: "Send corrected invoice" };
-  const act = (i: any, a: ExceptionAction) => {
-    if (a === "resubmit") { const text = prompt(`Paste the corrected invoice text. It replaces ${i.number}.`); if (text) void run(() => api(`/invoices/${i.id}/resubmit`, { text })); return; }
-    if (a === "credit") { const amount = Number(prompt(`Credit amount. Most you can credit is ${i.amount}.`)); if (!amount) return; const reason = prompt("Why is this credit given?"); if (reason) void run(() => api(`/invoices/${i.id}/credit-notes`, { amount, reason })); return; }
-    const reason = prompt(a === "accept" ? "Why is it fine to pay this invoice as it is? This is logged." : a === "hold" ? "Why hold this invoice?" : "Why release the hold?");
-    if (!reason) return;
-    void run(() => a === "accept" ? api(`/invoices/${i.id}/override`, { reason }) : api(`/invoices/${i.id}/hold`, { reason, release: a === "release" }));
+  const [open, setOpen] = useState<{ id: string; a: ExceptionAction } | null>(null);
+  const [form, setForm] = useState<ActionForm>({});
+  const [formErr, setFormErr] = useState("");
+  const start = (i: any, a: ExceptionAction) => { setOpen({ id: i.id, a }); setForm({}); setFormErr(""); };
+  const submit = (i: any) => {
+    if (!open) return;
+    const req = actionRequest(i, open.a, form);
+    if ("error" in req) { setFormErr(req.error); return; }
+    void run(() => api(req.path, req.body)).then((r) => { if (r !== undefined) setOpen(null); });
   };
+  const ASK: Record<ExceptionAction, string> = { accept: "Why is it fine to pay this invoice as it is? This is logged.", hold: "Why hold this invoice?", release: "Why release the hold?", credit: "Why is this credit given?", resubmit: "" };
   return <>
     <Card title="Invoices and 3-way match" pad={false}>
       <ErrorNote msg={error} />
-      {st.invoices.length ? <Table head={["Invoice", "PO", "Amount", "Terms", "Read by", "Injection", "Match", ""]}>{st.invoices.map((i: any) => <tr key={i.id}>
+      {st.invoices.length ? <Table head={["Invoice", "PO", "Amount", "Terms", "Read by", "Injection", "Match", ""]}>{st.invoices.map((i: any) => <Fragment key={i.id}><tr>
         <td>{i.number}<div><Mono className="text-muted">{i.id}</Mono></div></td><td><Mono>{i.poId}</Mono></td><td className="tabular-nums">{money(i.amount, i.currency ?? "USD")}</td>
         <td>{termsText(i.terms)}<div><Muted>{payByLine(i)}</Muted></div></td><td><Muted>{i.extractedBy}</Muted></td>
         <td>{i.injection?.length ? <Badge v="ignored" tone="warn" /> : <Muted>none</Muted>}</td><td><Badge v={i.supersededBy ? "replaced" : i.matchStatus} />{invoiceStateLabel(i) && <div><Muted>{invoiceStateLabel(i)}</Muted></div>}{i.creditNotes?.length ? <div><Muted>Credited {money(i.creditNotes.reduce((s: number, c: any) => s + c.amount, 0), i.currency ?? "USD")}</Muted></div> : null}</td>
         <td className="text-right"><div className="flex flex-wrap justify-end gap-1">{i.matchStatus === "unmatched" && !i.supersededBy && <Button size="sm" variant="primary" disabled={busy} onClick={() => run(() => api(`/invoices/${i.id}/match`, {}))}>Run 3-way match</Button>}
-          {exceptionActions(i, user).map((a) => <Button key={a} size="sm" variant={a === "accept" ? "primary" : undefined} disabled={busy} onClick={() => act(i, a)}>{LABEL[a]}</Button>)}</div></td></tr>)}</Table>
+          {exceptionActions(i, user).map((a) => <Button key={a} size="sm" variant={a === "accept" ? "primary" : undefined} disabled={busy} onClick={() => start(i, a)}>{LABEL[a]}</Button>)}</div></td></tr>
+        {open?.id === i.id && <tr><td colSpan={8} className="bg-surface">
+          <form className="grid gap-2 p-2 md:max-w-xl" onSubmit={(e) => { e.preventDefault(); submit(i); }}>
+            <div className="text-sm font-medium">{LABEL[open!.a]}: {i.number}</div>
+            {open!.a === "resubmit" ? <><Label>Corrected invoice text. It replaces {i.number}.</Label><Textarea aria-label="Corrected invoice text" rows={4} value={form.text ?? ""} onChange={(e) => setForm({ ...form, text: e.target.value })} /></> : <>
+              {open!.a === "credit" && <><Label>Credit amount. Most you can credit is {i.amount}.</Label><Input aria-label="Credit amount" type="number" step="0.01" value={form.amount ?? ""} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></>}
+              <Label>{ASK[open!.a]}</Label><Input aria-label="Reason" value={form.reason ?? ""} onChange={(e) => setForm({ ...form, reason: e.target.value })} /></>}
+            {formErr && <div role="alert" className="text-xs text-bad">{formErr}</div>}
+            <div className="flex gap-2"><Button size="sm" variant="primary" type="submit" disabled={busy}>Save</Button><Button size="sm" type="button" onClick={() => setOpen(null)}>Cancel</Button></div>
+          </form></td></tr>}</Fragment>)}</Table>
         : <EmptyState title="No invoices" body="Invoices from supplier agents show here once submitted." />}
     </Card>
     {last && <Card title={`Last match ${last.number}`}>
