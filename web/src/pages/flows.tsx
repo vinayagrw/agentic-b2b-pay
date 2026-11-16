@@ -197,6 +197,7 @@ export function InvoiceTable({ st }: { st: any }) {
   const [open, setOpen] = useState<{ id: string; a: ExceptionAction } | null>(null);
   const [form, setForm] = useState<ActionForm>({});
   const [formErr, setFormErr] = useState("");
+  const edit = (k: string, v: string) => { setForm((f: any) => ({ ...f, [k]: v })); setFormErr(""); };
   const start = (i: any, a: ExceptionAction) => { setOpen({ id: i.id, a }); setForm({}); setFormErr(""); };
   const submit = (i: any) => {
     if (!open) return;
@@ -218,9 +219,9 @@ export function InvoiceTable({ st }: { st: any }) {
         {open?.id === i.id && <tr><td colSpan={8} className="bg-surface">
           <form className="grid gap-2 p-2 md:max-w-xl" onSubmit={(e) => { e.preventDefault(); submit(i); }}>
             <div className="text-sm font-medium">{LABEL[open!.a]}: {i.number}</div>
-            {open!.a === "resubmit" ? <><Label>Corrected invoice text. It replaces {i.number}.</Label><Textarea aria-label="Corrected invoice text" rows={4} value={form.text ?? ""} onChange={(e) => setForm({ ...form, text: e.target.value })} /></> : <>
-              {open!.a === "credit" && <><Label>Credit amount. Most you can credit is {i.amount}.</Label><Input aria-label="Credit amount" type="number" step="0.01" value={form.amount ?? ""} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></>}
-              <Label>{ASK[open!.a]}</Label><Input aria-label="Reason" value={form.reason ?? ""} onChange={(e) => setForm({ ...form, reason: e.target.value })} /></>}
+            {open!.a === "resubmit" ? <><Label>Corrected invoice text. It replaces {i.number}.</Label><Textarea aria-label="Corrected invoice text" rows={4} value={form.text ?? ""} onChange={(e) => edit("text", e.target.value)} /></> : <>
+              {open!.a === "credit" && <><Label>Credit amount. Most you can credit is {i.amount}.</Label><Input aria-label="Credit amount" type="number" step="0.01" value={form.amount ?? ""} onChange={(e) => edit("amount", e.target.value)} /></>}
+              <Label>{ASK[open!.a]}</Label><Input aria-label="Reason" value={form.reason ?? ""} onChange={(e) => edit("reason", e.target.value)} /></>}
             {formErr && <div role="alert" className="text-xs text-bad">{formErr}</div>}
             <div className="flex gap-2"><Button size="sm" variant="primary" type="submit" disabled={busy}>Save</Button><Button size="sm" type="button" onClick={() => setOpen(null)}>Cancel</Button></div>
           </form></td></tr>}</Fragment>)}</Table>

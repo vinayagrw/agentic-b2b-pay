@@ -48,7 +48,7 @@ export function ViewsMenu({ table, current, onApply }: { table: ExportKind; curr
       <MenuSep /><MenuItem onSelect={open}>Save current view</MenuItem>
     </MenuContent></Menu>
     {naming && <form className="inline-flex flex-wrap items-center gap-1" onSubmit={save}>
-      <Input aria-label="Name this view" placeholder="Name this view" className="h-8 w-40" autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+      <Input aria-label="Name this view" placeholder="Name this view" className="h-8 w-40" autoFocus value={name} onChange={(e) => { setName(e.target.value); setNameErr(""); }} />
       <Button size="sm" variant="primary" type="submit">Save</Button><Button size="sm" variant="ghost" type="button" onClick={() => setNaming(false)}>Cancel</Button>
       {nameErr && <span role="alert" className="text-xs text-bad">{nameErr}</span>}</form>}
     {error && <span role="alert" className="text-xs text-bad">{error}</span>}</span>;
